@@ -17,7 +17,6 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', event => {
-  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)).catch(err => {
       console.warn('Cache misslyckades', err);
@@ -48,4 +47,10 @@ self.addEventListener('fetch', event => {
       }).catch(() => cached);
     })
   );
+});
+
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });

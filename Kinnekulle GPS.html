@@ -72,6 +72,7 @@
     <button id="btnSync" class="ghost" aria-label="Synkronisera loggfil">Synka loggfil</button>
     <button id="btnClear" class="ghost" aria-label="Ta bort alla sparade körningar">Töm loggar</button>
     <button id="btnWakeLock" class="ghost" aria-pressed="false" aria-label="Hindra att skärmen slocknar">Håll skärmen vaken</button>
+    <button id="btnUpdate" class="ghost" style="display:none" aria-label="Ladda om med ny version">Uppdatera appen</button>
     <button id="btnInstall" class="ghost" style="display:none" aria-label="Installera som app">Installera appen</button>
     <span id="headerStatus" class="badge" style="display:none"></span>
     <span id="logCountTop" class="badge" role="status" aria-live="polite" style="margin-left:auto">Loggar: 0</span>
@@ -242,6 +243,7 @@
     calibrationBody: document.getElementById('calibrationBody'),
     calibrationMsg: document.getElementById('calibrationMsg'),
     installBtn: document.getElementById('btnInstall'),
+    updateBtn: document.getElementById('btnUpdate'),
     headerStatus: document.getElementById('headerStatus'),
     wakeBtn: document.getElementById('btnWakeLock')
   };
@@ -266,6 +268,9 @@
   let deferredInstallPrompt = null;
   let wakeLockSentinel = null;
   let keepScreenAwake = false;
+  let pendingServiceWorker = null;
+  let updateTriggered = false;
+  let hadController = !!navigator.serviceWorker.controller;
 
   function init(){
     populateStationSelects();
@@ -315,6 +320,19 @@
     els.calibrationBody.addEventListener('click', handleCalibrationClick);
     if(els.wakeBtn){
       els.wakeBtn.addEventListener('click', toggleWakeLock);
+    }
+    if(els.updateBtn){
+      els.updateBtn.addEventListener('click', ()=> {
+        if(pendingServiceWorker){
+          updateTriggered=true;
+          els.updateBtn.disabled=true;
+          showHeaderStatus('Uppdaterar appen…', false);
+          pendingServiceWorker.postMessage({type:'SKIP_WAITING'});
+          pendingServiceWorker=null;
+        }else{
+          window.location.reload();
+        }
+      });
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
   }
@@ -1110,9 +1128,16 @@
     }
     if('serviceWorker' in navigator){
       window.addEventListener('load', ()=>{
-        navigator.serviceWorker.register(`./sw.js?v=${APP_VERSION}`).catch(err=>{
+        navigator.serviceWorker.register(`./sw.js?v=${APP_VERSION}`).then(reg=>{
+          monitorServiceWorker(reg);
+        }).catch(err=>{
           console.warn('Service worker misslyckades', err);
         });
+      });
+      navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+        if(updateTriggered){
+          window.location.reload();
+        }
       });
     }
     window.addEventListener('beforeinstallprompt', event=>{
@@ -1149,10 +1174,41 @@
     }
   }
 
+  function monitorServiceWorker(reg){
+    function listenForInstall(worker){
+      if(!worker) return;
+      worker.addEventListener('statechange', ()=>{
+        if(worker.state==='installed'){
+          if(navigator.serviceWorker.controller){
+            pendingServiceWorker=worker;
+            showUpdatePrompt();
+          }
+        }
+      });
+    }
+    if(reg.waiting && navigator.serviceWorker.controller){
+      pendingServiceWorker=reg.waiting;
+      showUpdatePrompt();
+    }
+    if(reg.installing){
+      listenForInstall(reg.installing);
+    }
+    reg.addEventListener('updatefound', ()=>{
+      listenForInstall(reg.installing);
+    });
+  }
+
   function hideInstallButton(){
     if(els.installBtn){
       els.installBtn.style.display='none';
     }
+  }
+
+  function showUpdatePrompt(){
+    if(!els.updateBtn) return;
+    els.updateBtn.style.display='inline-block';
+    els.updateBtn.disabled=false;
+    showHeaderStatus('Ny version finns – uppdatera appen.', false);
   }
 
   function showHeaderStatus(text, isError){
