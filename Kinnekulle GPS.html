@@ -346,6 +346,7 @@
       arrivalPosition:null,
       departurePosition:null,
       shouldStop:true,
+      excludeInboundRun:false,
       inZone:false,
       lastSeenDistance:null,
       passThrough:false,
@@ -593,6 +594,9 @@
         <div class="row" style="margin:.4rem 0">
           <label><input type="checkbox" data-action="toggle-stop" data-idx="${idx}" ${station.shouldStop?'checked':''}> Planerat stopp</label>
         </div>
+        <div class="row" style="margin:.2rem 0">
+          <label class="meta"><input type="checkbox" data-action="exclude-run" data-idx="${idx}" ${station.excludeInboundRun?'checked':''}> Sen av annan orsak – exkludera gångtiden hit</label>
+        </div>
         <div class="bar">
           <button class="ghost" data-action="arrive" data-idx="${idx}">Markera ankomst</button>
           <button class="ghost" data-action="depart" data-idx="${idx}">Markera avgång</button>
@@ -626,11 +630,16 @@
 
   function handleCardChange(ev){
     const target=ev.target;
-    if(target.dataset.action==='toggle-stop'){
+    const action=target.dataset.action;
+    if(action==='toggle-stop'){
       const idx=parseInt(target.dataset.idx,10);
       if(!state.route[idx]) return;
       state.route[idx].shouldStop=target.checked;
       renderRouteCards();
+    }else if(action==='exclude-run'){
+      const idx=parseInt(target.dataset.idx,10);
+      if(!state.route[idx]) return;
+      state.route[idx].excludeInboundRun=target.checked;
     }
   }
 
@@ -731,7 +740,8 @@
         actualDeparture:st.actualDeparture,
         arrivalSource:st.arrivalSource,
         departSource:st.departSource,
-        shouldStop:st.shouldStop
+        shouldStop:st.shouldStop,
+        excludeInboundRun:!!st.excludeInboundRun
       }))
     };
     logs.push(entry);
@@ -1014,7 +1024,8 @@
       actualDeparture: stop.actualDeparture || stop.departure || stop.dep || null,
       arrivalSource: stop.arrivalSource || '',
       departSource: stop.departSource || '',
-      shouldStop: stop.shouldStop!=null ? !!stop.shouldStop : !stop.skipNoStop
+      shouldStop: stop.shouldStop!=null ? !!stop.shouldStop : !stop.skipNoStop,
+      excludeInboundRun: !!(stop.excludeInboundRun || stop.exclude)
     }));
     const rawId = entry.id || entry.measurementId || entry.measurementID || `${entry.trainNumber||''}|${startStation||''}|${startedAt||''}`;
     return {
