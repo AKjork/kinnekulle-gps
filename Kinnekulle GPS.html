@@ -781,15 +781,16 @@
           multiple:false
         });
         if(result && result[0]) handle=result[0];
-      }catch(e){}
+      }catch(e){
+        if(e && e.name==='AbortError'){
+          showHeaderStatus('Synk avbruten – ingen fil vald.', true);
+          return;
+        }
+        throw e;
+      }
       if(!handle){
-        handle=await window.showSaveFilePicker({
-          suggestedName:'kinnekulle_gps_logs.json',
-          types:[{description:'JSON-loggar',accept:{'application/json':['.json']}}]
-        });
-        const initWritable=await handle.createWritable();
-        await initWritable.write('[]');
-        await initWritable.close();
+        showHeaderStatus('Hittade ingen loggfil. Exportera först för att skapa en fil.', true);
+        return;
       }
       const file=await handle.getFile();
       const text=await file.text();
