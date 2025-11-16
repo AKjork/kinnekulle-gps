@@ -2,7 +2,7 @@
   "name": "Kinnekulle Tågmonitor GPS",
   "short_name": "Kinnekulle GPS",
   "description": "Offlinekapabel GPS-app för att logga Kinnekullebanans stationer.",
-  "start_url": "./Kinnekulle%20GPS.html",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",

@@ -1,5 +1,6 @@
 const CACHE_NAME = 'kinnekulle-gps-cache-v1';
 const ASSETS = [
+  './index.html',
   './Kinnekulle GPS.html',
   './kinnekulle-gps.webmanifest',
   './icons/icon-192.png',
