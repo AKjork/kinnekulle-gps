@@ -746,7 +746,8 @@
       const raw=localStorage.getItem(STORAGE_KEY_LOGS);
       if(!raw) return [];
       const parsed=JSON.parse(raw);
-      return Array.isArray(parsed)?parsed:[];
+      if(!Array.isArray(parsed)) return [];
+      return parsed.map(normalizeLogEntry).filter(Boolean);
     }catch(e){
       return [];
     }
@@ -760,11 +761,9 @@
     function dedupe(logs){
       const seen=new Set();
       const out=[];
-      function keyOf(o){
-        return (o && (o.id || o.measurementId || ((o.trainNumber||'')+'|'+(o.startStation||'')+'|'+(o.startedAt||''))));
-      }
       for(const entry of logs||[]){
-        const key=keyOf(entry);
+        if(!entry) continue;
+        const key=entry.id || entry.measurementId || `${entry.trainNumber||''}|${entry.startStation||''}|${entry.startedAt||''}`;
         if(!seen.has(key)){
           seen.add(key);
           out.push(entry);
@@ -797,8 +796,12 @@
         try{ return JSON.parse(text||'[]'); }
         catch(e){ return []; }
       })();
-      const incoming=Array.isArray(fileLogs)?fileLogs:(fileLogs?[fileLogs]:[]);
-      const merged=dedupe(loadLogs().concat(incoming));
+      const incomingRaw=Array.isArray(fileLogs)?fileLogs:(fileLogs?[fileLogs]:[]);
+      const normalizedIncoming=incomingRaw.map(normalizeLogEntry).filter(Boolean);
+      const existing=loadLogs();
+      const merged=dedupe(existing.concat(normalizedIncoming));
+      const added=Math.max(merged.length - existing.length, 0);
+      const ignored=Math.max(incomingRaw.length - normalizedIncoming.length, 0);
       const writable=await handle.createWritable();
       await writable.write(JSON.stringify(merged,null,2));
       await writable.close();
@@ -806,7 +809,10 @@
         localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(merged));
       }catch(e){}
       updateLogCount();
-      showHeaderStatus(`Synk klar (${merged.length} loggar)`, false);
+      const message = normalizedIncoming.length
+        ? `Synk klar: +${added} / ignorerade ${ignored}`
+        : 'Ingen giltig logg hittades i filen.';
+      showHeaderStatus(message, !normalizedIncoming.length);
     }catch(err){
       showHeaderStatus('Synk misslyckades.', true);
       console.error(err);
@@ -987,6 +993,45 @@
     const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
     const c=2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R*c;
+  }
+
+  function normalizeLogEntry(entry){
+    if(!entry || typeof entry!=='object') return null;
+    const stopsArray=Array.isArray(entry.stops)?entry.stops:[];
+    const firstStop=stopsArray[0]||{};
+    const lastStop=stopsArray[stopsArray.length-1]||{};
+    const endpoints=parseRouteEndpoints(entry.route);
+    const startStation = entry.startStation || endpoints.start || firstStop.name || '';
+    const endStation = entry.endStation || endpoints.end || lastStop.name || '';
+    const startedAt = entry.startedAt || entry.date || firstStop.actualDeparture || firstStop.actualArrival || null;
+    const finishedAt = entry.finishedAt || lastStop.actualArrival || lastStop.actualDeparture || null;
+    const normalizedStops = stopsArray.map((stop,idx)=>({
+      name: stop.name || stop.station || `Uppehåll ${idx+1}`,
+      actualArrival: stop.actualArrival || stop.arrival || stop.arr || null,
+      actualDeparture: stop.actualDeparture || stop.departure || stop.dep || null,
+      arrivalSource: stop.arrivalSource || '',
+      departSource: stop.departSource || '',
+      shouldStop: stop.shouldStop!=null ? !!stop.shouldStop : !stop.skipNoStop
+    }));
+    const rawId = entry.id || entry.measurementId || entry.measurementID || `${entry.trainNumber||''}|${startStation||''}|${startedAt||''}`;
+    return {
+      id: String(rawId || Date.now().toString(36)),
+      trainNumber: entry.trainNumber || '',
+      startStation: startStation || '',
+      endStation: endStation || '',
+      startedAt: startedAt || null,
+      finishedAt: finishedAt || null,
+      aborted: !!entry.aborted,
+      notes: entry.notes || entry.note || '',
+      stops: normalizedStops
+    };
+  }
+
+  function parseRouteEndpoints(route){
+    if(typeof route!=='string') return {start:'', end:''};
+    const parts=route.split(/[-→]/).map(s=>s.trim()).filter(Boolean);
+    if(!parts.length) return {start:'', end:''};
+    return { start: parts[0], end: parts[parts.length-1] };
   }
 
   async function requestWakeLock(){
