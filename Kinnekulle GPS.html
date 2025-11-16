@@ -69,11 +69,13 @@
   <h1>Kinnekulle Tågmonitor – GPS-version</h1>
   <div class="bar">
     <button id="btnExport" class="primary" aria-label="Exportera sparade körningar">Exportera loggar</button>
+    <button id="btnSync" class="ghost" aria-label="Synkronisera loggfil">Synka loggfil</button>
     <button id="btnClear" class="ghost" aria-label="Ta bort alla sparade körningar">Töm loggar</button>
+    <button id="btnWakeLock" class="ghost" aria-pressed="false" aria-label="Hindra att skärmen slocknar">Håll skärmen vaken</button>
     <button id="btnInstall" class="ghost" style="display:none" aria-label="Installera som app">Installera appen</button>
-    <span id="installStatus" class="badge" style="display:none"></span>
-    <span id="logCountTop" class="badge" role="status" aria-live="polite">Loggar: 0</span>
-    <span id="gpsStatusBadge" class="badge" style="margin-left:auto">Ingen GPS ännu</span>
+    <span id="headerStatus" class="badge" style="display:none"></span>
+    <span id="logCountTop" class="badge" role="status" aria-live="polite" style="margin-left:auto">Loggar: 0</span>
+    <span id="gpsStatusBadge" class="badge">Ingen GPS ännu</span>
   </div>
 </header>
 
@@ -239,7 +241,8 @@
     calibrationBody: document.getElementById('calibrationBody'),
     calibrationMsg: document.getElementById('calibrationMsg'),
     installBtn: document.getElementById('btnInstall'),
-    installStatus: document.getElementById('installStatus')
+    headerStatus: document.getElementById('headerStatus'),
+    wakeBtn: document.getElementById('btnWakeLock')
   };
 
   let stationOverrides = loadStationOverrides();
@@ -260,6 +263,8 @@
     aborted: false
   };
   let deferredInstallPrompt = null;
+  let wakeLockSentinel = null;
+  let keepScreenAwake = false;
 
   function init(){
     populateStationSelects();
@@ -267,6 +272,7 @@
     updateLogCount();
     bindEvents();
     setupPWA();
+    updateWakeButton();
   }
 
   function populateStationSelects(preserveSelection){
@@ -300,11 +306,16 @@
     document.getElementById('btnFinish').addEventListener('click', () => stopJourney(false, 'Avslutad manuellt'));
     document.getElementById('btnExport').addEventListener('click', exportLogs);
     document.getElementById('btnClear').addEventListener('click', clearLogs);
+    document.getElementById('btnSync').addEventListener('click', syncLogs);
     document.getElementById('btnNew').addEventListener('click', resetForNewRun);
     els.cards.addEventListener('click', handleCardButton);
     els.cards.addEventListener('change', handleCardChange);
     els.calibrationBody.addEventListener('input', handleCalibrationInput);
     els.calibrationBody.addEventListener('click', handleCalibrationClick);
+    if(els.wakeBtn){
+      els.wakeBtn.addEventListener('click', toggleWakeLock);
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
   }
 
   function startJourney(){
@@ -741,6 +752,67 @@
     }
   }
 
+  async function syncLogs(){
+    if(!('showOpenFilePicker' in window) || !('showSaveFilePicker' in window)){
+      alert('Din webbläsare saknar filåtkomst-API. Använd Chrome/Edge via https för att synka eller exportera istället.');
+      return;
+    }
+    function dedupe(logs){
+      const seen=new Set();
+      const out=[];
+      function keyOf(o){
+        return (o && (o.id || o.measurementId || ((o.trainNumber||'')+'|'+(o.startStation||'')+'|'+(o.startedAt||''))));
+      }
+      for(const entry of logs||[]){
+        const key=keyOf(entry);
+        if(!seen.has(key)){
+          seen.add(key);
+          out.push(entry);
+        }
+      }
+      return out;
+    }
+    try{
+      let handle=null;
+      try{
+        const result=await window.showOpenFilePicker({
+          types:[{description:'JSON-loggar',accept:{'application/json':['.json']}}],
+          excludeAcceptAllOption:false,
+          multiple:false
+        });
+        if(result && result[0]) handle=result[0];
+      }catch(e){}
+      if(!handle){
+        handle=await window.showSaveFilePicker({
+          suggestedName:'kinnekulle_gps_logs.json',
+          types:[{description:'JSON-loggar',accept:{'application/json':['.json']}}]
+        });
+        const initWritable=await handle.createWritable();
+        await initWritable.write('[]');
+        await initWritable.close();
+      }
+      const file=await handle.getFile();
+      const text=await file.text();
+      const fileLogs=(()=>{
+        try{ return JSON.parse(text||'[]'); }
+        catch(e){ return []; }
+      })();
+      const incoming=Array.isArray(fileLogs)?fileLogs:(fileLogs?[fileLogs]:[]);
+      const merged=dedupe(loadLogs().concat(incoming));
+      const writable=await handle.createWritable();
+      await writable.write(JSON.stringify(merged,null,2));
+      await writable.close();
+      try{
+        localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(merged));
+      }catch(e){}
+      updateLogCount();
+      showHeaderStatus(`Synk klar (${merged.length} loggar)`, false);
+    }catch(err){
+      showHeaderStatus('Synk misslyckades.', true);
+      console.error(err);
+    }
+  }
+
   function exportLogs(){
     const logs=loadLogs();
     const blob=new Blob([JSON.stringify(logs,null,2)],{type:'application/json'});
@@ -917,6 +989,62 @@
     return R*c;
   }
 
+  async function requestWakeLock(){
+    if(!('wakeLock' in navigator)){
+      showHeaderStatus('Skärmlås stöds inte i denna webbläsare.', true);
+      return;
+    }
+    try{
+      wakeLockSentinel=await navigator.wakeLock.request('screen');
+      keepScreenAwake=true;
+      wakeLockSentinel.addEventListener('release', ()=>{
+        wakeLockSentinel=null;
+        updateWakeButton();
+        if(keepScreenAwake && document.visibilityState==='visible'){
+          requestWakeLock().catch(()=>{});
+        }
+      });
+      updateWakeButton();
+      showHeaderStatus('Skärmen hålls vaken.', false);
+    }catch(err){
+      keepScreenAwake=false;
+      wakeLockSentinel=null;
+      updateWakeButton();
+      showHeaderStatus('Kunde inte låsa skärmen vaken.', true);
+    }
+  }
+
+  function releaseWakeLock(){
+    keepScreenAwake=false;
+    if(wakeLockSentinel){
+      wakeLockSentinel.release();
+      wakeLockSentinel=null;
+    }
+    updateWakeButton();
+    showHeaderStatus('Skärmen får slockna.', false);
+  }
+
+  function toggleWakeLock(){
+    if(keepScreenAwake){
+      releaseWakeLock();
+    }else{
+      requestWakeLock();
+    }
+  }
+
+  function updateWakeButton(){
+    if(!els.wakeBtn) return;
+    els.wakeBtn.textContent=keepScreenAwake?'Tillåt skärmen slockna':'Håll skärmen vaken';
+    els.wakeBtn.setAttribute('aria-pressed', keepScreenAwake?'true':'false');
+    els.wakeBtn.classList.toggle('primary', keepScreenAwake);
+  }
+
+  function handleVisibilityChange(){
+    if(document.visibilityState==='visible' && keepScreenAwake && !wakeLockSentinel){
+      requestWakeLock();
+    }
+  }
+
   function setupPWA(){
     if(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches){
       hideInstallButton();
@@ -936,7 +1064,7 @@
       }
     });
     window.addEventListener('appinstalled', ()=>{
-      showInstallStatus('Appen installerades!', false);
+      showHeaderStatus('Appen installerades!', false);
       hideInstallButton();
     });
     if(els.installBtn){
@@ -947,13 +1075,13 @@
           deferredInstallPrompt.prompt();
           const choice=await deferredInstallPrompt.userChoice;
           if(choice && choice.outcome==='accepted'){
-            showInstallStatus('Installationen startar…', false);
+            showHeaderStatus('Installationen startar…', false);
             hideInstallButton();
           }else{
-            showInstallStatus('Installationen avbröts.', true);
+            showHeaderStatus('Installationen avbröts.', true);
           }
         }catch(err){
-          showInstallStatus('Kunde inte starta installationen.', true);
+          showHeaderStatus('Kunde inte starta installationen.', true);
         }finally{
           deferredInstallPrompt=null;
           els.installBtn.disabled=false;
@@ -968,15 +1096,15 @@
     }
   }
 
-  function showInstallStatus(text, isError){
-    if(!els.installStatus) return;
-    els.installStatus.textContent=text;
-    els.installStatus.style.display='inline-block';
-    els.installStatus.style.background=isError?'#fee2e2':'#dcfce7';
-    els.installStatus.style.borderColor=isError?'#fecaca':'#86efac';
-    clearTimeout(showInstallStatus._timer);
-    showInstallStatus._timer=setTimeout(()=>{
-      els.installStatus.style.display='none';
+  function showHeaderStatus(text, isError){
+    if(!els.headerStatus) return;
+    els.headerStatus.textContent=text;
+    els.headerStatus.style.display='inline-block';
+    els.headerStatus.style.background=isError?'#fee2e2':'#dcfce7';
+    els.headerStatus.style.borderColor=isError?'#fecaca':'#86efac';
+    clearTimeout(showHeaderStatus._timer);
+    showHeaderStatus._timer=setTimeout(()=>{
+      els.headerStatus.style.display='none';
     },4000);
   }
 
