@@ -1,4 +1,13 @@
-const CACHE_NAME = 'kinnekulle-gps-cache-v1';
+const VERSION = (() => {
+  try {
+    const url = new URL(self.location.href);
+    return url.searchParams.get('v') || 'v1';
+  } catch (e) {
+    return 'v1';
+  }
+})();
+
+const CACHE_NAME = `kinnekulle-gps-cache-${VERSION}`;
 const ASSETS = [
   './index.html',
   './Kinnekulle GPS.html',
