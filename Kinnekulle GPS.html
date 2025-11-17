@@ -338,6 +338,7 @@
   }
 
   function startJourney(){
+    speedHistory.length=0; // nollställer tidigare hastighetsposter inför ny resa
     const startName=els.startSel.value;
     const endName=els.endSel.value;
     if(startName===endName){
@@ -979,7 +980,7 @@
         name:base.name,
         lat:override.lat!=null?override.lat:base.lat,
         lon:override.lon!=null?override.lon:base.lon,
-        radius:override.radius!=null?override.radius:DEFAULT_RADIUS
+        radius:override.radius!=null?override.radius:(base.radius!=null?base.radius:DEFAULT_RADIUS)
       };
     });
   }
@@ -1001,6 +1002,7 @@
   }
 
   function resetForNewRun(){
+    speedHistory.length=0; // rensa hastighetshistorik mellan körningar
     state.route=[];
     state.running=false;
     state.nextIndex=null;
