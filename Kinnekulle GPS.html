@@ -180,43 +180,47 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2024-11-17a';
+  const APP_VERSION = '2024-11-17b';
   const DEFAULT_RADIUS = 100;
   const EXTRA_MARGIN = 120;
+  const SPEED_THRESHOLD_KMH = 5;
+  const SPEED_THRESHOLD_MS = SPEED_THRESHOLD_KMH / 3.6;
+  const CLOSE_APPROACH_EPS = 1; // meters
+  const PASS_DISTANCE_MARGIN = 5; // meters before we consider leaving after pass
   const STORAGE_KEY_LOGS = 'kmon_gps_logs_v1';
   const STORAGE_KEY_STATIONS = 'kmon_gps_station_meta_v1';
 
   const baseStations = [
-    { name: 'Herrljunga', lat: 58.0788605, lon: 13.0208614, radius: 360 },
-    { name: 'Vedum', lat: 58.169087, lon: 12.9986447, radius: 340 },
-    { name: 'Vara', lat: 58.2606711, lon: 12.9522447, radius: 340 },
-    { name: 'Håkantorp', lat: 58.3070206, lon: 12.9073349, radius: 330 },
-    { name: 'Stora Levene', lat: 58.3260448, lon: 12.9258804, radius: 320 },
-    { name: 'Järpås', lat: 58.3790122, lon: 12.9700919, radius: 320 },
-    { name: 'Lovene', lat: 58.4411096, lon: 13.0479129, radius: 320 },
-    { name: 'Framnäs City', lat: 58.5076929, lon: 13.1470414, radius: 260 },
-    { name: 'Lidköping', lat: 58.50462, lon: 13.1639339, radius: 320 },
-    { name: 'Filsbäck', lat: 58.4931843, lon: 13.2469536, radius: 320 },
-    { name: 'Källby', lat: 58.5107931, lon: 13.3023402, radius: 320 },
-    { name: 'Blomberg', lat: 58.5402058, lon: 13.3206466, radius: 300 },
-    { name: 'Trolmen', lat: 58.594665, lon: 13.3477718, radius: 280 },
-    { name: 'Råbäck', lat: 58.6105061, lon: 13.376454, radius: 320 },
-    { name: 'Hällekis', lat: 58.6302156, lon: 13.432943, radius: 330 },
-    { name: 'Forshem', lat: 58.6180186, lon: 13.4912688, radius: 300 },
-    { name: 'Österäng', lat: 58.63415, lon: 13.5598621, radius: 320 },
-    { name: 'Äskekärr', lat: 58.6260531, lon: 13.6088607, radius: 300 },
-    { name: 'Lugnås', lat: 58.6443788, lon: 13.7022008, radius: 320 },
-    { name: 'Mariestad', lat: 58.7112536, lon: 13.8255412, radius: 360 },
-    { name: 'Hasslerör', lat: 58.7491527, lon: 13.9404069, radius: 360 },
-    { name: 'Lyrestad', lat: 58.8036306, lon: 14.0591279, radius: 330 },
-    { name: 'Torved', lat: 58.8242178, lon: 14.1007891, radius: 330 },
-    { name: 'Hova', lat: 58.8547965, lon: 14.2153363, radius: 340 },
-    { name: 'Gårdsjö', lat: 58.8721468, lon: 14.3335353, radius: 330 },
-    { name: 'Laxå', lat: 58.9893982, lon: 14.6185188, radius: 360 },
-    { name: 'Hallsberg personbangård', lat: 59.0671196, lon: 15.1107975, radius: 420 },
-    { name: 'Kumla', lat: 59.126913, lon: 15.1406426, radius: 360 },
-    { name: 'Örebro Södra', lat: 59.2697009, lon: 15.2020665, radius: 360 },
-    { name: 'Örebro Central', lat: 59.278536, lon: 15.2116615, radius: 380 }
+    { name: 'Herrljunga', lat: 58.0788605, lon: 13.0208614, radius: 100 },
+    { name: 'Vedum', lat: 58.169087, lon: 12.9986447, radius: 100 },
+    { name: 'Vara', lat: 58.2606711, lon: 12.9522447, radius: 100 },
+    { name: 'Håkantorp', lat: 58.3070206, lon: 12.9073349, radius: 100 },
+    { name: 'Stora Levene', lat: 58.3260448, lon: 12.9258804, radius: 100 },
+    { name: 'Järpås', lat: 58.3790122, lon: 12.9700919, radius: 100 },
+    { name: 'Lovene', lat: 58.4411096, lon: 13.0479129, radius: 100 },
+    { name: 'Framnäs City', lat: 58.5076929, lon: 13.1470414, radius: 100 },
+    { name: 'Lidköping', lat: 58.50462, lon: 13.1639339, radius: 100 },
+    { name: 'Filsbäck', lat: 58.4931843, lon: 13.2469536, radius: 100 },
+    { name: 'Källby', lat: 58.5107931, lon: 13.3023402, radius: 100 },
+    { name: 'Blomberg', lat: 58.5402058, lon: 13.3206466, radius: 100 },
+    { name: 'Trolmen', lat: 58.594665, lon: 13.3477718, radius: 100 },
+    { name: 'Råbäck', lat: 58.6105061, lon: 13.376454, radius: 100 },
+    { name: 'Hällekis', lat: 58.6302156, lon: 13.432943, radius: 100 },
+    { name: 'Forshem', lat: 58.6180186, lon: 13.4912688, radius: 100 },
+    { name: 'Österäng', lat: 58.63415, lon: 13.5598621, radius: 100 },
+    { name: 'Äskekärr', lat: 58.6260531, lon: 13.6088607, radius: 100 },
+    { name: 'Lugnås', lat: 58.6443788, lon: 13.7022008, radius: 100 },
+    { name: 'Mariestad', lat: 58.7112536, lon: 13.8255412, radius: 100 },
+    { name: 'Hasslerör', lat: 58.7491527, lon: 13.9404069, radius: 100 },
+    { name: 'Lyrestad', lat: 58.8036306, lon: 14.0591279, radius: 100 },
+    { name: 'Torved', lat: 58.8242178, lon: 14.1007891, radius: 100 },
+    { name: 'Hova', lat: 58.8547965, lon: 14.2153363, radius: 100 },
+    { name: 'Gårdsjö', lat: 58.8721468, lon: 14.3335353, radius: 100 },
+    { name: 'Laxå', lat: 58.9893982, lon: 14.6185188, radius: 100 },
+    { name: 'Hallsberg personbangård', lat: 59.0671196, lon: 15.1107975, radius: 100 },
+    { name: 'Kumla', lat: 59.126913, lon: 15.1406426, radius: 100 },
+    { name: 'Örebro Södra', lat: 59.2697009, lon: 15.2020665, radius: 100 },
+    { name: 'Örebro Central', lat: 59.278536, lon: 15.2116615, radius: 100 }
   ];
 
   const els = {
@@ -260,8 +264,11 @@
     startedAt: null,
     lastPosition: null,
     lastFixTime: null,
+    lastSpeed: null,
+    lastSpeedTime: null,
     lastReachedIndex: 0,
     nextIndex: null,
+    awaitingDepartureIndex: null,
     autoReason: '',
     aborted: false
   };
@@ -339,6 +346,9 @@
 
   function startJourney(){
     speedHistory.length=0; // nollställer tidigare hastighetsposter inför ny resa
+    state.awaitingDepartureIndex=null;
+    state.lastSpeed=null;
+    state.lastSpeedTime=null;
     const startName=els.startSel.value;
     const endName=els.endSel.value;
     if(startName===endName){
@@ -358,6 +368,7 @@
       lat:st.lat,
       lon:st.lon,
       radius:isFinite(st.radius)?st.radius:DEFAULT_RADIUS,
+      customRadius:!!st.customRadius,
       actualArrival:null,
       actualDeparture:null,
       arrivalSource:'',
@@ -369,6 +380,11 @@
       inZone:false,
       lastSeenDistance:null,
       passThrough:false,
+      needsArrivalRetiming:false,
+      reachedLowSpeed:false,
+      closestDistance:null,
+      closestTime:null,
+      closestPosition:null,
       order:idx+1
     }));
     state.route=route;
@@ -414,6 +430,8 @@
     const lon=pos.coords.longitude;
     const acc=pos.coords.accuracy;
     const speed=pos.coords.speed!=null?pos.coords.speed:estimateSpeedFromHistory(pos);
+    state.lastSpeed=speed;
+    state.lastSpeedTime=pos.timestamp||Date.now();
     updateSpeedReadout(speed, acc);
     if(!state.route.length) return;
     const idxs=candidateIndices();
@@ -423,7 +441,9 @@
       const dist=haversine(lat,lon,station.lat,station.lon);
       station.lastSeenDistance=dist;
       evaluateGeofence(idx, dist);
+      trackClosestApproach(idx);
     });
+    processSpeedTriggers(speed);
     renderRouteCards();
   }
 
@@ -507,14 +527,93 @@
     const station=state.route[idx];
     if(!station) return;
     const radius=station.radius||DEFAULT_RADIUS;
+    const exitMargin=station.customRadius?0:EXTRA_MARGIN;
+    const exitThreshold=radius+exitMargin;
     if(distance<=radius){
       if(!station.inZone){
         station.inZone=true;
         handleStationEntry(idx);
       }
-    }else if(station.inZone && distance>radius+EXTRA_MARGIN){
+    }else if(station.inZone && distance>exitThreshold){
       station.inZone=false;
       handleStationExit(idx);
+    }
+  }
+
+  function trackClosestApproach(idx){
+    const station=state.route[idx];
+    if(!station||!station.shouldStop||!station.actualArrival||station.actualDeparture) return;
+    if(!station.inZone) return;
+    const dist=station.lastSeenDistance;
+    if(dist==null) return;
+    const pos=state.lastPosition;
+    const now=new Date();
+    if(station.closestDistance==null || dist<station.closestDistance-CLOSE_APPROACH_EPS){
+      station.closestDistance=dist;
+      station.closestTime=now;
+      station.closestPosition=pos?{
+        lat:pos.coords.latitude,
+        lon:pos.coords.longitude,
+        accuracy:pos.coords.accuracy||null
+      }:null;
+      if(station.needsArrivalRetiming){
+        station.actualArrival=new Date(now);
+        station.arrivalSource='gps';
+        station.arrivalPosition=station.closestPosition;
+      }
+    }else if(station.needsArrivalRetiming && station.closestDistance!=null && dist>station.closestDistance+PASS_DISTANCE_MARGIN){
+      markPassingDeparture(idx);
+    }
+  }
+
+  function markPassingDeparture(idx){
+    const station=state.route[idx];
+    if(!station||station.actualDeparture) return;
+    const pos=state.lastPosition;
+    station.actualDeparture=new Date();
+    station.departSource='gps-pass';
+    station.departurePosition=pos?{
+      lat:pos.coords.latitude,
+      lon:pos.coords.longitude,
+      accuracy:pos.coords.accuracy||null
+    }:null;
+    station.needsArrivalRetiming=false;
+    station.reachedLowSpeed=false;
+    advanceAfterDeparture(idx);
+  }
+
+  function processSpeedTriggers(speed){
+    if(typeof speed!=='number') return;
+    const idx=state.awaitingDepartureIndex;
+    if(idx==null) return;
+    const station=state.route[idx];
+    if(!station||!station.shouldStop||!station.actualArrival||station.actualDeparture) return;
+    if(station.needsArrivalRetiming && !station.inZone){
+      station.needsArrivalRetiming=false;
+    }
+    const pos=state.lastPosition;
+    if(station.needsArrivalRetiming && station.inZone && speed<=SPEED_THRESHOLD_MS){
+      station.actualArrival=new Date();
+      station.arrivalSource='gps';
+      station.arrivalPosition=pos?{
+        lat:pos.coords.latitude,
+        lon:pos.coords.longitude,
+        accuracy:pos.coords.accuracy||null
+      }:null;
+      station.needsArrivalRetiming=false;
+      station.reachedLowSpeed=true;
+    }else if(!station.reachedLowSpeed && speed<=SPEED_THRESHOLD_MS){
+      station.reachedLowSpeed=true;
+    }
+    if(station.reachedLowSpeed && speed>=SPEED_THRESHOLD_MS){
+      station.actualDeparture=new Date();
+      station.departSource='gps';
+      station.departurePosition=pos?{
+        lat:pos.coords.latitude,
+        lon:pos.coords.longitude,
+        accuracy:pos.coords.accuracy||null
+      }:null;
+      advanceAfterDeparture(idx);
     }
   }
 
@@ -542,6 +641,12 @@
       recordImmediatePass(idx);
     }else{
       state.awaitingDepartureIndex=idx;
+      const slowNow=typeof state.lastSpeed==='number' && state.lastSpeed<=SPEED_THRESHOLD_MS;
+      station.reachedLowSpeed=slowNow;
+      station.needsArrivalRetiming=!slowNow;
+      station.closestDistance=station.lastSeenDistance!=null?station.lastSeenDistance:null;
+      station.closestTime=new Date();
+      station.closestPosition=posInfo;
     }
   }
 
@@ -569,6 +674,8 @@
         lon:pos.coords.longitude,
         accuracy:pos.coords.accuracy||null
       }:null;
+      station.needsArrivalRetiming=false;
+      station.reachedLowSpeed=true;
       advanceAfterDeparture(idx);
     }
   }
@@ -576,6 +683,13 @@
   function advanceAfterDeparture(idx){
     state.lastReachedIndex=Math.max(state.lastReachedIndex, idx);
     state.nextIndex=idx+1<state.route.length?idx+1:null;
+    if(state.awaitingDepartureIndex===idx){
+      state.awaitingDepartureIndex=null;
+    }
+    const station=state.route[idx];
+    if(station){
+      station.needsArrivalRetiming=false;
+    }
     updateNextStopUI();
     if(idx===state.route.length-1){
       stopJourney(false, 'Slutstation klar');
@@ -654,6 +768,9 @@
       const idx=parseInt(target.dataset.idx,10);
       if(!state.route[idx]) return;
       state.route[idx].shouldStop=target.checked;
+      if(!target.checked && state.awaitingDepartureIndex===idx){
+        state.awaitingDepartureIndex=null;
+      }
       renderRouteCards();
     }else if(action==='exclude-run'){
       const idx=parseInt(target.dataset.idx,10);
@@ -673,8 +790,13 @@
       accuracy:state.lastPosition.coords.accuracy||null
     }:null;
     station.inZone=true;
+    station.needsArrivalRetiming=false;
+    station.reachedLowSpeed=true;
     state.lastReachedIndex=idx;
     state.nextIndex=idx+1<state.route.length?idx+1:null;
+    if(station.shouldStop){
+      state.awaitingDepartureIndex=idx;
+    }
     renderRouteCards();
   }
 
@@ -688,6 +810,8 @@
       lon:state.lastPosition.coords.longitude,
       accuracy:state.lastPosition.coords.accuracy||null
     }:null;
+    station.needsArrivalRetiming=false;
+    station.reachedLowSpeed=true;
     advanceAfterDeparture(idx);
     renderRouteCards();
   }
@@ -976,11 +1100,14 @@
   function composeStationCatalog(){
     return baseStations.map(base=>{
       const override=stationOverrides[base.name]||{};
+      const hasCustomRadius=override.radius!=null;
+      const derivedRadius=hasCustomRadius?override.radius:(base.radius!=null?base.radius:DEFAULT_RADIUS);
       return {
         name:base.name,
         lat:override.lat!=null?override.lat:base.lat,
         lon:override.lon!=null?override.lon:base.lon,
-        radius:override.radius!=null?override.radius:(base.radius!=null?base.radius:DEFAULT_RADIUS)
+        radius:isFinite(derivedRadius)?derivedRadius:DEFAULT_RADIUS,
+        customRadius:hasCustomRadius
       };
     });
   }
@@ -1003,6 +1130,9 @@
 
   function resetForNewRun(){
     speedHistory.length=0; // rensa hastighetshistorik mellan körningar
+    state.awaitingDepartureIndex=null;
+    state.lastSpeed=null;
+    state.lastSpeedTime=null;
     state.route=[];
     state.running=false;
     state.nextIndex=null;
