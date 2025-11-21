@@ -113,6 +113,7 @@
         <button class="secondary" id="save-file">Spara till fil</button>
         <button class="secondary" id="copy">Kopiera CSV</button>
         <button class="secondary" id="clear">Rensa</button>
+        <button class="secondary" id="wake">Håll skärmen vaken</button>
       </div>
     </div>
 
@@ -138,6 +139,8 @@
     const storageKey = "trees-paths-v1";
     let watchId = null;
     let latestPos = null;
+    let wakeLockSentinel = null;
+    let keepAwake = false;
 
     function loadRows() {
       const data = JSON.parse(localStorage.getItem(storageKey) || "[]");
@@ -253,8 +256,17 @@
           throw e;
         }
         if(!handle){
-          setStatus("Ingen fil vald.", true);
-          return;
+          // låt användaren skapa ny fil
+          if(!("showSaveFilePicker" in window)){
+            setStatus("Ingen fil vald och kan inte skapa ny.", true);
+            return;
+          }
+          const saveHandle = await window.showSaveFilePicker({
+            suggestedName:"trad_stig_logs.json",
+            types:[{description:"JSON-loggar",accept:{"application/json":[".json"]}}],
+            excludeAcceptAllOption:false
+          });
+          handle = saveHandle;
         }
         let incoming=[];
         try{
@@ -289,6 +301,54 @@
       }
     }
 
+    async function requestWakeLock(){
+      if(!('wakeLock' in navigator)){
+        setStatus("Skärmlås stöds inte i denna webbläsare.", true);
+        return;
+      }
+      try{
+        wakeLockSentinel = await navigator.wakeLock.request('screen');
+        keepAwake = true;
+        updateWakeButton();
+        setStatus("Skärmen hålls vaken.");
+        wakeLockSentinel.addEventListener('release', ()=>{
+          wakeLockSentinel=null;
+          keepAwake=false;
+          updateWakeButton();
+        });
+      }catch(err){
+        keepAwake=false;
+        wakeLockSentinel=null;
+        updateWakeButton();
+        setStatus("Kunde inte hålla skärmen vaken.", true);
+      }
+    }
+
+    function releaseWakeLock(){
+      keepAwake=false;
+      if(wakeLockSentinel){
+        wakeLockSentinel.release();
+        wakeLockSentinel=null;
+      }
+      updateWakeButton();
+      setStatus("Skärmen får slockna.");
+    }
+
+    function toggleWakeLock(){
+      if(keepAwake){
+        releaseWakeLock();
+      }else{
+        requestWakeLock();
+      }
+    }
+
+    function updateWakeButton(){
+      const btn=document.getElementById("wake");
+      if(!btn) return;
+      btn.textContent = keepAwake ? "Tillåt skärmen slockna" : "Håll skärmen vaken";
+      btn.classList.toggle("primary", keepAwake);
+    }
+
     async function capture(type) {
       if (!latestPos) {
         setStatus("GPS inte klar ännu. Vänta eller starta om GPS.", true);
@@ -321,6 +381,8 @@
       }
     });
 
+    document.getElementById("wake").addEventListener("click", toggleWakeLock);
+
     document.getElementById("copy").addEventListener("click", async () => {
       const data = JSON.parse(localStorage.getItem(storageKey) || "[]");
       if (!data.length) {
@@ -340,6 +402,7 @@
 
     loadRows();
     startGpsWatch();
+    updateWakeButton();
     setStatus("GPS startas... tryck på rätt knapp när klar.");
   </script>
 </body>
