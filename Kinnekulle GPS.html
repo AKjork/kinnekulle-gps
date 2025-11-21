@@ -1109,20 +1109,41 @@
         types:[{description:'JSON-loggar',accept:{'application/json':['.json']}}],
         excludeAcceptAllOption:false
       });
-      let existingRaw=[];
+      let existingText='';
+      let incomingRaw=[];
       try{
         const file=await handle.getFile();
-        const text=await file.text();
-        existingRaw=(()=>{
-          try{ return JSON.parse(text||'[]'); }
-          catch(e){ return []; }
+        existingText=await file.text();
+        incomingRaw=(()=>{
+          try{ return JSON.parse(existingText||'[]'); }
+          catch(e){ return null; }
         })();
+        if(incomingRaw===null){
+          showHeaderStatus('Kunde inte läsa filen – sparar inte.', true);
+          return;
+        }
       }catch(e){
-        existingRaw=[];
+        incomingRaw=[];
       }
-      const incomingRaw=Array.isArray(existingRaw)?existingRaw:(existingRaw?[existingRaw]:[]);
-      const normalizedIncoming=incomingRaw.map(normalizeLogEntry).filter(Boolean);
+      const incomingArray=Array.isArray(incomingRaw)?incomingRaw:(incomingRaw?[incomingRaw]:[]);
+      const normalizedIncoming=incomingArray.map(normalizeLogEntry).filter(Boolean);
       const merged=dedupeLogs(localLogs.concat(normalizedIncoming));
+      if(!merged.length){
+        showHeaderStatus('Inga loggar att spara – ingen skrivning gjordes.', true);
+        return;
+      }
+      if(existingText){
+        try{
+          const backupBlob=new Blob([existingText],{type:'application/json'});
+          const a=document.createElement('a');
+          a.href=URL.createObjectURL(backupBlob);
+          a.download=`kinnekulle_gps_logs_backup_${Date.now()}.json`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(()=>URL.revokeObjectURL(a.href),0);
+        }catch(e){}
+      }
       const writable=await handle.createWritable();
       await writable.write(JSON.stringify(merged,null,2));
       await writable.close();
