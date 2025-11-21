@@ -1099,33 +1099,47 @@
 
   async function saveLogsToFile(){
     const localLogs=loadLogs();
-    if(!('showSaveFilePicker' in window)){
+    if(!('showOpenFilePicker' in window)){
       showHeaderStatus('Webbläsaren saknar fil-API. Använd Exportera istället.', true);
       return;
     }
     try{
-      const handle=await window.showSaveFilePicker({
-        suggestedName:'kinnekulle_gps_logs.json',
-        types:[{description:'JSON-loggar',accept:{'application/json':['.json']}}],
-        excludeAcceptAllOption:false
-      });
+      let handle=null;
+      try{
+        const result=await window.showOpenFilePicker({
+          types:[{description:'JSON-loggar',accept:{'application/json':['.json']}}],
+          excludeAcceptAllOption:false,
+          multiple:false
+        });
+        if(result && result[0]) handle=result[0];
+      }catch(e){
+        if(e && e.name==='AbortError'){
+          showHeaderStatus('Sparande avbröts.', true);
+          return;
+        }
+        throw e;
+      }
+      if(!handle){
+        showHeaderStatus('Ingen fil vald.', true);
+        return;
+      }
       let existingText='';
-      let incomingRaw=[];
+      let incomingArray=[];
       try{
         const file=await handle.getFile();
         existingText=await file.text();
-        incomingRaw=(()=>{
+        const parsed=(()=>{
           try{ return JSON.parse(existingText||'[]'); }
           catch(e){ return null; }
         })();
-        if(incomingRaw===null){
+        if(parsed===null){
           showHeaderStatus('Kunde inte läsa filen – sparar inte.', true);
           return;
         }
+        incomingArray=Array.isArray(parsed)?parsed:(parsed?[parsed]:[]);
       }catch(e){
-        incomingRaw=[];
+        incomingArray=[];
       }
-      const incomingArray=Array.isArray(incomingRaw)?incomingRaw:(incomingRaw?[incomingRaw]:[]);
       const normalizedIncoming=incomingArray.map(normalizeLogEntry).filter(Boolean);
       const merged=dedupeLogs(localLogs.concat(normalizedIncoming));
       if(!merged.length){
