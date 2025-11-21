@@ -1,14 +1,259 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="sv">
 <head>
-<meta charset="utf-8">
-<meta http-equiv="refresh" content="0; url=./Kinnekulle%20GPS.html">
-<title>Kinnekulle GPS</title>
-<script>
-  window.location.replace('./Kinnekulle%20GPS.html');
-</script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Träd och stigar</title>
+  <style>
+    :root {
+      font-family: "Inter", system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at 20% 20%, #eef5ff, #f8fbff);
+      color: #0f1729;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+    .card {
+      width: min(540px, 92vw);
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 18px 55px rgba(15, 23, 41, 0.14);
+      padding: 20px 22px 18px;
+      display: grid;
+      gap: 14px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+    p {
+      margin: 0;
+      color: #4b5565;
+    }
+    .buttons {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+    }
+    button {
+      appearance: none;
+      border: none;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+      box-shadow: 0 8px 24px rgba(15, 23, 41, 0.16);
+    }
+    button:active { transform: translateY(1px); }
+    .tree { background: linear-gradient(120deg, #1b7f3b, #2fbf71); }
+    .path { background: linear-gradient(120deg, #c96a0a, #f29d38); }
+    .secondary {
+      background: #f2f4f7;
+      color: #0f1729;
+      box-shadow: none;
+    }
+    .status {
+      font-size: 14px;
+      color: #6b7280;
+      min-height: 18px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td { padding: 6px 4px; text-align: left; }
+    th { color: #6b7280; font-weight: 600; }
+    tr:nth-child(every) { background: #f9fafb; }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, "Cascadia Code", monospace; }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+  </style>
 </head>
 <body>
-<p>Omdirigerar till <a href="./Kinnekulle%20GPS.html">Kinnekulle GPS</a>…</p>
+  <main class="card">
+    <header>
+      <h1>Rapportera risk</h1>
+      <p>Tryck bara på knappen. Position och tid sparas lokalt.</p>
+    </header>
+
+    <div class="buttons">
+      <button class="tree" data-type="Träd lutar">🌲 Träd lutar</button>
+      <button class="path" data-type="Stig över spår">🚶‍♂️ Stig över spår</button>
+    </div>
+
+    <div class="status" id="status"></div>
+    <div class="row">
+      <span id="gps-status" class="mono" style="color:#6b7280;">GPS startas...</span>
+      <div class="actions">
+        <button class="secondary" id="start-gps">Starta GPS</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <strong>Sparade noteringar</strong>
+      <div class="actions">
+        <button class="secondary" id="copy">Kopiera CSV</button>
+        <button class="secondary" id="clear">Rensa</button>
+      </div>
+    </div>
+
+    <div style="overflow-x:auto;">
+      <table id="log">
+        <thead>
+          <tr>
+            <th>Typ</th>
+            <th>Lat</th>
+            <th>Lon</th>
+            <th>Tid</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const gpsStatusEl = document.getElementById("gps-status");
+    const logBody = document.querySelector("#log tbody");
+    const storageKey = "trees-paths-v1";
+    let watchId = null;
+    let latestPos = null;
+
+    function loadRows() {
+      const data = JSON.parse(localStorage.getItem(storageKey) || "[]");
+      logBody.innerHTML = "";
+      if (!data.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 4;
+        cell.textContent = "Inget sparat ännu.";
+        cell.style.color = "#6b7280";
+        row.appendChild(cell);
+        logBody.appendChild(row);
+        return;
+      }
+      for (const entry of data) {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${entry.type}</td>
+          <td class="mono">${entry.lat.toFixed(6)}</td>
+          <td class="mono">${entry.lon.toFixed(6)}</td>
+          <td class="mono">${entry.time}</td>
+        `;
+        logBody.appendChild(row);
+      }
+    }
+
+    function setStatus(text, isError = false) {
+      statusEl.textContent = text;
+      statusEl.style.color = isError ? "#b42318" : "#6b7280";
+    }
+
+    function renderGpsStatus(pos) {
+      if (!pos) {
+        gpsStatusEl.textContent = "Ingen fix än.";
+        gpsStatusEl.style.color = "#b42318";
+        return;
+      }
+      const t = new Date(pos.timestamp).toLocaleTimeString("sv-SE");
+      const acc = Math.round(pos.coords.accuracy);
+      gpsStatusEl.textContent = `Fix ${t} (±${acc} m)`;
+      gpsStatusEl.style.color = "#0f1729";
+    }
+
+    function startGpsWatch() {
+      if (!navigator.geolocation) {
+        setStatus("Geolocation stöd saknas i webbläsaren.", true);
+        renderGpsStatus(null);
+        return;
+      }
+      if (watchId) navigator.geolocation.clearWatch(watchId);
+      setStatus("Startar GPS...");
+      renderGpsStatus(null);
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          latestPos = pos;
+          renderGpsStatus(pos);
+          setStatus("GPS aktiv.");
+        },
+        (err) => {
+          latestPos = null;
+          renderGpsStatus(null);
+          setStatus("Kunde inte starta GPS: " + err.message, true);
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    }
+
+    async function capture(type) {
+      if (!latestPos) {
+        setStatus("GPS inte klar ännu. Vänta eller starta om GPS.", true);
+        return;
+      }
+      const { latitude, longitude } = latestPos.coords;
+      const now = new Date().toLocaleString("sv-SE");
+      const data = JSON.parse(localStorage.getItem(storageKey) || "[]");
+      data.unshift({ type, lat: latitude, lon: longitude, time: now });
+      localStorage.setItem(storageKey, JSON.stringify(data));
+      setStatus(`Sparade ${type.toLowerCase()}.`);
+      loadRows();
+    }
+
+    document.querySelectorAll("button[data-type]").forEach((btn) => {
+      btn.addEventListener("click", () => capture(btn.dataset.type));
+    });
+
+    document.getElementById("start-gps").addEventListener("click", () => {
+      startGpsWatch();
+    });
+
+    document.getElementById("clear").addEventListener("click", () => {
+      if (confirm("Rensa alla sparade punkter?")) {
+        localStorage.removeItem(storageKey);
+        loadRows();
+        setStatus("Listan är rensad.");
+      }
+    });
+
+    document.getElementById("copy").addEventListener("click", async () => {
+      const data = JSON.parse(localStorage.getItem(storageKey) || "[]");
+      if (!data.length) {
+        setStatus("Inget att kopiera.");
+        return;
+      }
+      const header = "typ,lat,lon,tid";
+      const rows = data.map(d => [d.type, d.lat, d.lon, d.time].join(","));
+      const csv = [header, ...rows].join("\\n");
+      try {
+        await navigator.clipboard.writeText(csv);
+        setStatus("CSV kopierat.");
+      } catch {
+        setStatus("Kunde inte kopiera.", true);
+      }
+    });
+
+    loadRows();
+    startGpsWatch();
+    setStatus("GPS startas... tryck på rätt knapp när klar.");
+  </script>
 </body>
 </html>
