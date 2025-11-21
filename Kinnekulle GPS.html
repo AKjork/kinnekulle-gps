@@ -1146,18 +1146,6 @@
         showHeaderStatus('Inga loggar att spara – ingen skrivning gjordes.', true);
         return;
       }
-      if(existingText){
-        try{
-          const backupBlob=new Blob([existingText],{type:'application/json'});
-          const a=document.createElement('a');
-          a.href=URL.createObjectURL(backupBlob);
-          a.download=`kinnekulle_gps_logs_backup_${Date.now()}.json`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          setTimeout(()=>URL.revokeObjectURL(a.href),0);
-        }catch(e){}
-      }
       const writable=await handle.createWritable();
       await writable.write(JSON.stringify(merged,null,2));
       await writable.close();
