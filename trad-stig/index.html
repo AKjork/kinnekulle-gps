@@ -110,6 +110,7 @@
     <div class="row">
       <strong>Sparade noteringar</strong>
       <div class="actions">
+        <button class="secondary" id="save-file">Spara till fil</button>
         <button class="secondary" id="copy">Kopiera CSV</button>
         <button class="secondary" id="clear">Rensa</button>
       </div>
@@ -204,6 +205,90 @@
       );
     }
 
+    function normalizeEntry(entry, idx){
+      if(!entry || typeof entry!=="object") return null;
+      const t = entry.type || `okand-${idx}`;
+      const lat = Number(entry.lat);
+      const lon = Number(entry.lon);
+      const time = entry.time || "";
+      if(!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      return { type:t, lat, lon, time };
+    }
+
+    function dedupeEntries(list){
+      const seen=new Set();
+      const out=[];
+      (list||[]).forEach((item, idx)=>{
+        const n=normalizeEntry(item, idx);
+        if(!n) return;
+        const key=`${n.type}|${n.lat}|${n.lon}|${n.time}`;
+        if(!seen.has(key)){
+          seen.add(key);
+          out.push(n);
+        }
+      });
+      return out;
+    }
+
+    async function saveFileMerge(){
+      if(!("showOpenFilePicker" in window)){
+        setStatus("Fil-API saknas i webbläsaren.", true);
+        return;
+      }
+      const localData=dedupeEntries(JSON.parse(localStorage.getItem(storageKey) || "[]"));
+      try{
+        let handle=null;
+        try{
+          const pick=await window.showOpenFilePicker({
+            types:[{description:"JSON-loggar",accept:{"application/json":[".json"]}}],
+            excludeAcceptAllOption:false,
+            multiple:false
+          });
+          if(pick && pick[0]) handle=pick[0];
+        }catch(e){
+          if(e && e.name==="AbortError"){
+            setStatus("Sparande avbröts.", true);
+            return;
+          }
+          throw e;
+        }
+        if(!handle){
+          setStatus("Ingen fil vald.", true);
+          return;
+        }
+        let incoming=[];
+        try{
+          const file=await handle.getFile();
+          const text=await file.text();
+          const parsed=(()=>{
+            try{ return JSON.parse(text||"[]"); }
+            catch(_){ return null; }
+          })();
+          if(parsed===null){
+            setStatus("Kunde inte läsa filen.", true);
+            return;
+          }
+          incoming=Array.isArray(parsed)?parsed:(parsed?[parsed]:[]);
+        }catch(_){
+          incoming=[];
+        }
+        const merged=dedupeEntries(localData.concat(incoming));
+        if(!merged.length){
+          setStatus("Inga loggar att spara.", true);
+          return;
+        }
+        const writable=await handle.createWritable();
+        await writable.write(JSON.stringify(merged,null,2));
+        await writable.close();
+        localStorage.setItem(storageKey, JSON.stringify(merged));
+        loadRows();
+        setStatus(`Sparat & synkat: ${merged.length} poster.`);
+      }catch(err){
+        const msg=err && (err.message||err.name)?`${err.name||""} ${err.message||""}`.trim():"Kunde inte spara.";
+        setStatus(msg, true);
+      }
+    }
+
     async function capture(type) {
       if (!latestPos) {
         setStatus("GPS inte klar ännu. Vänta eller starta om GPS.", true);
@@ -225,6 +310,8 @@
     document.getElementById("start-gps").addEventListener("click", () => {
       startGpsWatch();
     });
+
+    document.getElementById("save-file").addEventListener("click", saveFileMerge);
 
     document.getElementById("clear").addEventListener("click", () => {
       if (confirm("Rensa alla sparade punkter?")) {
