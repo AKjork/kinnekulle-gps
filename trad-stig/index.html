@@ -258,35 +258,20 @@
         return;
       }
       const localData=dedupeEntries(JSON.parse(localStorage.getItem(storageKey) || "[]"));
-      if(!localData.length && !fileHandle){
-        setStatus("Inget att spara ännu.", true);
-        return;
-      }
       try{
         if(!fileHandle){
+          if(!("showSaveFilePicker" in window)){
+            setStatus("Ingen fil vald och kan inte skapa ny.", true);
+            return;
+          }
           try{
-            fileHandle = await pickExistingFile();
+            fileHandle = await createNewFile();
           }catch(e){
             if(e && e.name==="AbortError"){
               setStatus("Sparande avbröts.", true);
               return;
             }
             throw e;
-          }
-          if(!fileHandle){
-            if(!("showSaveFilePicker" in window)){
-              setStatus("Ingen fil vald och kan inte skapa ny.", true);
-              return;
-            }
-            try{
-              fileHandle = await createNewFile();
-            }catch(e){
-              if(e && e.name==="AbortError"){
-                setStatus("Sparande avbröts.", true);
-                return;
-              }
-              throw e;
-            }
           }
         }
         let incoming=[];
