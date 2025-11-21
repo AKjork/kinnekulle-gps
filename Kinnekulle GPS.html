@@ -50,6 +50,8 @@
   .status-box{border:1px solid var(--b);border-radius:12px;padding:.75rem;background:#fff}
   .status-box h4{margin:0 0 .4rem;font-size:.95rem;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
   .status-box strong{font-size:1.05rem}
+  .control-row{margin:.45rem 0}
+  .card-actions{margin-top:.65rem;gap:.6rem;flex-wrap:wrap}
   .table-wrap{overflow-x:auto}
   table{border-collapse:collapse;width:100%}
   th,td{border:1px solid var(--b);padding:.4rem .5rem;text-align:left;font-size:.92rem}
@@ -180,13 +182,14 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2024-11-17b';
+  const APP_VERSION = '2024-11-24b';
   const DEFAULT_RADIUS = 100;
   const EXTRA_MARGIN = 120;
   const SPEED_THRESHOLD_KMH = 5;
   const SPEED_THRESHOLD_MS = SPEED_THRESHOLD_KMH / 3.6;
   const CLOSE_APPROACH_EPS = 1; // meters
   const PASS_DISTANCE_MARGIN = 5; // meters before we consider leaving after pass
+  const DEPART_REVERT_WINDOW_MS = 120000; // allow 2 min to re-time a premature departure
   const STORAGE_KEY_LOGS = 'kmon_gps_logs_v1';
   const STORAGE_KEY_STATIONS = 'kmon_gps_station_meta_v1';
 
@@ -269,6 +272,7 @@
     lastReachedIndex: 0,
     nextIndex: null,
     awaitingDepartureIndex: null,
+    departureProvisionalIdx: null,
     autoReason: '',
     aborted: false
   };
@@ -347,6 +351,7 @@
   function startJourney(){
     speedHistory.length=0; // nollställer tidigare hastighetsposter inför ny resa
     state.awaitingDepartureIndex=null;
+    state.departureProvisionalIdx=null;
     state.lastSpeed=null;
     state.lastSpeedTime=null;
     const startName=els.startSel.value;
@@ -385,6 +390,8 @@
       closestDistance:null,
       closestTime:null,
       closestPosition:null,
+      departureProvisional:false,
+      departureProvisionalAt:null,
       order:idx+1
     }));
     state.route=route;
@@ -413,12 +420,27 @@
       return;
     }
     if(state.watchId!==null) navigator.geolocation.clearWatch(state.watchId);
-    state.watchId = navigator.geolocation.watchPosition(handlePosition, handlePositionError, {
-      enableHighAccuracy:true,
-      maximumAge:1000,
-      timeout:15000
-    });
-    updateGpsStatus(null, { message:'Väntar på första fix…' });
+    const startWatch=()=>{
+      state.watchId = navigator.geolocation.watchPosition(handlePosition, handlePositionError, {
+        enableHighAccuracy:true,
+        maximumAge:1000,
+        timeout:15000
+      });
+      updateGpsStatus(null, { message:'Väntar på första fix…' });
+    };
+    navigator.geolocation.getCurrentPosition(pos=>{
+      state.lastPosition=pos;
+      state.lastFixTime=Date.now();
+      updateGpsStatus(pos);
+      startWatch();
+    }, err=>{
+      if(err && err.code===err.PERMISSION_DENIED){
+        updateGpsStatus(null, { message:'Plats nekad – tillåt GPS i webbläsaren.' });
+        showJourneyMessage('Tillåt plats/GPS för den här sidan och starta om.', true);
+        return;
+      }
+      startWatch();
+    }, { enableHighAccuracy:true, maximumAge:1000, timeout:8000 });
   }
 
   function handlePosition(pos){
@@ -579,24 +601,69 @@
     }:null;
     station.needsArrivalRetiming=false;
     station.reachedLowSpeed=false;
+    station.departureProvisional=false;
+    station.departureProvisionalAt=null;
     advanceAfterDeparture(idx);
   }
 
   function processSpeedTriggers(speed){
     if(typeof speed!=='number') return;
-    const idx=state.awaitingDepartureIndex;
-    if(idx==null) return;
-    const station=state.route[idx];
-    if(!station||!station.shouldStop||!station.actualArrival||station.actualDeparture) return;
-    if(station.needsArrivalRetiming && !station.inZone){
-      station.needsArrivalRetiming=false;
+    const lastIdx=state.route.length?state.route.length-1:null;
+    if(state.running && lastIdx!=null){
+      const endStation=state.route[lastIdx];
+      if(endStation && endStation.shouldStop && endStation.actualArrival && !endStation.actualDeparture && endStation.inZone && speed<=SPEED_THRESHOLD_MS){
+        stopJourney(false, 'Slutstation registrerad – stillastående');
+        return;
+      }
     }
-    const pos=state.lastPosition;
-    if(station.needsArrivalRetiming && station.inZone && speed<=SPEED_THRESHOLD_MS){
-      station.actualArrival=new Date();
-      station.arrivalSource='gps';
-      station.arrivalPosition=pos?{
-        lat:pos.coords.latitude,
+    const candidates=[];
+    if(state.awaitingDepartureIndex!=null) candidates.push(state.awaitingDepartureIndex);
+    if(state.departureProvisionalIdx!=null) candidates.push(state.departureProvisionalIdx);
+    const seen=new Set();
+    for(const idx of candidates){
+      if(seen.has(idx)) continue;
+      seen.add(idx);
+      const station=state.route[idx];
+      const allowNoArrivalAtStart = idx===0 && !station.actualArrival;
+      if(!station||!station.shouldStop||(!station.actualArrival && !allowNoArrivalAtStart)) continue;
+      const pos=state.lastPosition;
+      const now=Date.now();
+      if(station.actualDeparture && station.departureProvisional){
+        const withinDist = station.lastSeenDistance!=null ? station.lastSeenDistance <= (station.radius||DEFAULT_RADIUS) + EXTRA_MARGIN*2 : true;
+        const withinTime = !station.departureProvisionalAt || (now - station.departureProvisionalAt) <= DEPART_REVERT_WINDOW_MS;
+        if(speed<=SPEED_THRESHOLD_MS && (withinDist || withinTime)){
+          station.actualDeparture=null;
+          station.departSource='';
+          station.departurePosition=null;
+          station.departureProvisional=false;
+          station.departureProvisionalAt=null;
+          state.awaitingDepartureIndex=idx;
+          state.departureProvisionalIdx=null;
+          station.reachedLowSpeed=true;
+          state.lastReachedIndex=idx;
+          state.nextIndex=idx+1<state.route.length?idx+1:null;
+          updateNextStopUI();
+          renderRouteCards();
+          continue;
+        }
+        const farAway = station.lastSeenDistance!=null && station.lastSeenDistance > (station.radius||DEFAULT_RADIUS) + EXTRA_MARGIN*3;
+        if(!withinTime || farAway){
+          station.departureProvisional=false;
+          station.departureProvisionalAt=null;
+          if(state.departureProvisionalIdx===idx) state.departureProvisionalIdx=null;
+        }
+        continue;
+      }
+      if(!station.actualArrival && !allowNoArrivalAtStart) continue;
+      if(station.actualDeparture) continue;
+      if(station.needsArrivalRetiming && !station.inZone){
+        station.needsArrivalRetiming=false;
+      }
+      if(station.needsArrivalRetiming && station.inZone && speed<=SPEED_THRESHOLD_MS){
+        station.actualArrival=new Date();
+        station.arrivalSource='gps';
+        station.arrivalPosition=pos?{
+          lat:pos.coords.latitude,
         lon:pos.coords.longitude,
         accuracy:pos.coords.accuracy||null
       }:null;
@@ -613,7 +680,11 @@
         lon:pos.coords.longitude,
         accuracy:pos.coords.accuracy||null
       }:null;
+      station.departureProvisional=false;
+      station.departureProvisionalAt=null;
+      if(state.departureProvisionalIdx===idx) state.departureProvisionalIdx=null;
       advanceAfterDeparture(idx);
+    }
     }
   }
 
@@ -625,16 +696,29 @@
       lon:pos.coords.longitude,
       accuracy:pos.coords.accuracy||null
     }:null;
+    const isStartStation = idx===0;
+    if(isStartStation && !station.actualArrival && !station.actualDeparture){
+      state.lastReachedIndex=idx;
+      state.nextIndex=idx+1<state.route.length?idx+1:null;
+      if(station.shouldStop){
+        state.awaitingDepartureIndex=idx;
+        const slowNow=typeof state.lastSpeed==='number' && state.lastSpeed<=SPEED_THRESHOLD_MS;
+        station.reachedLowSpeed=slowNow;
+        station.needsArrivalRetiming=false;
+        station.closestDistance=station.lastSeenDistance!=null?station.lastSeenDistance:null;
+        station.closestTime=new Date();
+        station.closestPosition=posInfo;
+      }
+      updateNextStopUI();
+      return;
+    }
     if(!station.actualArrival){
       station.actualArrival=new Date();
       station.arrivalSource='gps';
       station.arrivalPosition=posInfo;
       state.lastReachedIndex=idx;
       state.nextIndex=idx+1<state.route.length?idx+1:null;
-      if(idx===state.route.length-1){
-        stopJourney(false, 'Slutstation nådd');
-        return;
-      }
+      
       updateNextStopUI();
     }
     if(!station.shouldStop){
@@ -647,6 +731,10 @@
       station.closestDistance=station.lastSeenDistance!=null?station.lastSeenDistance:null;
       station.closestTime=new Date();
       station.closestPosition=posInfo;
+      if(idx===state.route.length-1){
+        // sista station: invänta stillastående innan vi avslutar
+        state.awaitingDepartureIndex=null;
+      }
     }
   }
 
@@ -658,6 +746,8 @@
       station.actualDeparture=new Date();
       station.departSource='gps-pass';
       station.departurePosition=station.arrivalPosition;
+      station.departureProvisional=false;
+      station.departureProvisionalAt=null;
     }
     advanceAfterDeparture(idx);
   }
@@ -665,8 +755,12 @@
   function handleStationExit(idx){
     const station=state.route[idx];
     if(!station.shouldStop) return;
-    if(station.actualArrival && !station.actualDeparture){
+    if(idx===state.route.length-1) return; // sista station: avslutas först vid stillastående
+    const allowStartDeparture = idx===0 && !station.actualArrival;
+    if((station.actualArrival || allowStartDeparture) && !station.actualDeparture){
       const pos=state.lastPosition;
+      const speed=state.lastSpeed;
+      const movingFast=typeof speed==='number' && speed>SPEED_THRESHOLD_MS;
       station.actualDeparture=new Date();
       station.departSource='gps';
       station.departurePosition=pos?{
@@ -676,7 +770,15 @@
       }:null;
       station.needsArrivalRetiming=false;
       station.reachedLowSpeed=true;
+      station.departureProvisional=station.shouldStop && movingFast;
+      station.departureProvisionalAt=station.departureProvisional?Date.now():null;
+      if(station.departureProvisional){
+        state.departureProvisionalIdx=idx;
+      }
       advanceAfterDeparture(idx);
+      if(station.departureProvisional){
+        state.awaitingDepartureIndex=idx;
+      }
     }
   }
 
@@ -689,6 +791,9 @@
     const station=state.route[idx];
     if(station){
       station.needsArrivalRetiming=false;
+      if(!station.departureProvisional){
+        station.departureProvisionalAt=null;
+      }
     }
     updateNextStopUI();
     if(idx===state.route.length-1){
@@ -721,16 +826,19 @@
           <span class="badge">${dist}</span>
         </div>
         <p class="meta">Radie ${Math.round(station.radius)} m • ${station.lat!=null?station.lat.toFixed(4):'–'}, ${station.lon!=null?station.lon.toFixed(4):'–'}</p>
+        <div class="control-row">
+          <button class="ghost" data-action="update-pos" data-idx="${idx}">Uppdatera koordinater med min position</button>
+        </div>
         <p><strong>Ankomst:</strong> ${arrival} ${station.arrivalSource==='gps'?'(GPS)':station.arrivalSource==='manual'?'(manuellt)':''}</p>
         <p><strong>Avgång:</strong> ${depart} ${station.departSource==='gps'?'(GPS)':station.departSource==='manual'?'(manuellt)':''}</p>
         <div class="meta">${station.shouldStop?'Planerat stopp':'Passeras utan stopp'}</div>
-        <div class="row" style="margin:.4rem 0">
+        <div class="row control-row">
           <label><input type="checkbox" data-action="toggle-stop" data-idx="${idx}" ${station.shouldStop?'checked':''}> Planerat stopp</label>
         </div>
-        <div class="row" style="margin:.2rem 0">
+        <div class="row control-row">
           <label class="meta"><input type="checkbox" data-action="exclude-run" data-idx="${idx}" ${station.excludeInboundRun?'checked':''}> Sen av annan orsak – exkludera gångtiden hit</label>
         </div>
-        <div class="bar">
+        <div class="bar card-actions">
           <button class="ghost" data-action="arrive" data-idx="${idx}">Markera ankomst</button>
           <button class="ghost" data-action="depart" data-idx="${idx}">Markera avgång</button>
         </div>
@@ -758,6 +866,10 @@
       manualArrival(idx);
     }else if(btn.dataset.action==='depart'){
       manualDeparture(idx);
+    }else if(btn.dataset.action==='update-pos'){
+      const station=state.route[idx];
+      if(!station) return;
+      calibrateWithCurrentPosition(station.name, true);
     }
   }
 
@@ -812,6 +924,9 @@
     }:null;
     station.needsArrivalRetiming=false;
     station.reachedLowSpeed=true;
+    station.departureProvisional=false;
+    station.departureProvisionalAt=null;
+    if(state.departureProvisionalIdx===idx) state.departureProvisionalIdx=null;
     advanceAfterDeparture(idx);
     renderRouteCards();
   }
@@ -825,6 +940,7 @@
     state.running=false;
     state.aborted=!!aborted;
     state.autoReason=reason||'';
+    state.departureProvisionalIdx=null;
     els.journeyMsg.textContent=reason|| (aborted?'Resan avslutad':'Resan sparad');
     els.journeyMsg.style.display='inline-block';
     const logEntry=saveLog(aborted);
@@ -1049,12 +1165,21 @@
     calibrateWithCurrentPosition(name);
   }
 
-  function calibrateWithCurrentPosition(name){
+  function calibrateWithCurrentPosition(name, updateActiveRoute){
     const applyPosition=pos=>{
       if(!stationOverrides[name]) stationOverrides[name]={};
       stationOverrides[name].lat=pos.coords.latitude;
       stationOverrides[name].lon=pos.coords.longitude;
       saveStationOverrides();
+      if(updateActiveRoute && state.route && state.route.length){
+        state.route.forEach(st=>{
+          if(st.name===name){
+            st.lat=pos.coords.latitude;
+            st.lon=pos.coords.longitude;
+          }
+        });
+        renderRouteCards();
+      }
       renderCalibrationTable();
       showCalibrationMessage(`Uppdaterade ${name} med aktuell position.`, false);
     };
