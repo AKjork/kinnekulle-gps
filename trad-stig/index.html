@@ -141,6 +141,7 @@
     let latestPos = null;
     let wakeLockSentinel = null;
     let keepAwake = false;
+    let fileHandle = null;
 
     function loadRows() {
       const data = JSON.parse(localStorage.getItem(storageKey) || "[]");
@@ -233,44 +234,64 @@
       return out;
     }
 
+    async function pickExistingFile(){
+      const pick=await window.showOpenFilePicker({
+        types:[{description:"JSON-loggar",accept:{"application/json":[".json"]}}],
+        excludeAcceptAllOption:false,
+        multiple:false
+      });
+      return pick && pick[0] ? pick[0] : null;
+    }
+
+    async function createNewFile(){
+      const saveHandle = await window.showSaveFilePicker({
+        suggestedName:"trad_stig_logs.json",
+        types:[{description:"JSON-loggar",accept:{"application/json":[".json"]}}],
+        excludeAcceptAllOption:false
+      });
+      return saveHandle;
+    }
+
     async function saveFileMerge(){
       if(!("showOpenFilePicker" in window)){
         setStatus("Fil-API saknas i webbläsaren.", true);
         return;
       }
       const localData=dedupeEntries(JSON.parse(localStorage.getItem(storageKey) || "[]"));
+      if(!localData.length && !fileHandle){
+        setStatus("Inget att spara ännu.", true);
+        return;
+      }
       try{
-        let handle=null;
-        try{
-          const pick=await window.showOpenFilePicker({
-            types:[{description:"JSON-loggar",accept:{"application/json":[".json"]}}],
-            excludeAcceptAllOption:false,
-            multiple:false
-          });
-          if(pick && pick[0]) handle=pick[0];
-        }catch(e){
-          if(e && e.name==="AbortError"){
-            setStatus("Sparande avbröts.", true);
-            return;
+        if(!fileHandle){
+          try{
+            fileHandle = await pickExistingFile();
+          }catch(e){
+            if(e && e.name==="AbortError"){
+              setStatus("Sparande avbröts.", true);
+              return;
+            }
+            throw e;
           }
-          throw e;
-        }
-        if(!handle){
-          // låt användaren skapa ny fil
-          if(!("showSaveFilePicker" in window)){
-            setStatus("Ingen fil vald och kan inte skapa ny.", true);
-            return;
+          if(!fileHandle){
+            if(!("showSaveFilePicker" in window)){
+              setStatus("Ingen fil vald och kan inte skapa ny.", true);
+              return;
+            }
+            try{
+              fileHandle = await createNewFile();
+            }catch(e){
+              if(e && e.name==="AbortError"){
+                setStatus("Sparande avbröts.", true);
+                return;
+              }
+              throw e;
+            }
           }
-          const saveHandle = await window.showSaveFilePicker({
-            suggestedName:"trad_stig_logs.json",
-            types:[{description:"JSON-loggar",accept:{"application/json":[".json"]}}],
-            excludeAcceptAllOption:false
-          });
-          handle = saveHandle;
         }
         let incoming=[];
         try{
-          const file=await handle.getFile();
+          const file=await fileHandle.getFile();
           const text=await file.text();
           const parsed=(()=>{
             try{ return JSON.parse(text||"[]"); }
@@ -289,7 +310,7 @@
           setStatus("Inga loggar att spara.", true);
           return;
         }
-        const writable=await handle.createWritable();
+        const writable=await fileHandle.createWritable();
         await writable.write(JSON.stringify(merged,null,2));
         await writable.close();
         localStorage.setItem(storageKey, JSON.stringify(merged));
