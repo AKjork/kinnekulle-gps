@@ -1,0 +1,1561 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#2563eb">
+<title>Kinnekulle Tågmonitor – GPS-version</title>
+<link rel="manifest" href="kinnekulle-gps.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  :root{
+    --bg:#f8fafc;
+    --ink:#0f172a;
+    --mut:#64748b;
+    --pri:#2563eb;
+    --b:#e2e8f0;
+    --soft:#eef2ff;
+    --softb:#c7d2fe;
+    --err:#fecaca;
+    --good:#dcfce7;
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:0 1rem 2.5rem;line-height:1.45;background:var(--bg);color:var(--ink)}
+  header{position:sticky;top:0;background:#ffffffdd;backdrop-filter:saturate(180%) blur(10px);padding:.7rem 0;margin:0 0 .8rem;border-bottom:1px solid var(--b);z-index:10}
+  h1{margin:.2rem 0 .25rem;font-size:1.2rem}
+  h2{margin:1.6rem 0 .5rem}
+  .bar{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+  .row{display:flex;gap:.5rem;flex-wrap:wrap}
+  .grow{flex:1 1 auto}
+  .form-group{margin:.4rem 0;min-width:12rem}
+  label{display:block;margin:.25rem 0 .1rem}
+  input,select,button,textarea{font-size:1rem;padding:.55rem;border:1px solid var(--b);border-radius:10px;font-family:inherit}
+  input[type="checkbox"]{padding:0;width:auto;border-radius:4px}
+  select{background:#fff}
+  button{cursor:pointer}
+  button.primary{background:var(--pri);color:#fff;border-color:var(--pri)}
+  button.ghost{background:#fff;color:var(--pri);border-color:#93c5fd}
+  button.danger{background:#fff;color:#b91c1c;border-color:#fca5a5}
+  button:disabled{opacity:.55;cursor:not-allowed}
+  .cards{display:grid;gap:.6rem;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));margin:1rem 0}
+  .card{border:1px solid var(--b);border-radius:14px;padding:.85rem;background:#fff;box-shadow:0 1px 1px rgba(0,0,0,.02),0 1px 3px rgba(0,0,0,.04)}
+  .card.active{border-color:var(--pri);box-shadow:0 0 0 1px rgba(37,99,235,.3),0 3px 10px rgba(37,99,235,.1)}
+  .card h3{margin:.1rem 0;font-size:1rem}
+  .meta{font-size:.9rem;color:var(--mut)}
+  .badge{background:var(--soft);border:1px solid var(--softb);border-radius:999px;padding:.12rem .55rem;font-size:.82rem}
+  .badge.live{background:var(--good);border-color:#86efac;color:#064e3b}
+  .badge.warn{background:#fee2e2;border-color:#fecaca;color:#991b1b}
+  .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:.6rem}
+  .status-box{border:1px solid var(--b);border-radius:12px;padding:.75rem;background:#fff}
+  .status-box h4{margin:0 0 .4rem;font-size:.95rem;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+  .status-box strong{font-size:1.05rem}
+  .control-row{margin:.45rem 0}
+  .card-actions{margin-top:.65rem;gap:.6rem;flex-wrap:wrap}
+  .table-wrap{overflow-x:auto}
+  table{border-collapse:collapse;width:100%}
+  th,td{border:1px solid var(--b);padding:.4rem .5rem;text-align:left;font-size:.92rem}
+  th{background:#f1f5f9}
+  details{border:1px solid var(--b);border-radius:14px;padding:1rem;background:#fff;margin-top:1rem}
+  summary{cursor:pointer;font-weight:600}
+  footer{margin-top:2rem;color:var(--mut);font-size:.85rem}
+  code{font-family:ui-monospace,Menlo,monospace;font-size:.9rem;background:#00000008;padding:.1rem .3rem;border-radius:6px}
+  @media (max-width:640px){
+    header{padding:.8rem .2rem}
+    body{padding:0 .7rem 2.5rem}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kinnekulle Tågmonitor – GPS-version</h1>
+  <div class="bar">
+    <button id="btnExport" class="primary" aria-label="Exportera sparade körningar">Exportera loggar</button>
+    <button id="btnSaveFile" class="ghost" aria-label="Spara loggar till fil">Spara loggar</button>
+    <button id="btnSync" class="ghost" aria-label="Synkronisera loggfil">Synka loggfil</button>
+    <button id="btnClear" class="ghost" aria-label="Ta bort alla sparade körningar">Töm loggar</button>
+    <button id="btnWakeLock" class="ghost" aria-pressed="false" aria-label="Hindra att skärmen slocknar">Håll skärmen vaken</button>
+    <button id="btnUpdate" class="ghost" style="display:none" aria-label="Ladda om med ny version">Uppdatera appen</button>
+    <button id="btnInstall" class="ghost" style="display:none" aria-label="Installera som app">Installera appen</button>
+    <span id="headerStatus" class="badge" style="display:none"></span>
+    <span id="logCountTop" class="badge" role="status" aria-live="polite" style="margin-left:auto">Loggar: 0</span>
+    <span id="gpsStatusBadge" class="badge">Ingen GPS ännu</span>
+  </div>
+</header>
+
+<main>
+  <section id="setup">
+    <h2>1. Ställ in resan</h2>
+    <div class="form-group">
+      <label for="trainNumber">Operativt tågnummer (valfritt)</label>
+      <input id="trainNumber" type="text" placeholder="t.ex. 8074">
+    </div>
+    <div class="row">
+      <div class="form-group">
+        <label for="startStation">Startstation</label>
+        <select id="startStation"></select>
+      </div>
+      <div class="form-group">
+        <label for="endStation">Slutstation</label>
+        <select id="endStation"></select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="startNotes">Anteckningar (syns i rapporten)</label>
+      <textarea id="startNotes" rows="2" placeholder="Skriv här om du vill anteckna något om mätningen …"></textarea>
+    </div>
+    <div class="bar">
+      <button id="btnStart" class="primary">Starta GPS-resan</button>
+      <span id="setupError" class="badge warn" style="display:none"></span>
+    </div>
+  </section>
+
+  <section id="journey" style="display:none">
+    <h2 id="journeyTitle">Aktiv resa</h2>
+    <div class="status-grid">
+      <div class="status-box">
+        <h4>GPS-status</h4>
+        <strong id="gpsStatusText">–</strong>
+        <div class="meta" id="gpsAccuracy">Noggrannhet: –</div>
+      </div>
+      <div class="status-box">
+        <h4>Senaste position</h4>
+        <strong id="gpsCoords">–</strong>
+        <div class="meta" id="gpsTimestamp">–</div>
+      </div>
+      <div class="status-box">
+        <h4>Hastighet</h4>
+        <strong id="gpsSpeed">–</strong>
+        <div class="meta" id="gpsExtra">Ingen rörelse registrerad</div>
+      </div>
+      <div class="status-box">
+        <h4>Nästa station</h4>
+        <strong id="nextStop">–</strong>
+        <div class="meta" id="nextStopInfo">Ingen aktiv resa</div>
+      </div>
+    </div>
+    <div class="bar" style="margin:1rem 0">
+      <button id="btnFinish" class="primary">Avsluta & spara</button>
+      <button id="btnAbort" class="danger">Avbryt resa</button>
+      <span id="journeyMsg" class="badge" style="display:none"></span>
+    </div>
+    <div id="cards" class="cards"></div>
+  </section>
+
+  <section id="report" style="display:none">
+    <h2>Rapport</h2>
+    <div id="reportHTML"></div>
+    <div class="bar" style="margin-top:1rem">
+      <button id="btnNew" class="ghost">Starta ny mätning</button>
+    </div>
+  </section>
+
+  <section id="calibration">
+    <details>
+      <summary>Stationernas GPS-punkter och radier</summary>
+      <p>Appen använder geofencing runt varje station. Justera koordinaterna om du står i närheten men det inte registreras. Radien anges i meter.</p>
+      <div class="bar" style="margin-bottom:.5rem">
+        <span class="badge" id="calibrationMsg" style="display:none"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Station</th>
+              <th>Lat</th>
+              <th>Lon</th>
+              <th>Radie (m)</th>
+              <th>Åtgärd</th>
+            </tr>
+          </thead>
+          <tbody id="calibrationBody"></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+</main>
+
+<footer>
+  Tips: Kör sidan via <code>https://</code> på mobilen för att få tillgång till högupplöst GPS. All data sparas endast lokalt i webbläsaren.
+</footer>
+
+<script>
+(function(){
+  'use strict';
+
+  const APP_VERSION = '2024-11-24b';
+  const DEFAULT_RADIUS = 100;
+  const EXTRA_MARGIN = 120;
+  const SPEED_THRESHOLD_KMH = 5;
+  const SPEED_THRESHOLD_MS = SPEED_THRESHOLD_KMH / 3.6;
+  const CLOSE_APPROACH_EPS = 1; // meters
+  const PASS_DISTANCE_MARGIN = 5; // meters before we consider leaving after pass
+  const DEPART_REVERT_WINDOW_MS = 120000; // allow 2 min to re-time a premature departure
+  const STORAGE_KEY_LOGS = 'kmon_gps_logs_v1';
+  const STORAGE_KEY_STATIONS = 'kmon_gps_station_meta_v1';
+  const STORAGE_KEY_SAVE_FILE = 'kmon_gps_file_handle_v1';
+
+  const baseStations = [
+    { name: 'Herrljunga', lat: 58.0788605, lon: 13.0208614, radius: 100 },
+    { name: 'Vedum', lat: 58.169087, lon: 12.9986447, radius: 100 },
+    { name: 'Vara', lat: 58.2606711, lon: 12.9522447, radius: 100 },
+    { name: 'Håkantorp', lat: 58.3070206, lon: 12.9073349, radius: 100 },
+    { name: 'Stora Levene', lat: 58.3260448, lon: 12.9258804, radius: 100 },
+    { name: 'Järpås', lat: 58.3790122, lon: 12.9700919, radius: 100 },
+    { name: 'Lovene', lat: 58.4411096, lon: 13.0479129, radius: 100 },
+    { name: 'Framnäs City', lat: 58.5076929, lon: 13.1470414, radius: 100 },
+    { name: 'Lidköping', lat: 58.50462, lon: 13.1639339, radius: 100 },
+    { name: 'Filsbäck', lat: 58.4931843, lon: 13.2469536, radius: 100 },
+    { name: 'Källby', lat: 58.5107931, lon: 13.3023402, radius: 100 },
+    { name: 'Blomberg', lat: 58.5402058, lon: 13.3206466, radius: 100 },
+    { name: 'Trolmen', lat: 58.594665, lon: 13.3477718, radius: 100 },
+    { name: 'Råbäck', lat: 58.6105061, lon: 13.376454, radius: 100 },
+    { name: 'Hällekis', lat: 58.6302156, lon: 13.432943, radius: 100 },
+    { name: 'Forshem', lat: 58.6180186, lon: 13.4912688, radius: 100 },
+    { name: 'Österäng', lat: 58.63415, lon: 13.5598621, radius: 100 },
+    { name: 'Äskekärr', lat: 58.6260531, lon: 13.6088607, radius: 100 },
+    { name: 'Lugnås', lat: 58.6443788, lon: 13.7022008, radius: 100 },
+    { name: 'Mariestad', lat: 58.7112536, lon: 13.8255412, radius: 100 },
+    { name: 'Hasslerör', lat: 58.7491527, lon: 13.9404069, radius: 100 },
+    { name: 'Lyrestad', lat: 58.8036306, lon: 14.0591279, radius: 100 },
+    { name: 'Torved', lat: 58.8242178, lon: 14.1007891, radius: 100 },
+    { name: 'Hova', lat: 58.8547965, lon: 14.2153363, radius: 100 },
+    { name: 'Gårdsjö', lat: 58.8721468, lon: 14.3335353, radius: 100 },
+    { name: 'Laxå', lat: 58.9893982, lon: 14.6185188, radius: 100 },
+    { name: 'Hallsberg personbangård', lat: 59.0671196, lon: 15.1107975, radius: 100 },
+    { name: 'Kumla', lat: 59.126913, lon: 15.1406426, radius: 100 },
+    { name: 'Örebro Södra', lat: 59.2697009, lon: 15.2020665, radius: 100 },
+    { name: 'Örebro Central', lat: 59.278536, lon: 15.2116615, radius: 100 }
+  ];
+
+  const els = {
+    startSel: document.getElementById('startStation'),
+    endSel: document.getElementById('endStation'),
+    cards: document.getElementById('cards'),
+    setup: document.getElementById('setup'),
+    journey: document.getElementById('journey'),
+    report: document.getElementById('report'),
+    saveBtn: document.getElementById('btnSaveFile'),
+    setupError: document.getElementById('setupError'),
+    journeyMsg: document.getElementById('journeyMsg'),
+    reportHTML: document.getElementById('reportHTML'),
+    gpsStatusBadge: document.getElementById('gpsStatusBadge'),
+    gpsStatusText: document.getElementById('gpsStatusText'),
+    gpsAccuracy: document.getElementById('gpsAccuracy'),
+    gpsCoords: document.getElementById('gpsCoords'),
+    gpsTimestamp: document.getElementById('gpsTimestamp'),
+    gpsSpeed: document.getElementById('gpsSpeed'),
+    gpsExtra: document.getElementById('gpsExtra'),
+    nextStop: document.getElementById('nextStop'),
+    nextStopInfo: document.getElementById('nextStopInfo'),
+    journeyTitle: document.getElementById('journeyTitle'),
+    logCountTop: document.getElementById('logCountTop'),
+    calibrationBody: document.getElementById('calibrationBody'),
+    calibrationMsg: document.getElementById('calibrationMsg'),
+    installBtn: document.getElementById('btnInstall'),
+    updateBtn: document.getElementById('btnUpdate'),
+    headerStatus: document.getElementById('headerStatus'),
+    wakeBtn: document.getElementById('btnWakeLock')
+  };
+
+  let stationOverrides = loadStationOverrides();
+  let stationCatalog = composeStationCatalog();
+
+  const state = {
+    running: false,
+    watchId: null,
+    route: [],
+    trainNumber: '',
+    notes: '',
+    startedAt: null,
+    lastPosition: null,
+    lastFixTime: null,
+    lastSpeed: null,
+    lastSpeedTime: null,
+    lastReachedIndex: 0,
+    nextIndex: null,
+    awaitingDepartureIndex: null,
+    departureProvisionalIdx: null,
+    autoReason: '',
+    aborted: false
+  };
+  let deferredInstallPrompt = null;
+  let wakeLockSentinel = null;
+  let keepScreenAwake = false;
+  let pendingServiceWorker = null;
+  let updateTriggered = false;
+  let hadController = !!navigator.serviceWorker.controller;
+
+  function init(){
+    populateStationSelects();
+    renderCalibrationTable();
+    updateLogCount();
+    bindEvents();
+    setupPWA();
+    updateWakeButton();
+  }
+
+  function populateStationSelects(preserveSelection){
+    const currentStart=preserveSelection?els.startSel.value:null;
+    const currentEnd=preserveSelection?els.endSel.value:null;
+    const fragStart=new DocumentFragment();
+    const fragEnd=new DocumentFragment();
+    stationCatalog.forEach(st=>{
+      const opt1=document.createElement('option');
+      opt1.value=st.name;
+      opt1.textContent=st.name;
+      fragStart.appendChild(opt1);
+      const opt2=document.createElement('option');
+      opt2.value=st.name;
+      opt2.textContent=st.name;
+      fragEnd.appendChild(opt2);
+    });
+    els.startSel.innerHTML='';
+    els.endSel.innerHTML='';
+    els.startSel.appendChild(fragStart);
+    els.endSel.appendChild(fragEnd);
+    const startExists=stationCatalog.some(s=>s.name===currentStart);
+    const endExists=stationCatalog.some(s=>s.name===currentEnd);
+    els.startSel.value=startExists&&currentStart?currentStart:'Lidköping';
+    els.endSel.value=endExists&&currentEnd?currentEnd:'Mariestad';
+  }
+
+  function bindEvents(){
+    document.getElementById('btnStart').addEventListener('click', startJourney);
+    document.getElementById('btnAbort').addEventListener('click', () => stopJourney(true, 'Resan avbröts manuellt'));
+    document.getElementById('btnFinish').addEventListener('click', () => stopJourney(false, 'Avslutad manuellt'));
+    document.getElementById('btnExport').addEventListener('click', exportLogs);
+    if(els.saveBtn){
+      els.saveBtn.addEventListener('click', saveLogsToFile);
+    }
+    document.getElementById('btnClear').addEventListener('click', clearLogs);
+    document.getElementById('btnSync').addEventListener('click', syncLogs);
+    document.getElementById('btnNew').addEventListener('click', resetForNewRun);
+    els.cards.addEventListener('click', handleCardButton);
+    els.cards.addEventListener('change', handleCardChange);
+    els.calibrationBody.addEventListener('input', handleCalibrationInput);
+    els.calibrationBody.addEventListener('click', handleCalibrationClick);
+    if(els.wakeBtn){
+      els.wakeBtn.addEventListener('click', toggleWakeLock);
+    }
+    if(els.updateBtn){
+      els.updateBtn.addEventListener('click', ()=> {
+        if(pendingServiceWorker){
+          updateTriggered=true;
+          els.updateBtn.disabled=true;
+          showHeaderStatus('Uppdaterar appen…', false);
+          pendingServiceWorker.postMessage({type:'SKIP_WAITING'});
+          pendingServiceWorker=null;
+        }else{
+          window.location.reload();
+        }
+      });
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+  }
+
+  function startJourney(){
+    speedHistory.length=0; // nollställer tidigare hastighetsposter inför ny resa
+    state.awaitingDepartureIndex=null;
+    state.departureProvisionalIdx=null;
+    state.lastSpeed=null;
+    state.lastSpeedTime=null;
+    const startName=els.startSel.value;
+    const endName=els.endSel.value;
+    if(startName===endName){
+      showSetupError('Start- och slutstation måste vara olika.');
+      return;
+    }
+    const startIdx=stationCatalog.findIndex(s=>s.name===startName);
+    const endIdx=stationCatalog.findIndex(s=>s.name===endName);
+    if(startIdx<0||endIdx<0){
+      showSetupError('Kunde inte hitta stationerna.');
+      return;
+    }
+    const forward=startIdx<endIdx;
+    const slice=forward ? stationCatalog.slice(startIdx,endIdx+1) : stationCatalog.slice(endIdx,startIdx+1).reverse();
+    const route=slice.map((st,idx)=>({
+      name:st.name,
+      lat:st.lat,
+      lon:st.lon,
+      radius:isFinite(st.radius)?st.radius:DEFAULT_RADIUS,
+      customRadius:!!st.customRadius,
+      actualArrival:null,
+      actualDeparture:null,
+      arrivalSource:'',
+      departSource:'',
+      arrivalPosition:null,
+      departurePosition:null,
+      shouldStop:true,
+      excludeInboundRun:false,
+      inZone:false,
+      lastSeenDistance:null,
+      passThrough:false,
+      needsArrivalRetiming:false,
+      reachedLowSpeed:false,
+      closestDistance:null,
+      closestTime:null,
+      closestPosition:null,
+      departureProvisional:false,
+      departureProvisionalAt:null,
+      order:idx+1
+    }));
+    state.route=route;
+    state.running=true;
+    state.trainNumber=(document.getElementById('trainNumber').value||'').trim();
+    state.notes=(document.getElementById('startNotes').value||'').trim();
+    state.startedAt=new Date();
+    state.lastReachedIndex=0;
+    state.nextIndex=route.length>1?1:null;
+    state.autoReason='';
+    state.aborted=false;
+    hideSetupError();
+    els.setup.style.display='none';
+    els.journey.style.display='block';
+    els.report.style.display='none';
+    els.journeyTitle.textContent=`${startName} → ${endName} • tåg ${state.trainNumber||'–'}`;
+    els.journeyMsg.style.display='none';
+    renderRouteCards();
+    requestGpsWatch();
+  }
+
+  function requestGpsWatch(){
+    if(!navigator.geolocation){
+      updateGpsStatus(null, { message:'GPS saknas i webbläsaren.' });
+      showJourneyMessage('GPS stöds inte i den här webbläsaren.', true);
+      return;
+    }
+    if(state.watchId!==null) navigator.geolocation.clearWatch(state.watchId);
+    const startWatch=()=>{
+      state.watchId = navigator.geolocation.watchPosition(handlePosition, handlePositionError, {
+        enableHighAccuracy:true,
+        maximumAge:1000,
+        timeout:15000
+      });
+      updateGpsStatus(null, { message:'Väntar på första fix…' });
+    };
+    navigator.geolocation.getCurrentPosition(pos=>{
+      state.lastPosition=pos;
+      state.lastFixTime=Date.now();
+      updateGpsStatus(pos);
+      startWatch();
+    }, err=>{
+      if(err && err.code===err.PERMISSION_DENIED){
+        updateGpsStatus(null, { message:'Plats nekad – tillåt GPS i webbläsaren.' });
+        showJourneyMessage('Tillåt plats/GPS för den här sidan och starta om.', true);
+        return;
+      }
+      startWatch();
+    }, { enableHighAccuracy:true, maximumAge:1000, timeout:8000 });
+  }
+
+  function handlePosition(pos){
+    state.lastPosition=pos;
+    state.lastFixTime=Date.now();
+    updateGpsStatus(pos);
+    if(!state.running) return;
+    const lat=pos.coords.latitude;
+    const lon=pos.coords.longitude;
+    const acc=pos.coords.accuracy;
+    const speed=pos.coords.speed!=null?pos.coords.speed:estimateSpeedFromHistory(pos);
+    state.lastSpeed=speed;
+    state.lastSpeedTime=pos.timestamp||Date.now();
+    updateSpeedReadout(speed, acc);
+    if(!state.route.length) return;
+    const idxs=candidateIndices();
+    idxs.forEach(idx=>{
+      const station=state.route[idx];
+      if(!station||station.lat==null||station.lon==null) return;
+      const dist=haversine(lat,lon,station.lat,station.lon);
+      station.lastSeenDistance=dist;
+      evaluateGeofence(idx, dist);
+      trackClosestApproach(idx);
+    });
+    processSpeedTriggers(speed);
+    renderRouteCards();
+  }
+
+  const speedHistory=[];
+  function estimateSpeedFromHistory(pos){
+    const now=pos.timestamp||Date.now();
+    speedHistory.push({
+      lat:pos.coords.latitude,
+      lon:pos.coords.longitude,
+      t:now
+    });
+    while(speedHistory.length>10) speedHistory.shift();
+    if(speedHistory.length<2) return null;
+    const a=speedHistory[speedHistory.length-2];
+    const b=speedHistory[speedHistory.length-1];
+    const dt=(b.t-a.t)/1000;
+    if(dt<=0) return null;
+    const dist=haversine(a.lat,a.lon,b.lat,b.lon);
+    return dist/dt;
+  }
+
+  function updateSpeedReadout(speed, accuracy){
+    if(speed!=null){
+      els.gpsSpeed.textContent=`${(speed*3.6).toFixed(1)} km/h`;
+      if(speed<0.5){
+        els.gpsExtra.textContent='Stillastående (under 0,5 km/h)';
+      }else if(speed<5){
+        els.gpsExtra.textContent='Låg fart – möjlig inbromsning eller avgång';
+      }else{
+        els.gpsExtra.textContent='I rörelse';
+      }
+    }else{
+      els.gpsSpeed.textContent='–';
+      els.gpsExtra.textContent='Hastighet saknas i GPS-datat';
+    }
+    if(accuracy!=null){
+      els.gpsAccuracy.textContent=`Noggrannhet: ±${Math.round(accuracy)} m`;
+    }
+  }
+
+  function handlePositionError(err){
+    updateGpsStatus(null, err);
+    showJourneyMessage(err&&err.message?err.message:'Kunde inte läsa GPS.', true);
+  }
+
+  function updateGpsStatus(pos, error){
+    if(pos){
+      els.gpsStatusBadge.textContent='GPS aktiv';
+      els.gpsStatusBadge.classList.add('live');
+      els.gpsStatusBadge.classList.remove('warn');
+      els.gpsStatusText.textContent='Signal mottagen';
+      els.gpsCoords.textContent=`${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
+      const ts=new Date(pos.timestamp||Date.now());
+      els.gpsTimestamp.textContent=ts.toLocaleTimeString('sv-SE');
+    }else if(error){
+      els.gpsStatusBadge.textContent='GPS saknas';
+      els.gpsStatusBadge.classList.add('warn');
+      els.gpsStatusText.textContent=error.message||'Ingen GPS';
+      els.gpsCoords.textContent='–';
+      els.gpsTimestamp.textContent='–';
+    }else{
+      els.gpsStatusBadge.textContent='Ingen GPS ännu';
+      els.gpsStatusBadge.classList.remove('warn','live');
+      els.gpsStatusText.textContent='Väntar på position…';
+      els.gpsCoords.textContent='–';
+      els.gpsTimestamp.textContent='–';
+    }
+  }
+
+  function candidateIndices(){
+    if(!state.route.length) return [];
+    const idxs=new Set();
+    idxs.add(Math.max(0,state.lastReachedIndex-1));
+    idxs.add(state.lastReachedIndex);
+    if(state.nextIndex!=null) idxs.add(state.nextIndex);
+    if(state.nextIndex!=null && state.nextIndex+1<state.route.length) idxs.add(state.nextIndex+1);
+    return Array.from(idxs).filter(i=>i>=0 && i<state.route.length);
+  }
+
+  function evaluateGeofence(idx, distance){
+    const station=state.route[idx];
+    if(!station) return;
+    const radius=station.radius||DEFAULT_RADIUS;
+    const exitMargin=station.customRadius?0:EXTRA_MARGIN;
+    const exitThreshold=radius+exitMargin;
+    if(distance<=radius){
+      if(!station.inZone){
+        station.inZone=true;
+        handleStationEntry(idx);
+      }
+    }else if(station.inZone && distance>exitThreshold){
+      station.inZone=false;
+      handleStationExit(idx);
+    }
+  }
+
+  function trackClosestApproach(idx){
+    const station=state.route[idx];
+    if(!station||!station.shouldStop||!station.actualArrival||station.actualDeparture) return;
+    if(!station.inZone) return;
+    const dist=station.lastSeenDistance;
+    if(dist==null) return;
+    const pos=state.lastPosition;
+    const now=new Date();
+    if(station.closestDistance==null || dist<station.closestDistance-CLOSE_APPROACH_EPS){
+      station.closestDistance=dist;
+      station.closestTime=now;
+      station.closestPosition=pos?{
+        lat:pos.coords.latitude,
+        lon:pos.coords.longitude,
+        accuracy:pos.coords.accuracy||null
+      }:null;
+      if(station.needsArrivalRetiming){
+        station.actualArrival=new Date(now);
+        station.arrivalSource='gps';
+        station.arrivalPosition=station.closestPosition;
+      }
+    }else if(station.needsArrivalRetiming && station.closestDistance!=null && dist>station.closestDistance+PASS_DISTANCE_MARGIN){
+      markPassingDeparture(idx);
+    }
+  }
+
+  function markPassingDeparture(idx){
+    const station=state.route[idx];
+    if(!station||station.actualDeparture) return;
+    const pos=state.lastPosition;
+    station.actualDeparture=new Date();
+    station.departSource='gps-pass';
+    station.departurePosition=pos?{
+      lat:pos.coords.latitude,
+      lon:pos.coords.longitude,
+      accuracy:pos.coords.accuracy||null
+    }:null;
+    station.needsArrivalRetiming=false;
+    station.reachedLowSpeed=false;
+    station.departureProvisional=false;
+    station.departureProvisionalAt=null;
+    advanceAfterDeparture(idx);
+  }
+
+  function processSpeedTriggers(speed){
+    if(typeof speed!=='number') return;
+    const lastIdx=state.route.length?state.route.length-1:null;
+    if(state.running && lastIdx!=null){
+      const endStation=state.route[lastIdx];
+      if(endStation && endStation.shouldStop && endStation.actualArrival && !endStation.actualDeparture && endStation.inZone && speed<=SPEED_THRESHOLD_MS){
+        stopJourney(false, 'Slutstation registrerad – stillastående');
+        return;
+      }
+    }
+    const candidates=[];
+    if(state.awaitingDepartureIndex!=null) candidates.push(state.awaitingDepartureIndex);
+    if(state.departureProvisionalIdx!=null) candidates.push(state.departureProvisionalIdx);
+    const seen=new Set();
+    for(const idx of candidates){
+      if(seen.has(idx)) continue;
+      seen.add(idx);
+      const station=state.route[idx];
+      const allowNoArrivalAtStart = idx===0 && !station.actualArrival;
+      if(!station||!station.shouldStop||(!station.actualArrival && !allowNoArrivalAtStart)) continue;
+      const pos=state.lastPosition;
+      const now=Date.now();
+      if(station.actualDeparture && station.departureProvisional){
+        const withinDist = station.lastSeenDistance!=null ? station.lastSeenDistance <= (station.radius||DEFAULT_RADIUS) + EXTRA_MARGIN*2 : true;
+        const withinTime = !station.departureProvisionalAt || (now - station.departureProvisionalAt) <= DEPART_REVERT_WINDOW_MS;
+        if(speed<=SPEED_THRESHOLD_MS && (withinDist || withinTime)){
+          station.actualDeparture=null;
+          station.departSource='';
+          station.departurePosition=null;
+          station.departureProvisional=false;
+          station.departureProvisionalAt=null;
+          state.awaitingDepartureIndex=idx;
+          state.departureProvisionalIdx=null;
+          station.reachedLowSpeed=true;
+          state.lastReachedIndex=idx;
+          state.nextIndex=idx+1<state.route.length?idx+1:null;
+          updateNextStopUI();
+          renderRouteCards();
+          continue;
+        }
+        const farAway = station.lastSeenDistance!=null && station.lastSeenDistance > (station.radius||DEFAULT_RADIUS) + EXTRA_MARGIN*3;
+        if(!withinTime || farAway){
+          station.departureProvisional=false;
+          station.departureProvisionalAt=null;
+          if(state.departureProvisionalIdx===idx) state.departureProvisionalIdx=null;
+        }
+        continue;
+      }
+      if(!station.actualArrival && !allowNoArrivalAtStart) continue;
+      if(station.actualDeparture) continue;
+      if(station.needsArrivalRetiming && !station.inZone){
+        station.needsArrivalRetiming=false;
+      }
+      if(station.needsArrivalRetiming && station.inZone && speed<=SPEED_THRESHOLD_MS){
+        station.actualArrival=new Date();
+        station.arrivalSource='gps';
+        station.arrivalPosition=pos?{
+          lat:pos.coords.latitude,
+        lon:pos.coords.longitude,
+        accuracy:pos.coords.accuracy||null
+      }:null;
+      station.needsArrivalRetiming=false;
+      station.reachedLowSpeed=true;
+    }else if(!station.reachedLowSpeed && speed<=SPEED_THRESHOLD_MS){
+      station.reachedLowSpeed=true;
+    }
+    if(station.reachedLowSpeed && speed>=SPEED_THRESHOLD_MS){
+      station.actualDeparture=new Date();
+      station.departSource='gps';
+      station.departurePosition=pos?{
+        lat:pos.coords.latitude,
+        lon:pos.coords.longitude,
+        accuracy:pos.coords.accuracy||null
+      }:null;
+      station.departureProvisional=false;
+      station.departureProvisionalAt=null;
+      if(state.departureProvisionalIdx===idx) state.departureProvisionalIdx=null;
+      advanceAfterDeparture(idx);
+    }
+    }
+  }
+
+  function handleStationEntry(idx){
+    const station=state.route[idx];
+    const pos=state.lastPosition;
+    const posInfo=pos?{
+      lat:pos.coords.latitude,
+      lon:pos.coords.longitude,
+      accuracy:pos.coords.accuracy||null
+    }:null;
+    const isStartStation = idx===0;
+    if(isStartStation && !station.actualArrival && !station.actualDeparture){
+      state.lastReachedIndex=idx;
+      state.nextIndex=idx+1<state.route.length?idx+1:null;
+      if(station.shouldStop){
+        state.awaitingDepartureIndex=idx;
+        const slowNow=typeof state.lastSpeed==='number' && state.lastSpeed<=SPEED_THRESHOLD_MS;
+        station.reachedLowSpeed=slowNow;
+        station.needsArrivalRetiming=false;
+        station.closestDistance=station.lastSeenDistance!=null?station.lastSeenDistance:null;
+        station.closestTime=new Date();
+        station.closestPosition=posInfo;
+      }
+      updateNextStopUI();
+      return;
+    }
+    if(!station.actualArrival){
+      station.actualArrival=new Date();
+      station.arrivalSource='gps';
+      station.arrivalPosition=posInfo;
+      state.lastReachedIndex=idx;
+      state.nextIndex=idx+1<state.route.length?idx+1:null;
+      
+      updateNextStopUI();
+    }
+    if(!station.shouldStop){
+      recordImmediatePass(idx);
+    }else{
+      state.awaitingDepartureIndex=idx;
+      const slowNow=typeof state.lastSpeed==='number' && state.lastSpeed<=SPEED_THRESHOLD_MS;
+      station.reachedLowSpeed=slowNow;
+      station.needsArrivalRetiming=!slowNow;
+      station.closestDistance=station.lastSeenDistance!=null?station.lastSeenDistance:null;
+      station.closestTime=new Date();
+      station.closestPosition=posInfo;
+      if(idx===state.route.length-1){
+        // sista station: invänta stillastående innan vi avslutar
+        state.awaitingDepartureIndex=null;
+      }
+    }
+  }
+
+  function recordImmediatePass(idx){
+    const station=state.route[idx];
+    if(!station) return;
+    station.passThrough=true;
+    if(!station.actualDeparture){
+      station.actualDeparture=new Date();
+      station.departSource='gps-pass';
+      station.departurePosition=station.arrivalPosition;
+      station.departureProvisional=false;
+      station.departureProvisionalAt=null;
+    }
+    advanceAfterDeparture(idx);
+  }
+
+  function handleStationExit(idx){
+    const station=state.route[idx];
+    if(!station.shouldStop) return;
+    if(idx===state.route.length-1) return; // sista station: avslutas först vid stillastående
+    const allowStartDeparture = idx===0 && !station.actualArrival;
+    if((station.actualArrival || allowStartDeparture) && !station.actualDeparture){
+      const pos=state.lastPosition;
+      const speed=state.lastSpeed;
+      const movingFast=typeof speed==='number' && speed>SPEED_THRESHOLD_MS;
+      station.actualDeparture=new Date();
+      station.departSource='gps';
+      station.departurePosition=pos?{
+        lat:pos.coords.latitude,
+        lon:pos.coords.longitude,
+        accuracy:pos.coords.accuracy||null
+      }:null;
+      station.needsArrivalRetiming=false;
+      station.reachedLowSpeed=true;
+      station.departureProvisional=station.shouldStop && movingFast;
+      station.departureProvisionalAt=station.departureProvisional?Date.now():null;
+      if(station.departureProvisional){
+        state.departureProvisionalIdx=idx;
+      }
+      advanceAfterDeparture(idx);
+      if(station.departureProvisional){
+        state.awaitingDepartureIndex=idx;
+      }
+    }
+  }
+
+  function advanceAfterDeparture(idx){
+    state.lastReachedIndex=Math.max(state.lastReachedIndex, idx);
+    state.nextIndex=idx+1<state.route.length?idx+1:null;
+    if(state.awaitingDepartureIndex===idx){
+      state.awaitingDepartureIndex=null;
+    }
+    const station=state.route[idx];
+    if(station){
+      station.needsArrivalRetiming=false;
+      if(!station.departureProvisional){
+        station.departureProvisionalAt=null;
+      }
+    }
+    updateNextStopUI();
+    if(idx===state.route.length-1){
+      stopJourney(false, 'Slutstation klar');
+    }
+  }
+
+  function updateNextStopUI(){
+    if(state.nextIndex==null){
+      els.nextStop.textContent='–';
+      els.nextStopInfo.textContent='Alla stationer registrerade';
+    }else{
+      const st=state.route[state.nextIndex];
+      els.nextStop.textContent=st.name;
+      const dist=st.lastSeenDistance;
+      els.nextStopInfo.textContent = dist!=null ? `≈${formatDistance(dist)} bort` : 'Ingen distansdata ännu';
+    }
+  }
+
+  function renderRouteCards(){
+    const cardsHtml=state.route.map((station,idx)=>{
+      const arrival=station.actualArrival?formatTime(station.actualArrival):'–';
+      const depart=station.actualDeparture?formatTime(station.actualDeparture):'–';
+      const dist=station.lastSeenDistance!=null?formatDistance(station.lastSeenDistance):'–';
+      const classes=['card'];
+      if(state.nextIndex===idx) classes.push('active');
+      return `<div class="${classes.join(' ')}" data-idx="${idx}">
+        <div class="bar" style="justify-content:space-between">
+          <h3>${station.order}. ${station.name}</h3>
+          <span class="badge">${dist}</span>
+        </div>
+        <p class="meta">Radie ${Math.round(station.radius)} m • ${station.lat!=null?station.lat.toFixed(4):'–'}, ${station.lon!=null?station.lon.toFixed(4):'–'}</p>
+        <div class="control-row">
+          <button class="ghost" data-action="update-pos" data-idx="${idx}">Uppdatera koordinater med min position</button>
+        </div>
+        <p><strong>Ankomst:</strong> ${arrival} ${station.arrivalSource==='gps'?'(GPS)':station.arrivalSource==='manual'?'(manuellt)':''}</p>
+        <p><strong>Avgång:</strong> ${depart} ${station.departSource==='gps'?'(GPS)':station.departSource==='manual'?'(manuellt)':''}</p>
+        <div class="meta">${station.shouldStop?'Planerat stopp':'Passeras utan stopp'}</div>
+        <div class="row control-row">
+          <label><input type="checkbox" data-action="toggle-stop" data-idx="${idx}" ${station.shouldStop?'checked':''}> Planerat stopp</label>
+        </div>
+        <div class="row control-row">
+          <label class="meta"><input type="checkbox" data-action="exclude-run" data-idx="${idx}" ${station.excludeInboundRun?'checked':''}> Sen av annan orsak – exkludera gångtiden hit</label>
+        </div>
+        <div class="bar card-actions">
+          <button class="ghost" data-action="arrive" data-idx="${idx}">Markera ankomst</button>
+          <button class="ghost" data-action="depart" data-idx="${idx}">Markera avgång</button>
+        </div>
+      </div>`;
+    }).join('');
+    els.cards.innerHTML=cardsHtml;
+    updateNextStopUI();
+  }
+
+  function formatTime(dt){
+    return new Date(dt).toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
+
+  function formatDistance(meters){
+    if(meters>1000) return (meters/1000).toFixed(2)+' km';
+    return Math.round(meters)+' m';
+  }
+
+  function handleCardButton(ev){
+    const btn=ev.target.closest('button[data-action]');
+    if(!btn) return;
+    const idx=parseInt(btn.dataset.idx,10);
+    if(Number.isNaN(idx) || !state.route[idx]) return;
+    if(btn.dataset.action==='arrive'){
+      manualArrival(idx);
+    }else if(btn.dataset.action==='depart'){
+      manualDeparture(idx);
+    }else if(btn.dataset.action==='update-pos'){
+      const station=state.route[idx];
+      if(!station) return;
+      calibrateWithCurrentPosition(station.name, true);
+    }
+  }
+
+  function handleCardChange(ev){
+    const target=ev.target;
+    const action=target.dataset.action;
+    if(action==='toggle-stop'){
+      const idx=parseInt(target.dataset.idx,10);
+      if(!state.route[idx]) return;
+      state.route[idx].shouldStop=target.checked;
+      if(!target.checked && state.awaitingDepartureIndex===idx){
+        state.awaitingDepartureIndex=null;
+      }
+      renderRouteCards();
+    }else if(action==='exclude-run'){
+      const idx=parseInt(target.dataset.idx,10);
+      if(!state.route[idx]) return;
+      state.route[idx].excludeInboundRun=target.checked;
+    }
+  }
+
+  function manualArrival(idx){
+    const station=state.route[idx];
+    if(!station) return;
+    station.actualArrival=new Date();
+    station.arrivalSource='manual';
+    station.arrivalPosition=state.lastPosition?{
+      lat:state.lastPosition.coords.latitude,
+      lon:state.lastPosition.coords.longitude,
+      accuracy:state.lastPosition.coords.accuracy||null
+    }:null;
+    station.inZone=true;
+    station.needsArrivalRetiming=false;
+    station.reachedLowSpeed=true;
+    state.lastReachedIndex=idx;
+    state.nextIndex=idx+1<state.route.length?idx+1:null;
+    if(station.shouldStop){
+      state.awaitingDepartureIndex=idx;
+    }
+    renderRouteCards();
+  }
+
+  function manualDeparture(idx){
+    const station=state.route[idx];
+    if(!station) return;
+    station.actualDeparture=new Date();
+    station.departSource='manual';
+    station.departurePosition=state.lastPosition?{
+      lat:state.lastPosition.coords.latitude,
+      lon:state.lastPosition.coords.longitude,
+      accuracy:state.lastPosition.coords.accuracy||null
+    }:null;
+    station.needsArrivalRetiming=false;
+    station.reachedLowSpeed=true;
+    station.departureProvisional=false;
+    station.departureProvisionalAt=null;
+    if(state.departureProvisionalIdx===idx) state.departureProvisionalIdx=null;
+    advanceAfterDeparture(idx);
+    renderRouteCards();
+  }
+
+  function stopJourney(aborted, reason){
+    if(!state.route.length) return;
+    if(state.watchId!==null){
+      navigator.geolocation.clearWatch(state.watchId);
+      state.watchId=null;
+    }
+    state.running=false;
+    state.aborted=!!aborted;
+    state.autoReason=reason||'';
+    state.departureProvisionalIdx=null;
+    els.journeyMsg.textContent=reason|| (aborted?'Resan avslutad':'Resan sparad');
+    els.journeyMsg.style.display='inline-block';
+    const logEntry=saveLog(aborted);
+    renderReport(logEntry);
+    els.journey.style.display='none';
+    els.report.style.display='block';
+    els.setup.style.display='block';
+  }
+
+  function renderReport(logEntry){
+    if(!logEntry){
+      els.reportHTML.innerHTML='<p>Ingen data att visa.</p>';
+      return;
+    }
+    const rows=logEntry.stops.map((st,idx)=>{
+      const dwell=st.actualArrival&&st.actualDeparture?((new Date(st.actualDeparture)-new Date(st.actualArrival))/60000).toFixed(1)+' min':'–';
+      return `<tr>
+        <td>${idx+1}</td>
+        <td>${st.name}</td>
+        <td>${st.actualArrival?formatTime(st.actualArrival):'–'}</td>
+        <td>${st.actualDeparture?formatTime(st.actualDeparture):'–'}</td>
+        <td>${dwell}</td>
+        <td>${st.arrivalSource||'–'}</td>
+      </tr>`;
+    }).join('');
+    els.reportHTML.innerHTML=`
+      <p><strong>Tåg:</strong> ${logEntry.trainNumber||'–'} • <strong>Sträcka:</strong> ${logEntry.startStation} → ${logEntry.endStation}</p>
+      <p><strong>Start:</strong> ${logEntry.startedAt?new Date(logEntry.startedAt).toLocaleString('sv-SE'):'–'} • <strong>Slut:</strong> ${logEntry.finishedAt?new Date(logEntry.finishedAt).toLocaleString('sv-SE'):'–'}</p>
+      ${logEntry.notes?`<p><strong>Anteckningar:</strong> ${escapeHtml(logEntry.notes)}</p>`:''}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Station</th><th>Ankomst</th><th>Avgång</th><th>Uppehåll</th><th>Källa</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <p>${state.aborted?'Status: Avbruten':'Status: Klar'}${state.autoReason?` – ${state.autoReason}`:''}</p>
+    `;
+  }
+
+  function saveLog(aborted){
+    const logs=loadLogs();
+    const entry={
+      id:Date.now().toString(36),
+      trainNumber:state.trainNumber,
+      startStation:state.route[0]?.name||'',
+      endStation:state.route[state.route.length-1]?.name||'',
+      startedAt:state.startedAt,
+      finishedAt:new Date(),
+      aborted:!!aborted,
+      notes:state.notes,
+      stops:state.route.map(st=>({
+        name:st.name,
+        actualArrival:st.actualArrival,
+        actualDeparture:st.actualDeparture,
+        arrivalSource:st.arrivalSource,
+        departSource:st.departSource,
+        shouldStop:st.shouldStop,
+        excludeInboundRun:!!st.excludeInboundRun
+      }))
+    };
+    logs.push(entry);
+    try{
+      localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(logs));
+    }catch(e){}
+    updateLogCount();
+    return entry;
+  }
+
+  function loadLogs(){
+    try{
+      const raw=localStorage.getItem(STORAGE_KEY_LOGS);
+      if(!raw) return [];
+      const parsed=JSON.parse(raw);
+      if(!Array.isArray(parsed)) return [];
+      return parsed.map(normalizeLogEntry).filter(Boolean);
+    }catch(e){
+      return [];
+    }
+  }
+
+  async function syncLogs(){
+    if(!('showOpenFilePicker' in window) || !('showSaveFilePicker' in window)){
+      alert('Din webbläsare saknar filåtkomst-API. Använd Chrome/Edge via https för att synka eller exportera istället.');
+      return;
+    }
+    try{
+      let handle=null;
+      try{
+        const result=await window.showOpenFilePicker({
+          types:[{description:'JSON-loggar',accept:{'application/json':['.json']}}],
+          excludeAcceptAllOption:false,
+          multiple:false
+        });
+        if(result && result[0]) handle=result[0];
+      }catch(e){
+        if(e && e.name==='AbortError'){
+          showHeaderStatus('Synk avbruten – ingen fil vald.', true);
+          return;
+        }
+        throw e;
+      }
+      if(!handle){
+        showHeaderStatus('Hittade ingen loggfil. Exportera först för att skapa en fil.', true);
+        return;
+      }
+      const file=await handle.getFile();
+      const text=await file.text();
+      const fileLogs=(()=>{
+        try{ return JSON.parse(text||'[]'); }
+        catch(e){ return []; }
+      })();
+      const incomingRaw=Array.isArray(fileLogs)?fileLogs:(fileLogs?[fileLogs]:[]);
+      const normalizedIncoming=incomingRaw.map(normalizeLogEntry).filter(Boolean);
+      const existing=loadLogs();
+      const merged=dedupeLogs(existing.concat(normalizedIncoming));
+      const added=Math.max(merged.length - existing.length, 0);
+      const ignored=Math.max(incomingRaw.length - normalizedIncoming.length, 0);
+      const writable=await handle.createWritable();
+      await writable.write(JSON.stringify(merged,null,2));
+      await writable.close();
+      try{
+        localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(merged));
+      }catch(e){}
+      updateLogCount();
+      const message = normalizedIncoming.length
+        ? `Synk klar: +${added} / ignorerade ${ignored}`
+        : 'Ingen giltig logg hittades i filen.';
+      showHeaderStatus(message, !normalizedIncoming.length);
+    }catch(err){
+      const msg = err && (err.message || err.name) ? `${err.name||''} ${err.message||''}`.trim() : 'Okänt fel';
+      showHeaderStatus(`Synk misslyckades: ${msg}`, true);
+      console.error(err);
+    }
+  }
+
+  function exportLogs(){
+    const logs=loadLogs();
+    const blob=new Blob([JSON.stringify(logs,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download='kinnekulle_gps_logs.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function saveLogsToFile(){
+    const localLogs=loadLogs();
+    if(!('showOpenFilePicker' in window)){
+      showHeaderStatus('Webbläsaren saknar fil-API. Använd Exportera istället.', true);
+      return;
+    }
+    try{
+      let handle=null;
+      try{
+        const result=await window.showOpenFilePicker({
+          types:[{description:'JSON-loggar',accept:{'application/json':['.json']}}],
+          excludeAcceptAllOption:false,
+          multiple:false
+        });
+        if(result && result[0]) handle=result[0];
+      }catch(e){
+        if(e && e.name==='AbortError'){
+          showHeaderStatus('Sparande avbröts.', true);
+          return;
+        }
+        throw e;
+      }
+      if(!handle){
+        showHeaderStatus('Ingen fil vald.', true);
+        return;
+      }
+      let existingText='';
+      let incomingArray=[];
+      try{
+        const file=await handle.getFile();
+        existingText=await file.text();
+        const parsed=(()=>{
+          try{ return JSON.parse(existingText||'[]'); }
+          catch(e){ return null; }
+        })();
+        if(parsed===null){
+          showHeaderStatus('Kunde inte läsa filen – sparar inte.', true);
+          return;
+        }
+        incomingArray=Array.isArray(parsed)?parsed:(parsed?[parsed]:[]);
+      }catch(e){
+        incomingArray=[];
+      }
+      const normalizedIncoming=incomingArray.map(normalizeLogEntry).filter(Boolean);
+      const merged=dedupeLogs(localLogs.concat(normalizedIncoming));
+      if(!merged.length){
+        showHeaderStatus('Inga loggar att spara – ingen skrivning gjordes.', true);
+        return;
+      }
+      const writable=await handle.createWritable();
+      await writable.write(JSON.stringify(merged,null,2));
+      await writable.close();
+      try{
+        localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(merged));
+      }catch(e){}
+      updateLogCount();
+      showHeaderStatus(`Sparat & synkat: ${merged.length} loggar`, false);
+    }catch(err){
+      if(err && err.name==='AbortError'){
+        showHeaderStatus('Sparande avbröts.', true);
+        return;
+      }
+      const msg=err && (err.message||err.name)?`${err.name||''} ${err.message||''}`.trim():'Kunde inte spara';
+      showHeaderStatus(msg, true);
+    }
+  }
+
+  function clearLogs(){
+    if(!confirm('Vill du ta bort alla sparade körningar?')) return;
+    localStorage.removeItem(STORAGE_KEY_LOGS);
+    updateLogCount();
+  }
+
+  function updateLogCount(){
+    const count=loadLogs().length;
+    els.logCountTop.textContent=`Loggar: ${count}`;
+  }
+
+  function renderCalibrationTable(){
+    stationCatalog=composeStationCatalog();
+    populateStationSelects(true);
+    const rows=stationCatalog.map(st=>{
+      return `<tr data-name="${st.name}">
+        <td>${st.name}</td>
+        <td><input type="number" step="0.000001" data-field="lat" value="${st.lat!=null?st.lat.toFixed(6):''}" placeholder="lat"></td>
+        <td><input type="number" step="0.000001" data-field="lon" value="${st.lon!=null?st.lon.toFixed(6):''}" placeholder="lon"></td>
+        <td><input type="number" step="10" data-field="radius" value="${st.radius||DEFAULT_RADIUS}"></td>
+        <td><button type="button" class="ghost" data-action="use-current">Använd min position</button></td>
+      </tr>`;
+    }).join('');
+    els.calibrationBody.innerHTML=rows;
+  }
+
+  function handleCalibrationInput(ev){
+    const row=ev.target.closest('tr[data-name]');
+    if(!row) return;
+    const name=row.dataset.name;
+    const field=ev.target.dataset.field;
+    if(!field) return;
+    const value=ev.target.value.trim();
+    if(value===''){
+      if(stationOverrides[name]){
+        delete stationOverrides[name][field];
+        if(!Object.keys(stationOverrides[name]).length){
+          delete stationOverrides[name];
+        }
+      }
+    }else{
+      const num=parseFloat(value);
+      if(!stationOverrides[name]) stationOverrides[name]={};
+      if(!Number.isNaN(num)){
+        stationOverrides[name][field]=num;
+      }
+    }
+    saveStationOverrides();
+    stationCatalog=composeStationCatalog();
+    renderRouteCards();
+  }
+
+  function handleCalibrationClick(ev){
+    const btn=ev.target.closest('button[data-action="use-current"]');
+    if(!btn) return;
+    const row=btn.closest('tr[data-name]');
+    if(!row) return;
+    const name=row.dataset.name;
+    calibrateWithCurrentPosition(name);
+  }
+
+  function calibrateWithCurrentPosition(name, updateActiveRoute){
+    const applyPosition=pos=>{
+      if(!stationOverrides[name]) stationOverrides[name]={};
+      stationOverrides[name].lat=pos.coords.latitude;
+      stationOverrides[name].lon=pos.coords.longitude;
+      saveStationOverrides();
+      if(updateActiveRoute && state.route && state.route.length){
+        state.route.forEach(st=>{
+          if(st.name===name){
+            st.lat=pos.coords.latitude;
+            st.lon=pos.coords.longitude;
+          }
+        });
+        renderRouteCards();
+      }
+      renderCalibrationTable();
+      showCalibrationMessage(`Uppdaterade ${name} med aktuell position.`, false);
+    };
+    if(state.lastPosition){
+      applyPosition(state.lastPosition);
+    }else if(navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(pos=>{
+        state.lastPosition=pos;
+        applyPosition(pos);
+      }, err=>{
+        showCalibrationMessage(err&&err.message?err.message:'Kunde inte läsa GPS.', true);
+      }, {enableHighAccuracy:true, timeout:20000});
+    }else{
+      showCalibrationMessage('GPS saknas.', true);
+    }
+  }
+
+  function showCalibrationMessage(text, isError){
+    els.calibrationMsg.textContent=text;
+    els.calibrationMsg.style.display='inline-block';
+    els.calibrationMsg.style.background=isError?'#fee2e2':'#dcfce7';
+    els.calibrationMsg.style.borderColor=isError?'#fecaca':'#86efac';
+    setTimeout(()=>{ els.calibrationMsg.style.display='none'; },4000);
+  }
+
+  function loadStationOverrides(){
+    try{
+      const raw=localStorage.getItem(STORAGE_KEY_STATIONS);
+      if(!raw) return {};
+      const parsed=JSON.parse(raw);
+      return parsed&&typeof parsed==='object'?parsed:{};
+    }catch(e){
+      return {};
+    }
+  }
+
+  function saveStationOverrides(){
+    try{
+      localStorage.setItem(STORAGE_KEY_STATIONS, JSON.stringify(stationOverrides));
+    }catch(e){}
+  }
+
+  function composeStationCatalog(){
+    return baseStations.map(base=>{
+      const override=stationOverrides[base.name]||{};
+      const hasCustomRadius=override.radius!=null;
+      const derivedRadius=hasCustomRadius?override.radius:(base.radius!=null?base.radius:DEFAULT_RADIUS);
+      return {
+        name:base.name,
+        lat:override.lat!=null?override.lat:base.lat,
+        lon:override.lon!=null?override.lon:base.lon,
+        radius:isFinite(derivedRadius)?derivedRadius:DEFAULT_RADIUS,
+        customRadius:hasCustomRadius
+      };
+    });
+  }
+
+  function showSetupError(text){
+    els.setupError.textContent=text;
+    els.setupError.style.display='inline-block';
+  }
+
+  function hideSetupError(){
+    els.setupError.style.display='none';
+  }
+
+  function showJourneyMessage(text, isError){
+    els.journeyMsg.textContent=text;
+    els.journeyMsg.style.display='inline-block';
+    els.journeyMsg.style.background=isError?'#fee2e2':'var(--soft)';
+    els.journeyMsg.style.borderColor=isError?'#fecaca':'var(--softb)';
+  }
+
+  function resetForNewRun(){
+    speedHistory.length=0; // rensa hastighetshistorik mellan körningar
+    state.awaitingDepartureIndex=null;
+    state.lastSpeed=null;
+    state.lastSpeedTime=null;
+    state.route=[];
+    state.running=false;
+    state.nextIndex=null;
+    state.lastReachedIndex=0;
+    els.report.style.display='none';
+    els.journey.style.display='none';
+    els.setup.style.display='block';
+    els.cards.innerHTML='';
+    updateNextStopUI();
+  }
+
+  function escapeHtml(str){
+    return str.replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  function haversine(lat1, lon1, lat2, lon2){
+    const R=6371000;
+    const toRad=deg=>deg*Math.PI/180;
+    const dLat=toRad(lat2-lat1);
+    const dLon=toRad(lon2-lon1);
+    const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    const c=2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R*c;
+  }
+
+  function normalizeLogEntry(entry){
+    if(!entry || typeof entry!=='object') return null;
+    const stopsArray=Array.isArray(entry.stops)?entry.stops:[];
+    const firstStop=stopsArray[0]||{};
+    const lastStop=stopsArray[stopsArray.length-1]||{};
+    const endpoints=parseRouteEndpoints(entry.route);
+    const startStation = entry.startStation || endpoints.start || firstStop.name || '';
+    const endStation = entry.endStation || endpoints.end || lastStop.name || '';
+    const startedAt = entry.startedAt || entry.date || firstStop.actualDeparture || firstStop.actualArrival || null;
+    const finishedAt = entry.finishedAt || lastStop.actualArrival || lastStop.actualDeparture || null;
+    const normalizedStops = stopsArray.map((stop,idx)=>({
+      name: stop.name || stop.station || `Uppehåll ${idx+1}`,
+      actualArrival: stop.actualArrival || stop.arrival || stop.arr || null,
+      actualDeparture: stop.actualDeparture || stop.departure || stop.dep || null,
+      arrivalSource: stop.arrivalSource || '',
+      departSource: stop.departSource || '',
+      shouldStop: stop.shouldStop!=null ? !!stop.shouldStop : !stop.skipNoStop,
+      excludeInboundRun: !!(stop.excludeInboundRun || stop.exclude)
+    }));
+    const rawId = entry.id || entry.measurementId || entry.measurementID || `${entry.trainNumber||''}|${startStation||''}|${startedAt||''}`;
+    return {
+      id: String(rawId || Date.now().toString(36)),
+      trainNumber: entry.trainNumber || '',
+      startStation: startStation || '',
+      endStation: endStation || '',
+      startedAt: startedAt || null,
+      finishedAt: finishedAt || null,
+      aborted: !!entry.aborted,
+      notes: entry.notes || entry.note || '',
+      stops: normalizedStops
+    };
+  }
+
+  function dedupeLogs(logs){
+    const seen=new Set();
+    const out=[];
+    for(const entry of logs||[]){
+      if(!entry) continue;
+      const key=entry.id || entry.measurementId || `${entry.trainNumber||''}|${entry.startStation||''}|${entry.startedAt||''}`;
+      if(!seen.has(key)){
+        seen.add(key);
+        out.push(entry);
+      }
+    }
+    return out;
+  }
+
+  function parseRouteEndpoints(route){
+    if(typeof route!=='string') return {start:'', end:''};
+    const parts=route.split(/[-→]/).map(s=>s.trim()).filter(Boolean);
+    if(!parts.length) return {start:'', end:''};
+    return { start: parts[0], end: parts[parts.length-1] };
+  }
+
+  async function requestWakeLock(){
+    if(!('wakeLock' in navigator)){
+      showHeaderStatus('Skärmlås stöds inte i denna webbläsare.', true);
+      return;
+    }
+    try{
+      wakeLockSentinel=await navigator.wakeLock.request('screen');
+      keepScreenAwake=true;
+      wakeLockSentinel.addEventListener('release', ()=>{
+        wakeLockSentinel=null;
+        updateWakeButton();
+        if(keepScreenAwake && document.visibilityState==='visible'){
+          requestWakeLock().catch(()=>{});
+        }
+      });
+      updateWakeButton();
+      showHeaderStatus('Skärmen hålls vaken.', false);
+    }catch(err){
+      keepScreenAwake=false;
+      wakeLockSentinel=null;
+      updateWakeButton();
+      showHeaderStatus('Kunde inte låsa skärmen vaken.', true);
+    }
+  }
+
+  function releaseWakeLock(){
+    keepScreenAwake=false;
+    if(wakeLockSentinel){
+      wakeLockSentinel.release();
+      wakeLockSentinel=null;
+    }
+    updateWakeButton();
+    showHeaderStatus('Skärmen får slockna.', false);
+  }
+
+  function toggleWakeLock(){
+    if(keepScreenAwake){
+      releaseWakeLock();
+    }else{
+      requestWakeLock();
+    }
+  }
+
+  function updateWakeButton(){
+    if(!els.wakeBtn) return;
+    els.wakeBtn.textContent=keepScreenAwake?'Tillåt skärmen slockna':'Håll skärmen vaken';
+    els.wakeBtn.setAttribute('aria-pressed', keepScreenAwake?'true':'false');
+    els.wakeBtn.classList.toggle('primary', keepScreenAwake);
+  }
+
+  function handleVisibilityChange(){
+    if(document.visibilityState==='visible' && keepScreenAwake && !wakeLockSentinel){
+      requestWakeLock();
+    }
+  }
+
+  function setupPWA(){
+    if(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches){
+      hideInstallButton();
+    }
+    if('serviceWorker' in navigator){
+      window.addEventListener('load', ()=>{
+        navigator.serviceWorker.register(`./sw.js?v=${APP_VERSION}`).then(reg=>{
+          monitorServiceWorker(reg);
+        }).catch(err=>{
+          console.warn('Service worker misslyckades', err);
+        });
+      });
+      navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+        if(updateTriggered){
+          window.location.reload();
+        }
+      });
+    }
+    window.addEventListener('beforeinstallprompt', event=>{
+      event.preventDefault();
+      deferredInstallPrompt=event;
+      if(els.installBtn){
+        els.installBtn.style.display='inline-block';
+      }
+    });
+    window.addEventListener('appinstalled', ()=>{
+      showHeaderStatus('Appen installerades!', false);
+      hideInstallButton();
+    });
+    if(els.installBtn){
+      els.installBtn.addEventListener('click', async ()=>{
+        if(!deferredInstallPrompt) return;
+        els.installBtn.disabled=true;
+        try{
+          deferredInstallPrompt.prompt();
+          const choice=await deferredInstallPrompt.userChoice;
+          if(choice && choice.outcome==='accepted'){
+            showHeaderStatus('Installationen startar…', false);
+            hideInstallButton();
+          }else{
+            showHeaderStatus('Installationen avbröts.', true);
+          }
+        }catch(err){
+          showHeaderStatus('Kunde inte starta installationen.', true);
+        }finally{
+          deferredInstallPrompt=null;
+          els.installBtn.disabled=false;
+        }
+      });
+    }
+  }
+
+  function monitorServiceWorker(reg){
+    function listenForInstall(worker){
+      if(!worker) return;
+      worker.addEventListener('statechange', ()=>{
+        if(worker.state==='installed'){
+          if(navigator.serviceWorker.controller){
+            pendingServiceWorker=worker;
+            showUpdatePrompt();
+          }
+        }
+      });
+    }
+    if(reg.waiting && navigator.serviceWorker.controller){
+      pendingServiceWorker=reg.waiting;
+      showUpdatePrompt();
+    }
+    if(reg.installing){
+      listenForInstall(reg.installing);
+    }
+    reg.addEventListener('updatefound', ()=>{
+      listenForInstall(reg.installing);
+    });
+  }
+
+  function hideInstallButton(){
+    if(els.installBtn){
+      els.installBtn.style.display='none';
+    }
+  }
+
+  function showUpdatePrompt(){
+    if(!els.updateBtn) return;
+    els.updateBtn.style.display='inline-block';
+    els.updateBtn.disabled=false;
+    showHeaderStatus('Ny version finns – uppdatera appen.', false);
+  }
+
+  function showHeaderStatus(text, isError){
+    if(!els.headerStatus) return;
+    els.headerStatus.textContent=text;
+    els.headerStatus.style.display='inline-block';
+    els.headerStatus.style.background=isError?'#fee2e2':'#dcfce7';
+    els.headerStatus.style.borderColor=isError?'#fecaca':'#86efac';
+    clearTimeout(showHeaderStatus._timer);
+    showHeaderStatus._timer=setTimeout(()=>{
+      els.headerStatus.style.display='none';
+    },4000);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

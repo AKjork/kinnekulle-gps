@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kinnekulle Tågmonitor — v3 (bugfix)</title>
+<style>
+  :root{--bg:#f8fafc;--ink:#0f172a;--mut:#64748b;--pri:#2563eb;--b:#e2e8f0;--soft:#eef2ff;--softb:#c7d2fe;}
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:0 1rem 2rem;line-height:1.45;background:var(--bg);color:var(--ink)}
+  header{position:sticky;top:0;background:#ffffffcc;backdrop-filter:saturate(180%) blur(10px);padding:.6rem 0;margin:0 0 .6rem;border-bottom:1px solid var(--b)}
+  h1{margin:0 0 .25rem 0;font-size:1.2rem}
+  .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+  .form-group{margin:.5rem 0;min-width:12rem}
+  label{display:block;margin:.25rem 0 .1rem}
+  input,select,button{font-size:1rem;padding:.5rem;border:1px solid var(--b);border-radius:10px}
+  input[type="text"],select{background:#fff}
+  button.primary{background:var(--pri);color:#fff;border-color:var(--pri)}
+  button.ghost{background:#fff;color:var(--pri);border-color:#93c5fd}
+  .cards{display:grid;gap:.6rem;grid-template-columns:1fr;max-width:56rem}
+  .card{border:1px solid var(--b);border-radius:14px;padding:.8rem;background:#fff;box-shadow:0 1px 1px rgb(0 0 0 / 0.02),0 1px 3px rgb(0 0 0 / 0.04)}
+  .meta{font-size:.92rem;color:var(--mut)}
+  .bar{display:flex;gap:.5rem;align-items:center;margin:.5rem 0;flex-wrap:wrap}
+  .badge{background:var(--soft);border:1px solid var(--softb);border-radius:999px;padding:.12rem .55rem;font-size:.85rem}
+  table{border-collapse:collapse;width:100%;max-width:56rem} th,td{border:1px solid var(--b);padding:.4rem .5rem;text-align:left} th{background:#f1f5f9}
+  .table-wrap{overflow-x:auto;width:100%;max-width:56rem}
+  .table-wrap table{min-width:32rem}
+  small{color:var(--mut)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Kinnekulle Tågmonitor</h1>
+  <div class="bar">
+    <button class="primary" id="btnExport" aria-label="Exportera sparade mätningar som JSON-fil">Exportera mätningarna</button>
+    <button class="ghost" id="btnSync" aria-label="Synkronisera loggfil mot vald fil på datorn">Synka loggfil</button>
+    <label class="ghost" style="padding:.35rem .5rem;cursor:pointer;">
+      Importera JSON (mätningar) <input id="fileImport" type="file" accept="application/json" style="display:none">
+    </label>
+    <label class="ghost" style="padding:.35rem .5rem;cursor:pointer;">
+      Importera tidtabeller <input id="fileSched" type="file" accept=".html,.js,.json" style="display:none">
+    </label>
+    <label class="meta" style="margin-left:auto"><input id="togglePassThrough" type="checkbox"> Visa “genomfart i tidtabellen”-badge</label>
+    <span id="logCountTop" class="badge" role="status" aria-live="polite">Sparade mätningar: 0</span>
+  </div>
+</header>
+
+<main>
+  <section id="setup">
+    <div class="form-group">
+      <label for="trainNumber">Operativt tågnummer (OTN)</label>
+      <input id="trainNumber" type="text" value="" placeholder="Ange OTN">
+    </div>
+    <div class="row">
+      <div class="form-group">
+        <label for="startStation">Startstation</label>
+        <select id="startStation"></select>
+      </div>
+      <div class="form-group">
+        <label for="endStation">Slutstation</label>
+        <select id="endStation"></select>
+      </div>
+      <div class="form-group">
+        <label for="startTime">Starttid (HH:MM)</label>
+        <input id="startTime" type="text" placeholder="t.ex. 04:45">
+      </div>
+    </div>
+    <div class="bar">
+      <button id="btnStart" class="primary">Starta resa</button>
+      <span id="setupError" class="badge" role="status" aria-live="polite" style="background:#fee2e2;border-color:#fecaca;color:#991b1b;display:none"></span>
+    </div>
+  </section>
+
+  <section id="journey" style="display:none">
+    <h2 id="journeyTitle"></h2>
+    <div id="cards" class="cards"></div>
+    <div class="bar">
+      <button id="btnAbort" class="ghost">Avbryt & spara hittills</button>
+      <button id="btnEnd" class="primary">Avsluta resa & visa rapport</button>
+    </div>
+  </section>
+
+  <section id="report" style="display:none">
+    <div id="reportHTML"></div>
+    <div class="bar"><button id="btnNew" class="ghost">Ny mätning</button></div>
+  </section>
+</main>
+
+<script>
+(function(){
+
+  // --- Tidtabeller i localStorage (valfritt att importera) ---
+  const schedules = {};
+  try{
+    const stored = localStorage.getItem('kmon_schedules');
+    if (stored && (!Object.keys(schedules).length)) {
+      const parsed = JSON.parse(stored);
+      if (parsed && typeof parsed === 'object') Object.assign(schedules, parsed);
+    }
+  }catch(e){}
+
+  // --- Linjens stationer i ordning ---
+  const stationSequence = [
+    { name: "Herrljunga" }, { name: "Vedum" }, { name: "Vara" },
+    { name: "Håkantorp" }, { name: "Stora Levene" }, { name: "Järpås" },
+    { name: "Lovene" }, { name: "Framnäs City" }, { name: "Lidköping" },
+    { name: "Filsbäck" }, { name: "Källby" }, { name: "Blomberg" },
+    { name: "Trolmen" }, { name: "Råbäck" }, { name: "Hällekis" },
+    { name: "Forshem" }, { name: "Österäng" }, { name: "Äskekärr" },
+    { name: "Lugnås" }, { name: "Mariestad" }, { name: "Hasslerör" },
+    { name: "Lyrestad" }, { name: "Torved" }, { name: "Hova" },
+    { name: "Gårdsjö" }, { name: "Laxå" }, { name: "Hallsberg personbangård" },
+    { name: "Kumla" }, { name: "Örebro Södra" }, { name: "Örebro Central" }
+  ];
+
+  // --- Hjälpare & lagring ---
+  function pad2(n){ return (n<10?'0':'')+n; }
+  function parseTimeHHMM(s){ if(!s) return null; const m=s.match(/^(\d{1,2}):(\d{2})$/); if(!m) return null; const h=+m[1], mi=+m[2]; if(h<0||h>23||mi<0||mi>59) return null; return {h,mi}; }
+  function todayDateStr(){ const d=new Date(); return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
+  function getLogs(){ try { const raw=localStorage.getItem('journeyLogs'); if(!raw) return []; const parsed=JSON.parse(raw); if(Array.isArray(parsed)) return parsed; if(parsed&&typeof parsed==='object') return [parsed]; return []; } catch(e){ return []; } }
+  function setLogs(arr){ try{ localStorage.setItem('journeyLogs', JSON.stringify(arr)); }catch(e){} }
+  function updateTop(){ document.getElementById('logCountTop').textContent = 'Sparade mätningar: ' + getLogs().length; }
+  updateTop();
+
+  const startSel=document.getElementById('startStation'); const endSel=document.getElementById('endStation');
+  stationSequence.forEach(s=>{ const o1=document.createElement('option'); o1.value=o1.textContent=s.name; startSel.appendChild(o1); const o2=document.createElement('option'); o2.value=o2.textContent=s.name; endSel.appendChild(o2); });
+  startSel.value="Lidköping"; endSel.value="Mariestad";
+
+  // --- State ---
+  let timetable=[]; let trainNumber='';
+
+  function getDefaultStartTime(tnum){
+    const sch=schedules[tnum];
+    if(Array.isArray(sch)){ for(const st of sch){ if(st.dep){ const [h,m]=st.dep.split(':').map(Number); return {h,mi:m}; } } }
+    const now=new Date(); return {h:now.getHours(), mi:now.getMinutes()};
+  }
+
+  function buildTimetable(startName,endName,startTime){
+    const si=stationSequence.findIndex(s=>s.name===startName), ei=stationSequence.findIndex(s=>s.name===endName);
+    if(si<0||ei<0||si===ei) return null;
+    const fwd=si<ei;
+    const today=new Date();
+    const sch=schedules[trainNumber];
+    const schNames=new Set((sch||[]).map(x=>x.name));
+
+    function pickTime(name,type){
+      if(sch){ const rec=sch.find(x=>x.name===name); if(rec){ const hhmm=rec[type]; if(hhmm){ const [h,m]=hhmm.split(':').map(Number); return new Date(today.getFullYear(),today.getMonth(),today.getDate(),h,m); } return null; } }
+      return null;
+    }
+
+    const rng=fwd ? [...stationSequence.slice(si, ei+1)] : [...stationSequence.slice(ei, si+1)].reverse();
+    const result=[];
+    // start = endast avgång, slut = endast ankomst
+    for(let i=0;i<rng.length;i++){
+      const name=rng[i].name;
+      const isStart = i===0;
+      const isEnd   = i===rng.length-1;
+      const arr=isStart ? null : pickTime(name,'arr');
+      const dep=isEnd   ? null : pickTime(name,'dep');
+      result.push({ name, scheduledArrival:arr, scheduledDeparture:dep,
+        actualArrival:null, actualDeparture:null,
+        excludeInboundRun:false,
+        isScheduledStop: sch ? schNames.has(name) : true, // endast badge
+        skipNoStop:false
+      });
+    }
+    return result;
+  }
+
+  function currentActionableIndex(){
+    let lastDep = -1;
+    for (let i=0;i<timetable.length;i++){ if (timetable[i].actualDeparture) lastDep = i; }
+    for (let i=lastDep+1;i<timetable.length;i++){
+      const s=timetable[i];
+      if(s.skipNoStop) continue;
+      if(!s.actualArrival && i!==0) return i;
+    }
+    return -1;
+  }
+
+  function setActualText(actualEl, dwellEl, stop, idx){
+    const fmt = t => t.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const a = stop.actualArrival, d = stop.actualDeparture;
+    if (stop.skipNoStop){
+      actualEl.innerHTML = '<em>Ej uppehåll markerat – stationen räknas som genomfart i denna mätning.</em>';
+      dwellEl.textContent = '';
+      return;
+    }
+    if (a && d && Math.abs(d - a) < 1500) {
+      actualEl.textContent = `Faktisk passage: ${fmt(a)}`;
+      dwellEl.textContent = '';
+      return;
+    }
+    if (a && d){
+      actualEl.textContent = `Faktisk ankomst: ${fmt(a)} — Avgång: ${fmt(d)}`;
+      const dwellMin = (d-a)/60000;
+      dwellEl.textContent = dwellMin > 0.01 ? `Uppehållstid: ${dwellMin.toFixed(1)} min` : '';
+      return;
+    }
+    if (a){
+      actualEl.textContent = `Faktisk ankomst: ${fmt(a)}`;
+      dwellEl.textContent = '';
+      return;
+    }
+    if (d && idx===0){
+      actualEl.textContent = `Faktisk avgång: ${fmt(d)}`;
+      dwellEl.textContent = '';
+      return;
+    }
+    actualEl.innerHTML = '<em>Ingen faktisk tid registrerad ännu</em>';
+    dwellEl.textContent = '';
+  }
+
+  function renderJourney(){
+    const cards=document.getElementById('cards'); cards.innerHTML='';
+    const curIdx=currentActionableIndex();
+    const showPassBadge = document.getElementById('togglePassThrough').checked;
+    timetable.forEach((stop,idx)=>{
+      const card=document.createElement('div'); card.className='card';
+      const badge = (!stop.isScheduledStop && showPassBadge ? '<span class="badge">Genomfart i tidtabellen</span>' : (stop.skipNoStop ? '<span class="badge">Ej uppehåll</span>' : ''));
+      card.innerHTML=`
+        <h3>${stop.name} ${badge}</h3>
+        <p class="meta">Schemalagd ankomst: ${stop.scheduledArrival ? stop.scheduledArrival.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'}) : '—'}</p>
+        <p class="meta">Schemalagd avgång: ${stop.scheduledDeparture ? stop.scheduledDeparture.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'}) : '—'}</p>
+        <p id="actual-${idx}" class="meta"></p>
+        <p id="dwell-${idx}" class="meta"><small></small></p>
+        <div class="bar">
+          <button id="arrive-${idx}">Markera ankomst</button>
+          <button id="depart-${idx}" disabled>Markera avgång</button>
+          <button id="pass-${idx}">Passera</button>
+          <button id="skip-${idx}" class="ghost">Ej uppehåll</button>
+          <button id="undo-${idx}" class="ghost">Ångra</button>
+        </div>
+        <div class="bar">
+          <label class="meta"><input type="checkbox" id="exclude-${idx}"> Sen (annan orsak) – exkludera gångtiden hit</label>
+          <label class="meta"><input type="checkbox" id="missed-${idx}"> Missade stationen (passera + exkludera)</label>
+        </div>
+      `;
+      cards.appendChild(card);
+
+      const actualP=card.querySelector(`#actual-${idx}`);
+      const dwellP = card.querySelector(`#dwell-${idx} small`);
+      const arriveBtn=card.querySelector(`#arrive-${idx}`);
+      const departBtn=card.querySelector(`#depart-${idx}`);
+      const passBtn=card.querySelector(`#pass-${idx}`);
+      const skipBtn=card.querySelector(`#skip-${idx}`);
+      const undoBtn=card.querySelector(`#undo-${idx}`);
+      const exclCb=card.querySelector(`#exclude-${idx}`);
+      const missedCb=card.querySelector(`#missed-${idx}`);
+
+      const isStart = idx===0;
+      const isEnd   = idx===timetable.length-1;
+
+      setActualText(actualP, dwellP, stop, idx);
+
+      if (isStart) {
+        arriveBtn.style.display='none';
+        passBtn.style.display='none';
+        skipBtn.style.display='none';
+        exclCb.parentElement.style.display='none';
+        missedCb.parentElement.style.display='none';
+        departBtn.disabled = !!stop.actualDeparture;
+      }
+      if (isEnd) {
+        departBtn.style.display='none';
+        passBtn.style.display='none';
+        skipBtn.style.display='none';
+        missedCb.parentElement.style.display='none';
+      }
+
+      function updateButtons(){
+        if (stop.skipNoStop){
+          arriveBtn.disabled=true; departBtn.disabled=true; passBtn.disabled=true; if(skipBtn) skipBtn.disabled=true;
+          exclCb.disabled=true; exclCb.checked=true;
+          missedCb.disabled=true; missedCb.checked=false;
+          setActualText(actualP, dwellP, stop, idx);
+          return;
+        }
+        if (isStart) {
+          arriveBtn.disabled=true; passBtn.disabled=true; if(skipBtn) skipBtn.disabled=true;
+          departBtn.disabled = !!stop.actualDeparture;
+          return;
+        }
+        if (isEnd) {
+          departBtn.disabled=true; passBtn.disabled=true; if(skipBtn) skipBtn.disabled=true;
+          arriveBtn.disabled = !!stop.actualArrival;
+          return;
+        }
+        if (stop.actualArrival && stop.actualDeparture){
+          arriveBtn.disabled=true; departBtn.disabled=true; passBtn.disabled=true; if(skipBtn) skipBtn.disabled=false;
+        } else if (stop.actualArrival && !stop.actualDeparture){
+          arriveBtn.disabled=true; departBtn.disabled=false; passBtn.disabled=true; if(skipBtn) skipBtn.disabled=true;
+        } else {
+          arriveBtn.disabled=(idx!==curIdx);
+          passBtn.disabled=(idx!==curIdx);
+          departBtn.disabled = !(stop.actualArrival);
+          if (skipBtn) skipBtn.disabled=false;
+        }
+        exclCb.disabled=false; missedCb.disabled=false; exclCb.checked=!!stop.excludeInboundRun;
+      }
+
+      arriveBtn.addEventListener('click', ()=>{
+        if(arriveBtn.disabled) return;
+        stop.actualArrival=new Date();
+        setActualText(actualP, dwellP, stop, idx);
+        renderJourney();
+      });
+
+      departBtn.addEventListener('click', ()=>{
+        if(departBtn.disabled) return;
+        stop.actualDeparture=new Date();
+        setActualText(actualP, dwellP, stop, idx);
+        renderJourney();
+      });
+
+      passBtn.addEventListener('click', ()=>{
+        if(passBtn.disabled) return;
+        const now=new Date(); stop.actualArrival=now; stop.actualDeparture=now;
+        setActualText(actualP, dwellP, stop, idx);
+        renderJourney();
+      });
+
+      skipBtn.addEventListener('click', ()=>{
+        stop.skipNoStop = true;
+        stop.excludeInboundRun = true;
+        stop.actualArrival = null;
+        stop.actualDeparture = null;
+        renderJourney();
+      });
+
+      undoBtn.addEventListener('click', ()=>{
+        if (stop.skipNoStop){
+          stop.skipNoStop=false; stop.excludeInboundRun=false; stop.actualArrival=null; stop.actualDeparture=null;
+        } else if (stop.actualDeparture){
+          stop.actualDeparture=null;
+        } else if (stop.actualArrival){
+          stop.actualArrival=null;
+        }
+        missedCb.checked = false;
+        renderJourney();
+      });
+
+      exclCb.addEventListener('change', ()=>{ stop.excludeInboundRun = !!exclCb.checked; });
+      missedCb.addEventListener('change', ()=>{
+        if (missedCb.checked){
+          const now=new Date();
+          stop.actualArrival=now; stop.actualDeparture=now; stop.excludeInboundRun=true;
+          setActualText(actualP, dwellP, stop, idx);
+          missedCb.disabled = true;
+          renderJourney();
+        }
+      });
+
+      updateButtons();
+    });
+  }
+
+  // --- BUGFIX: korrekt gångtidsräkning (senaste riktiga avgång → nästa riktiga ankomst) ---
+  function computeRunsBridged(stops){
+    const runs = [];
+    const dwellThresholdMs = 3000; // > 3 s = riktigt uppehåll
+
+    let anchorIdx = -1;      // index för senaste riktiga avgång
+    let anchorTime = null;   // Date för avgångstid
+    let anchorName = '';     // stationsnamn
+
+    for (let i = 0; i < stops.length; i++){
+      const s = stops[i];
+
+      // 1) Om vi har ett ankare och stationen har ankomst -> räkna gångtid hit
+      if (anchorIdx >= 0 && s.actualArrival && !s.excludeInboundRun){
+        const arr = new Date(s.actualArrival);
+        const minutes = (arr - anchorTime) / 60000;
+        if (isFinite(minutes) && minutes > 0){
+          runs.push({ from: anchorName, to: s.name, minutes });
+        }
+      }
+
+      // 2) Flytta ankaret ENDAST när stationen varit ett riktigt uppehåll
+      if (s.actualArrival && s.actualDeparture){
+        const dwellMs = new Date(s.actualDeparture) - new Date(s.actualArrival);
+        const realStop = dwellMs > dwellThresholdMs && !s.skipNoStop;
+        if (realStop){
+          anchorIdx = i;
+          anchorTime = new Date(s.actualDeparture);
+          anchorName = s.name;
+        }
+      }
+
+      // 3) Startstation: endast avgång sätter första ankaret
+      if (i === 0 && s.actualDeparture && !s.actualArrival){
+        anchorIdx = i;
+        anchorTime = new Date(s.actualDeparture);
+        anchorName = s.name;
+      }
+    }
+    return runs;
+  }
+
+  function computeDwells(stops){
+    const dw=[]; for (let i=0;i<stops.length;i++){
+      const s=stops[i]; if (s.skipNoStop) continue;
+      if (s.actualArrival && s.actualDeparture){
+        const m=(new Date(s.actualDeparture)-new Date(s.actualArrival))/60000.0;
+        if (isFinite(m) && m>0.01) dw.push({ station:s.name, minutes:m });
+      }
+    } return dw;
+  }
+
+  function computeAverages(tNumber, route){
+    const logs=getLogs().filter(l=>l.trainNumber===tNumber && l.route===route);
+    if(!logs.length) return null;
+    const runSums={}, runCounts={}, dwellSums={}, dwellCounts={};
+    logs.forEach(log=>{
+      computeRunsBridged(log.stops||[]).forEach(seg=>{
+        const k=seg.from+'→'+seg.to; runSums[k]=(runSums[k]||0)+seg.minutes; runCounts[k]=(runCounts[k]||0)+1;
+      });
+      computeDwells(log.stops||[]).forEach(dw=>{
+        const k=dw.station; dwellSums[k]=(dwellSums[k]||0)+dw.minutes; dwellCounts[k]=(dwellCounts[k]||0)+1;
+      });
+    });
+    const runAvg={}, dwellAvg={};
+    Object.keys(runSums).forEach(k=>runAvg[k]=runSums[k]/runCounts[k]);
+    Object.keys(dwellSums).forEach(k=>dwellAvg[k]=dwellSums[k]/dwellCounts[k]);
+    return { run:runAvg, runN:runCounts, dwell:dwellAvg, dwellN:dwellCounts, count:logs.length };
+  }
+
+  function saveCurrentMeasurement(aborted=false){
+    const route=timetable.length ? `${timetable[0].name}-${timetable[timetable.length-1].name}` : '';
+    const log={ measurementId: Date.now().toString(36), trainNumber, route, date: todayDateStr(), aborted: !!aborted,
+      stops: timetable.map(s=>({
+        name:s.name,
+        scheduledArrival: s.scheduledArrival ? s.scheduledArrival.toISOString() : null,
+        scheduledDeparture: s.scheduledDeparture ? s.scheduledDeparture.toISOString() : null,
+        actualArrival: s.actualArrival ? s.actualArrival.toISOString() : null,
+        actualDeparture: s.actualDeparture ? s.actualDeparture.toISOString() : null,
+        excludeInboundRun: !!s.excludeInboundRun,
+        skipNoStop: !!s.skipNoStop
+      })) };
+    const logs=getLogs(); logs.push(log); setLogs(logs); updateTop();
+  }
+
+  function showReport(){
+    const rep=document.getElementById('reportHTML'); let html=`<h2>Rapport för tåg ${trainNumber}</h2>`;
+
+    const runs = computeRunsBridged(timetable);
+    html += `<h3>Gångtider mellan uppehåll</h3><div class="table-wrap"><table><tr><th>Från</th><th>Till</th><th>Faktisk</th></tr>`;
+    runs.forEach(s=>{ html += `<tr><td>${s.from}</td><td>${s.to}</td><td>${s.minutes.toFixed(1)} min</td></tr>`; });
+    html += `</table></div>`;
+
+    const dw = computeDwells(timetable);
+    html += `<h3>Uppehållstider</h3><div class="table-wrap"><table><tr><th>Station</th><th>Tid på plats</th></tr>`;
+    if (dw.length){
+      dw.forEach(d=>{ html += `<tr><td>${d.station}</td><td>${d.minutes.toFixed(1)} min</td></tr>`; });
+    } else {
+      html += `<tr><td colspan="2"><em>Inga uppehållstider registrerade.</em></td></tr>`;
+    }
+    html += `</table></div>`;
+
+    const excl=[];
+    for(let i=1;i<timetable.length;i++){
+      if(timetable[i].excludeInboundRun) excl.push(`${timetable[i-1].name}-${timetable[i].name}`);
+    }
+    if(excl.length) html+=`<p><em>Exkluderade gångtider denna mätning:</em> ${excl.join(', ')}</p>`;
+
+    const route=timetable.length ? `${timetable[0].name}-${timetable[timetable.length-1].name}` : '';
+    const av=computeAverages(trainNumber, route);
+    if(av){
+      html+=`<h3>Snitt (baserat på ${av.count} mätningar)</h3>`;
+      html+=`<h4>Snitt gång mellan uppehåll</h4><div class="table-wrap"><table><tr><th>Från - Till</th><th>Snitt (min)</th><th>n</th></tr>`;
+      Object.keys(av.run).sort().forEach(k=> html+=`<tr><td>${k}</td><td>${av.run[k].toFixed(1)}</td><td>${av.runN[k]}</td></tr>`); html+='</table></div>';
+      html+=`<h4>Snitt uppehållstid</h4><div class="table-wrap"><table><tr><th>Station</th><th>Snitt (min)</th><th>n</th></tr>`;
+      Object.keys(av.dwell).sort().forEach(k=> html+=`<tr><td>${k}</td><td>${av.dwell[k].toFixed(1)}</td><td>${av.dwellN[k]}</td></tr>`); html+='</table></div>';
+    }
+
+    html+=`<p class="meta">Tips: tryck <strong>Exportera</strong> eller <strong>Synka</strong> nu om du vill dela filen.</p>`;
+    rep.innerHTML=html;
+  }
+  // --- Händelser ---
+  document.getElementById('btnStart').addEventListener('click', ()=>{
+    const err=document.getElementById('setupError'); err.style.display='none'; err.textContent='';
+    trainNumber=(document.getElementById('trainNumber').value||'').trim();
+    const startName=startSel.value; const endName=endSel.value;
+    if(!startName || !endName){ err.textContent='Välj start- och slutstation innan du fortsätter.'; err.style.display='inline-block'; return; }
+    if(startName===endName){ err.textContent='Start- och slutstation får inte vara samma.'; err.style.display='inline-block'; return; }
+    const tParsed=(document.getElementById('startTime').value||'').trim();
+    const parsed=parseTimeHHMM(tParsed);
+    if(tParsed && !parsed){ err.textContent='Starttid måste anges som HH:MM, till exempel 04:45.'; err.style.display='inline-block'; return; }
+    const fallback=getDefaultStartTime(trainNumber);
+    const startTime=parsed||fallback;
+    if(!startTime){ err.textContent='Kunde inte bestämma starttid. Ange HH:MM manuellt.'; err.style.display='inline-block'; return; }
+    const tt=buildTimetable(startName,endName,startTime); if(!tt){ err.textContent='Kunde inte skapa tidtabellen. Kontrollera stationerna.'; err.style.display='inline-block'; return; }
+    timetable=tt; document.getElementById('setup').style.display='none'; document.getElementById('journey').style.display='block';
+    document.getElementById('journeyTitle').textContent=`Resa ${startName} → ${endName}${trainNumber?(' — OTN '+trainNumber):''}`; renderJourney();
+  });
+
+  document.getElementById('btnEnd').addEventListener('click', ()=>{ saveCurrentMeasurement(false); document.getElementById('journey').style.display='none'; document.getElementById('report').style.display='block'; showReport(); });
+  document.getElementById('btnAbort').addEventListener('click', ()=>{ saveCurrentMeasurement(true); document.getElementById('journey').style.display='none'; document.getElementById('report').style.display='block'; showReport(); });
+  document.getElementById('btnNew').addEventListener('click', ()=>{ document.getElementById('report').style.display='none'; document.getElementById('setup').style.display='block'; });
+
+  // --- Export/Import ---
+  function kmon_dedupe(logs){ const seen=new Set(), out=[]; function keyOf(o){ return (o && (o.measurementId || ((o.trainNumber||'')+'|'+(o.route||'')+'|'+(o.date||'')))); }
+    for(const l of (logs||[])){ const k=keyOf(l); if(!seen.has(k)){ seen.add(k); out.push(l); } } return out; }
+
+  document.getElementById('btnExport').addEventListener('click', ()=>{
+    const logs=localStorage.getItem('journeyLogs')||'[]';
+    const blob=new Blob([logs],{type:'application/json'});
+    const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='journey_logs.json'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 1200);
+  });
+
+  document.getElementById('fileImport').addEventListener('change', async (ev)=>{
+    const f=ev.target.files && ev.target.files[0]; if(!f) return;
+    try{
+      const text=await f.text();
+      let fileLogs;
+      try{
+        fileLogs=JSON.parse(text||'[]');
+      }catch(parseErr){
+        throw new Error('Ogiltig JSON: '+parseErr.message);
+      }
+      const incomingRaw=Array.isArray(fileLogs)?fileLogs:(fileLogs?[fileLogs]:[]);
+      const validIncoming=incomingRaw.filter(entry=>entry && typeof entry==='object' && Array.isArray(entry.stops));
+      if(!validIncoming.length){
+        throw new Error('Ingen giltig mätning hittades i filen.');
+      }
+      const local=getLogs(); const merged=kmon_dedupe(local.concat(validIncoming));
+      setLogs(merged); updateTop();
+      const added=Math.max(merged.length - local.length, 0);
+      const ignored=incomingRaw.length - validIncoming.length;
+      let msg=`Import klar. Nya mätningar: ${added}. Totalt sparat: ${merged.length}.`;
+      if(ignored>0){ msg += ` ${ignored} poster hoppades över eftersom de saknade stopp-listan.`; }
+      alert(msg);
+    }catch(e){
+      alert('Import misslyckades: '+(e.message||e));
+    }
+    ev.target.value='';
+  });
+
+  document.getElementById('fileSched').addEventListener('change', async (ev)=>{
+    const f=ev.target.files && ev.target.files[0]; if(!f) return;
+    try{
+      const text=await f.text();
+      let m = text.match(/\b(?:const|let|var)\s+schedules\s*=\s*({[\s\S]*?})\s*;?/);
+      let obj = {};
+      if (m) {
+        obj = (new Function('return ('+m[1]+')'))();
+      } else {
+        obj = JSON.parse(text);
+      }
+      if (obj && typeof obj === 'object'){
+        const importedKeys=Object.keys(obj);
+        if(!importedKeys.length){
+          alert('Hittade inga tidtabeller i filen.');
+        }else{
+          const replaceExisting=confirm(`Hittade ${importedKeys.length} tidtabeller. Välj OK för att ersätta befintliga listor eller Avbryt för att lägga till dem ovanpå.`);
+          if(replaceExisting){
+            Object.keys(schedules).forEach(k=>delete schedules[k]);
+          }
+          importedKeys.forEach(key=>{ schedules[key]=obj[key]; });
+          localStorage.setItem('kmon_schedules', JSON.stringify(schedules));
+          alert(`${replaceExisting?'Ersatte':'Kompletterade'} tidtabeller. Nu finns ${Object.keys(schedules).length} sparade.`);
+        }
+      } else {
+        alert('Hittade inga tidtabeller i filen.');
+      }
+    }catch(e){
+      alert('Misslyckades att läsa tidtabeller: '+e);
+    } finally {
+      ev.target.value='';
+    }
+  });
+
+  // --- Synk till fil (File System Access API) ---
+  async function kmon_sync(){
+    if(!('showOpenFilePicker' in window) || !('showSaveFilePicker' in window)){
+      alert('Din webbläsare saknar filåtkomst-API. Testa Chrome/Edge via https. Alternativt använd Import/Export.');
+      return;
+    }
+    function dedupe(logs){ const seen=new Set(), out=[]; function keyOf(o){ return (o && (o.measurementId || ((o.trainNumber||'')+'|'+(o.route||'')+'|'+(o.date||'')))); } for(const l of logs||[]){ const k=keyOf(l); if(!seen.has(k)){ seen.add(k); out.push(l); } } return out; }
+    try{
+      let handle=null;
+      try{ const res=await window.showOpenFilePicker({types:[{description:'JSON',accept:{'application/json':['.json']}}],excludeAcceptAllOption:false,multiple:false}); if(res&&res[0]) handle=res[0]; }catch(e){}
+      if(!handle){
+        handle=await window.showSaveFilePicker({suggestedName:'journey_logs.json', types:[{description:'JSON',accept:{'application/json':['.json']}}]});
+        const w=await handle.createWritable(); await w.write('[]'); await w.close();
+      }
+      const file=await handle.getFile(); const txt=await file.text(); const fileLogs=(()=>{ try{return JSON.parse(txt||'[]');}catch(e){return [];} })();
+      const localLogs=getLogs(); const incoming=Array.isArray(fileLogs)?fileLogs:(fileLogs?[fileLogs]:[]);
+      const merged=dedupe(localLogs.concat(incoming));
+      const writable=await handle.createWritable(); await writable.write(JSON.stringify(merged,null,2)); await writable.close();
+      setLogs(merged); updateTop(); alert('Synk OK. Poster totalt: '+merged.length);
+    }catch(e){ alert('Synk misslyckades: '+e); }
+  }
+  document.getElementById('btnSync').addEventListener('click', kmon_sync);
+
+})();
+</script>
+</body>
+</html>

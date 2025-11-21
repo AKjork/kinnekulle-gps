@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="sv">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uppehålls-analys (Kinnekulle)</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:1rem;line-height:1.4;background:#f8fafc;color:#0f172a}
+  h1{font-size:1.25rem;margin:0 0 .5rem}
+  .bar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.25rem 0 1rem}
+  input[type=file]{font-size:1rem}
+  .grid{display:grid;gap:1rem;grid-template-columns:1fr}
+  canvas{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:.5rem}
+  table{border-collapse:collapse;width:100%;background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden}
+  th,td{border-top:1px solid #e2e8f0;padding:.45rem .6rem;text-align:left}
+  th{background:#f1f5f9}
+  small{color:#64748b}
+  .mut{color:#64748b}
+</style>
+<h1>Uppehålls-analys</h1>
+<div class="bar">
+  <input id="file" type="file" accept="application/json">
+  <span class="mut">Läs in din <code>journey_logs.json</code> (Exportera från appen)</span>
+</div>
+<div class="grid">
+  <div>
+    <canvas id="chart" width="1200" height="520"></canvas>
+    <div class="mut" id="meta"></div>
+  </div>
+  <div>
+    <h3>Snitt uppehållstid per station</h3>
+    <table id="tbl-summary"><thead><tr>
+      <th>Station</th><th>n</th><th>Snitt (min)</th><th>Std (min)</th><th>Median (min)</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+  <div>
+    <h3>OTN som står ut (längre uppehåll än övriga)</h3>
+    <small>Definition: z-score &gt; 2, och minst 2 observationer för OTN på stationen.</small>
+    <table id="tbl-outliers"><thead><tr>
+      <th>Station</th><th>OTN</th><th>n</th><th>OTN-snitt (min)</th><th>Globalt snitt</th><th>Std</th><th>z</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+</div>
+
+<script>
+const fileInput = document.getElementById('file');
+const ctx = document.getElementById('chart').getContext('2d');
+const meta = document.getElementById('meta');
+
+fileInput.addEventListener('change', async (e) => {
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  const text = await f.text();
+  let logs;
+  try { logs = JSON.parse(text); } catch(err){ alert('Ogiltig JSON: '+err); return; }
+  runAnalysis(logs);
+});
+
+function toDt(x){ return x ? new Date(x) : null; }
+
+function runAnalysis(logs){
+  // Plocka ut uppehåll: dep-arr på stationer; filtrera bort “ej uppehåll” och mikropassager
+  const rows = [];
+  for(const entry of logs){
+    const otn = entry.trainNumber;
+    const route = entry.route;
+    const stops = entry.stops || [];
+    for(const s of stops){
+      const skip = s.skipNoStop === true || s.skippedStop === true;
+      if(skip) continue;
+      const arr = toDt(s.actualArrival), dep = toDt(s.actualDeparture);
+      if(arr && dep){
+        const dwell = (dep - arr) / 60000.0;
+        if(dwell > 0.05){ // > 3 sekunder => verkligt uppehåll
+          rows.push({ station: s.name, dwell_min: dwell, OTN: otn, route });
+        }
+      }
+    }
+  }
+  if(rows.length === 0){ drawEmpty(); fillSummary([]); fillOutliers([]); return; }
+
+  // Grupp per station
+  const byStation = group(rows, r=>r.station);
+  const summary = Object.entries(byStation).map(([station, arr])=>{
+    const xs = arr.map(a=>a.dwell_min);
+    return {
+      station,
+      n: xs.length,
+      mean_min: mean(xs),
+      std_min: std(xs),
+      median_min: median(xs)
+    };
+  }).sort((a,b)=>b.mean_min - a.mean_min);
+
+  // Outliers: per station+OTN jämfört med global per station
+  const statMap = Object.fromEntries(summary.map(s=>[s.station, {mu:s.mean_min, sd:s.std_min||0}]));
+  const byStationOTN = group(rows, r=>r.station+'||'+r.OTN);
+  const olist = [];
+  for(const [key, arr] of Object.entries(byStationOTN)){
+    const [station, otn] = key.split('||');
+    const xs = arr.map(a=>a.dwell_min);
+    const mu = mean(xs);
+    const n = xs.length;
+    const glob = statMap[station] || {mu:0, sd:0};
+    const z = (glob.sd>0) ? (mu - glob.mu)/glob.sd : 0;
+    if(z > 2 && n >= 2){
+      olist.push({station, OTN:otn, n, mean_min:mu, global_mean:glob.mu, global_std:glob.sd, z});
+    }
+  }
+  olist.sort((a,b)=> b.z - a.z || b.mean_min - a.mean_min);
+
+  drawChart(summary);
+  fillSummary(summary);
+  fillOutliers(olist);
+  meta.textContent = `Observationer: ${rows.length}. Stationer: ${summary.length}.`;
+}
+
+function group(arr, fn){
+  const m = {};
+  for(const x of arr){
+    const k = fn(x);
+    (m[k] ||= []).push(x);
+  }
+  return m;
+}
+function mean(xs){ return xs.reduce((a,b)=>a+b,0)/xs.length; }
+function median(xs){ const a=[...xs].sort((x,y)=>x-y); const i=Math.floor(a.length/2); return a.length%2? a[i] : (a[i-1]+a[i])/2; }
+function std(xs){ if(xs.length<2) return 0; const m=mean(xs); const v=xs.reduce((s,x)=>s+(x-m)*(x-m),0)/(xs.length-1); return Math.sqrt(v); }
+
+function drawEmpty(){
+  const w = ctx.canvas.width, h = ctx.canvas.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle="#000";
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.font="16px system-ui, sans-serif";
+  ctx.fillText("Inga uppehållstider hittades i loggen.", w/2, h/2);
+}
+
+function drawChart(summary){
+  const w = ctx.canvas.width, h = ctx.canvas.height;
+  ctx.clearRect(0,0,w,h);
+  const left=60, bottom=60, top=20, right=20;
+  const cw = w-left-right, ch = h-top-bottom;
+
+  const labels = summary.map(s=>s.station);
+  const values = summary.map(s=>s.mean_min);
+  const maxV = Math.max(...values, 0.1);
+  const yMax = niceMax(maxV);
+
+  // Axlar
+  ctx.strokeStyle="#94a3b8";
+  ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(left, top); ctx.lineTo(left, top+ch); ctx.lineTo(left+cw, top+ch); ctx.stroke();
+
+  // Grid + y ticks
+  ctx.fillStyle="#0f172a";
+  ctx.font="12px system-ui, sans-serif";
+  ctx.textAlign="right"; ctx.textBaseline="middle";
+  const ticks = 5;
+  for(let i=0;i<=ticks;i++){
+    const v = yMax*i/ticks;
+    const y = top + ch - ch*i/ticks;
+    ctx.fillText(v.toFixed(1), left-6, y);
+    ctx.strokeStyle="#e2e8f0"; ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left+cw, y); ctx.stroke();
+  }
+
+  // Bars
+  const n = values.length;
+  const gap = 4;
+  const bw = Math.max(6, Math.min(36, (cw - (n+1)*gap)/n));
+  let x = left + gap;
+
+  ctx.textAlign="center"; ctx.textBaseline="top";
+  for(let i=0;i<n;i++){
+    const v = values[i];
+    const hpx = (v / yMax) * ch;
+    const y = top + ch - hpx;
+
+    // Bar (gråblå)
+    ctx.fillStyle="#64748b";
+    ctx.fillRect(x, y, bw, hpx);
+
+    // n-etikett
+    ctx.fillStyle="#111827";
+    ctx.font="10px system-ui, sans-serif";
+    ctx.textBaseline="bottom";
+    ctx.fillText("n="+summary[i].n, x+bw/2, y-2);
+
+    // x-label
+    ctx.textBaseline="top";
+    ctx.save();
+    ctx.translate(x+bw/2, top+ch+4);
+    ctx.rotate(-Math.PI/4);
+    ctx.fillText(labels[i], 0, 0);
+    ctx.restore();
+
+    x += bw + gap;
+  }
+
+  // Titel + y-label
+  ctx.fillStyle="#0f172a";
+  ctx.font="14px system-ui, sans-serif";
+  ctx.textAlign="left"; ctx.textBaseline="top";
+  ctx.fillText("Snitt uppehållstid per station (minuter)", left, 4);
+}
+
+function niceMax(maxV){
+  const steps = [1,2,2.5,5,10,15,20,25,30];
+  let mag = Math.pow(10, Math.floor(Math.log10(maxV||1)));
+  for(let k of steps){
+    const v = k*mag;
+    if(v >= maxV*1.05) return v;
+  }
+  return 10*mag;
+}
+
+function fillSummary(summary){
+  const tb = document.querySelector("#tbl-summary tbody");
+  tb.innerHTML = "";
+  for(const s of summary){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${s.station}</td>
+      <td>${s.n}</td>
+      <td>${s.mean_min.toFixed(2)}</td>
+      <td>${(s.std_min||0).toFixed(2)}</td>
+      <td>${s.median_min.toFixed(2)}</td>
+    `;
+    tb.appendChild(tr);
+  }
+}
+
+function fillOutliers(list){
+  const tb = document.querySelector("#tbl-outliers tbody");
+  tb.innerHTML = "";
+  if(!list.length){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="7"><em>Inga avvikare hittades med nuvarande kriterier.</em></td>`;
+    tb.appendChild(tr);
+    return;
+  }
+  for(const r of list){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${r.station}</td>
+      <td>${r.OTN}</td>
+      <td>${r.n}</td>
+      <td>${r.mean_min.toFixed(2)}</td>
+      <td>${r.global_mean.toFixed(2)}</td>
+      <td>${r.global_std.toFixed(2)}</td>
+      <td>${r.z.toFixed(2)}</td>
+    `;
+    tb.appendChild(tr);
+  }
+}
+</script>
