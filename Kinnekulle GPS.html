@@ -1034,19 +1034,6 @@
       alert('Din webbläsare saknar filåtkomst-API. Använd Chrome/Edge via https för att synka eller exportera istället.');
       return;
     }
-    function dedupe(logs){
-      const seen=new Set();
-      const out=[];
-      for(const entry of logs||[]){
-        if(!entry) continue;
-        const key=entry.id || entry.measurementId || `${entry.trainNumber||''}|${entry.startStation||''}|${entry.startedAt||''}`;
-        if(!seen.has(key)){
-          seen.add(key);
-          out.push(entry);
-        }
-      }
-      return out;
-    }
     try{
       let handle=null;
       try{
@@ -1076,7 +1063,7 @@
       const incomingRaw=Array.isArray(fileLogs)?fileLogs:(fileLogs?[fileLogs]:[]);
       const normalizedIncoming=incomingRaw.map(normalizeLogEntry).filter(Boolean);
       const existing=loadLogs();
-      const merged=dedupe(existing.concat(normalizedIncoming));
+      const merged=dedupeLogs(existing.concat(normalizedIncoming));
       const added=Math.max(merged.length - existing.length, 0);
       const ignored=Math.max(incomingRaw.length - normalizedIncoming.length, 0);
       const writable=await handle.createWritable();
@@ -1111,7 +1098,7 @@
   }
 
   async function saveLogsToFile(){
-    const logs=loadLogs();
+    const localLogs=loadLogs();
     if(!('showSaveFilePicker' in window)){
       showHeaderStatus('Webbläsaren saknar fil-API. Använd Exportera istället.', true);
       return;
@@ -1122,10 +1109,28 @@
         types:[{description:'JSON-loggar',accept:{'application/json':['.json']}}],
         excludeAcceptAllOption:false
       });
+      let existingRaw=[];
+      try{
+        const file=await handle.getFile();
+        const text=await file.text();
+        existingRaw=(()=>{
+          try{ return JSON.parse(text||'[]'); }
+          catch(e){ return []; }
+        })();
+      }catch(e){
+        existingRaw=[];
+      }
+      const incomingRaw=Array.isArray(existingRaw)?existingRaw:(existingRaw?[existingRaw]:[]);
+      const normalizedIncoming=incomingRaw.map(normalizeLogEntry).filter(Boolean);
+      const merged=dedupeLogs(localLogs.concat(normalizedIncoming));
       const writable=await handle.createWritable();
-      await writable.write(JSON.stringify(logs,null,2));
+      await writable.write(JSON.stringify(merged,null,2));
       await writable.close();
-      showHeaderStatus('Loggar sparade till fil.', false);
+      try{
+        localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(merged));
+      }catch(e){}
+      updateLogCount();
+      showHeaderStatus(`Sparat & synkat: ${merged.length} loggar`, false);
     }catch(err){
       if(err && err.name==='AbortError'){
         showHeaderStatus('Sparande avbröts.', true);
@@ -1346,6 +1351,20 @@
       notes: entry.notes || entry.note || '',
       stops: normalizedStops
     };
+  }
+
+  function dedupeLogs(logs){
+    const seen=new Set();
+    const out=[];
+    for(const entry of logs||[]){
+      if(!entry) continue;
+      const key=entry.id || entry.measurementId || `${entry.trainNumber||''}|${entry.startStation||''}|${entry.startedAt||''}`;
+      if(!seen.has(key)){
+        seen.add(key);
+        out.push(entry);
+      }
+    }
+    return out;
   }
 
   function parseRouteEndpoints(route){
