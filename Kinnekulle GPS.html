@@ -71,6 +71,7 @@
   <h1>Kinnekulle Tågmonitor – GPS-version</h1>
   <div class="bar">
     <button id="btnExport" class="primary" aria-label="Exportera sparade körningar">Exportera loggar</button>
+    <button id="btnSaveFile" class="ghost" aria-label="Spara loggar till fil">Spara loggar</button>
     <button id="btnSync" class="ghost" aria-label="Synkronisera loggfil">Synka loggfil</button>
     <button id="btnClear" class="ghost" aria-label="Ta bort alla sparade körningar">Töm loggar</button>
     <button id="btnWakeLock" class="ghost" aria-pressed="false" aria-label="Hindra att skärmen slocknar">Håll skärmen vaken</button>
@@ -192,6 +193,7 @@
   const DEPART_REVERT_WINDOW_MS = 120000; // allow 2 min to re-time a premature departure
   const STORAGE_KEY_LOGS = 'kmon_gps_logs_v1';
   const STORAGE_KEY_STATIONS = 'kmon_gps_station_meta_v1';
+  const STORAGE_KEY_SAVE_FILE = 'kmon_gps_file_handle_v1';
 
   const baseStations = [
     { name: 'Herrljunga', lat: 58.0788605, lon: 13.0208614, radius: 100 },
@@ -233,6 +235,7 @@
     setup: document.getElementById('setup'),
     journey: document.getElementById('journey'),
     report: document.getElementById('report'),
+    saveBtn: document.getElementById('btnSaveFile'),
     setupError: document.getElementById('setupError'),
     journeyMsg: document.getElementById('journeyMsg'),
     reportHTML: document.getElementById('reportHTML'),
@@ -322,6 +325,9 @@
     document.getElementById('btnAbort').addEventListener('click', () => stopJourney(true, 'Resan avbröts manuellt'));
     document.getElementById('btnFinish').addEventListener('click', () => stopJourney(false, 'Avslutad manuellt'));
     document.getElementById('btnExport').addEventListener('click', exportLogs);
+    if(els.saveBtn){
+      els.saveBtn.addEventListener('click', saveLogsToFile);
+    }
     document.getElementById('btnClear').addEventListener('click', clearLogs);
     document.getElementById('btnSync').addEventListener('click', syncLogs);
     document.getElementById('btnNew').addEventListener('click', resetForNewRun);
@@ -1102,6 +1108,32 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+
+  async function saveLogsToFile(){
+    const logs=loadLogs();
+    if(!('showSaveFilePicker' in window)){
+      showHeaderStatus('Webbläsaren saknar fil-API. Använd Exportera istället.', true);
+      return;
+    }
+    try{
+      const handle=await window.showSaveFilePicker({
+        suggestedName:'kinnekulle_gps_logs.json',
+        types:[{description:'JSON-loggar',accept:{'application/json':['.json']}}],
+        excludeAcceptAllOption:false
+      });
+      const writable=await handle.createWritable();
+      await writable.write(JSON.stringify(logs,null,2));
+      await writable.close();
+      showHeaderStatus('Loggar sparade till fil.', false);
+    }catch(err){
+      if(err && err.name==='AbortError'){
+        showHeaderStatus('Sparande avbröts.', true);
+        return;
+      }
+      const msg=err && (err.message||err.name)?`${err.name||''} ${err.message||''}`.trim():'Kunde inte spara';
+      showHeaderStatus(msg, true);
+    }
   }
 
   function clearLogs(){
