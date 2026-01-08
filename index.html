@@ -10,59 +10,200 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
   :root{
-    --bg:#f8fafc;
-    --ink:#0f172a;
-    --mut:#64748b;
-    --pri:#2563eb;
+    --bg:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --bg-solid:#f0f4f8;
+    --ink:#1a202c;
+    --mut:#718096;
+    --pri:#48bb78;
+    --pri-dark:#38a169;
+    --sec:#ed8936;
     --b:#e2e8f0;
-    --soft:#eef2ff;
-    --softb:#c7d2fe;
-    --err:#fecaca;
-    --good:#dcfce7;
+    --soft:#e6fffa;
+    --softb:#81e6d9;
+    --err:#fed7d7;
+    --good:#c6f6d5;
+    --card-bg:#ffffff;
   }
   *{box-sizing:border-box}
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:0 1rem 2.5rem;line-height:1.45;background:var(--bg);color:var(--ink)}
-  header{position:sticky;top:0;background:#ffffffdd;backdrop-filter:saturate(180%) blur(10px);padding:.7rem 0;margin:0 0 .8rem;border-bottom:1px solid var(--b);z-index:10}
-  h1{margin:.2rem 0 .25rem;font-size:1.2rem}
-  h2{margin:1.6rem 0 .5rem}
-  .bar{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
-  .row{display:flex;gap:.5rem;flex-wrap:wrap}
+  body{
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    margin:0;
+    padding:0;
+    line-height:1.6;
+    background:var(--bg-solid);
+    color:var(--ink);
+  }
+  header{
+    position:sticky;
+    top:0;
+    background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding:1.2rem 1.5rem;
+    margin:0;
+    box-shadow:0 4px 6px rgba(0,0,0,0.1);
+    z-index:10;
+  }
+  h1{
+    margin:0 0 .8rem;
+    font-size:1.8rem;
+    font-weight:700;
+    color:#fff;
+    text-shadow:0 2px 4px rgba(0,0,0,0.1);
+  }
+  h1::before{content:'🚂 '}
+  h2{
+    margin:2rem 0 1rem;
+    font-size:1.4rem;
+    font-weight:600;
+    color:var(--ink);
+  }
+  h2::before{content:'📍 '}
+  main{padding:1.5rem;max-width:1400px;margin:0 auto}
+  .bar{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
+  .row{display:flex;gap:.6rem;flex-wrap:wrap}
   .grow{flex:1 1 auto}
-  .form-group{margin:.4rem 0;min-width:12rem}
-  label{display:block;margin:.25rem 0 .1rem}
-  input,select,button,textarea{font-size:1rem;padding:.55rem;border:1px solid var(--b);border-radius:10px;font-family:inherit}
+  .form-group{margin:.6rem 0;min-width:12rem}
+  label{display:block;margin:.3rem 0 .2rem;font-weight:500;color:var(--ink);font-size:.9rem}
+  input,select,button,textarea{
+    font-size:1rem;
+    padding:.65rem .9rem;
+    border:2px solid var(--b);
+    border-radius:8px;
+    font-family:inherit;
+    transition:all 0.2s ease;
+  }
+  input:focus,select:focus,textarea:focus{
+    outline:none;
+    border-color:var(--pri);
+    box-shadow:0 0 0 3px rgba(72,187,120,0.1);
+  }
   input[type="checkbox"]{padding:0;width:auto;border-radius:4px}
   select{background:#fff}
-  button{cursor:pointer}
-  button.primary{background:var(--pri);color:#fff;border-color:var(--pri)}
-  button.ghost{background:#fff;color:var(--pri);border-color:#93c5fd}
-  button.danger{background:#fff;color:#b91c1c;border-color:#fca5a5}
-  button:disabled{opacity:.55;cursor:not-allowed}
-  .cards{display:grid;gap:.6rem;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));margin:1rem 0}
-  .card{border:1px solid var(--b);border-radius:14px;padding:.85rem;background:#fff;box-shadow:0 1px 1px rgba(0,0,0,.02),0 1px 3px rgba(0,0,0,.04)}
-  .card.active{border-color:var(--pri);box-shadow:0 0 0 1px rgba(37,99,235,.3),0 3px 10px rgba(37,99,235,.1)}
-  .card h3{margin:.1rem 0;font-size:1rem}
-  .meta{font-size:.9rem;color:var(--mut)}
-  .badge{background:var(--soft);border:1px solid var(--softb);border-radius:999px;padding:.12rem .55rem;font-size:.82rem}
-  .badge.live{background:var(--good);border-color:#86efac;color:#064e3b}
-  .badge.warn{background:#fee2e2;border-color:#fecaca;color:#991b1b}
-  .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:.6rem}
-  .status-box{border:1px solid var(--b);border-radius:12px;padding:.75rem;background:#fff}
-  .status-box h4{margin:0 0 .4rem;font-size:.95rem;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
-  .status-box strong{font-size:1.05rem}
-  .control-row{margin:.45rem 0}
-  .card-actions{margin-top:.65rem;gap:.6rem;flex-wrap:wrap}
-  .table-wrap{overflow-x:auto}
-  table{border-collapse:collapse;width:100%}
-  th,td{border:1px solid var(--b);padding:.4rem .5rem;text-align:left;font-size:.92rem}
-  th{background:#f1f5f9}
-  details{border:1px solid var(--b);border-radius:14px;padding:1rem;background:#fff;margin-top:1rem}
-  summary{cursor:pointer;font-weight:600}
-  footer{margin-top:2rem;color:var(--mut);font-size:.85rem}
-  code{font-family:ui-monospace,Menlo,monospace;font-size:.9rem;background:#00000008;padding:.1rem .3rem;border-radius:6px}
+  button{
+    cursor:pointer;
+    font-weight:600;
+    transition:all 0.2s ease;
+  }
+  button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 8px rgba(0,0,0,0.15)}
+  button:active:not(:disabled){transform:translateY(0)}
+  button.primary{
+    background:var(--pri);
+    color:#fff;
+    border-color:var(--pri);
+    box-shadow:0 2px 4px rgba(72,187,120,0.2);
+  }
+  button.primary:hover:not(:disabled){background:var(--pri-dark)}
+  button.ghost{
+    background:#fff;
+    color:var(--pri);
+    border-color:var(--pri);
+  }
+  button.ghost:hover:not(:disabled){background:var(--soft)}
+  button.danger{
+    background:#fff;
+    color:#e53e3e;
+    border-color:#fc8181;
+  }
+  button.danger:hover:not(:disabled){background:#fff5f5}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .cards{
+    display:grid;
+    gap:1rem;
+    grid-template-columns:repeat(auto-fit,minmax(20rem,1fr));
+    margin:1.5rem 0;
+  }
+  .card{
+    border:2px solid var(--b);
+    border-radius:16px;
+    padding:1.2rem;
+    background:var(--card-bg);
+    box-shadow:0 2px 8px rgba(0,0,0,0.08);
+    transition:all 0.3s ease;
+  }
+  .card:hover{
+    box-shadow:0 8px 16px rgba(0,0,0,0.12);
+    transform:translateY(-2px);
+  }
+  .card.active{
+    border-color:var(--pri);
+    box-shadow:0 0 0 3px rgba(72,187,120,0.2),0 8px 16px rgba(72,187,120,0.15);
+    background:linear-gradient(135deg, #ffffff 0%, #f0fff4 100%);
+  }
+  .card h3{
+    margin:.2rem 0 .5rem;
+    font-size:1.15rem;
+    font-weight:700;
+    color:var(--ink);
+  }
+  .card h3::before{content:'🚉 '}
+  .meta{font-size:.85rem;color:var(--mut);line-height:1.4}
+  .badge{
+    background:var(--soft);
+    border:1px solid var(--softb);
+    border-radius:999px;
+    padding:.2rem .7rem;
+    font-size:.8rem;
+    font-weight:600;
+    display:inline-block;
+  }
+  .badge.live{background:#c6f6d5;border-color:#68d391;color:#22543d}
+  .badge.warn{background:#fed7d7;border-color:#fc8181;color:#742a2a}
+  .badge.early{background:#bee3f8;border-color:#63b3ed;color:#2c5282}
+  .badge.late{background:#feebc8;border-color:#f6ad55;color:#7c2d12}
+  .badge.very-late{background:#fed7d7;border-color:#fc8181;color:#742a2a}
+  .scheduled{font-size:.85rem;color:var(--mut);margin-top:.3rem}
+  .status-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));
+    gap:.8rem;
+    margin:1rem 0;
+  }
+  .status-box{
+    border:2px solid var(--b);
+    border-radius:12px;
+    padding:1rem;
+    background:var(--card-bg);
+    box-shadow:0 2px 4px rgba(0,0,0,0.05);
+  }
+  .status-box h4{
+    margin:0 0 .5rem;
+    font-size:.8rem;
+    color:var(--mut);
+    text-transform:uppercase;
+    letter-spacing:.05em;
+    font-weight:700;
+  }
+  .status-box strong{font-size:1.3rem;color:var(--ink);font-weight:700}
+  .control-row{margin:.5rem 0}
+  .card-actions{margin-top:.8rem;gap:.6rem;flex-wrap:wrap}
+  .table-wrap{overflow-x:auto;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.08)}
+  table{border-collapse:collapse;width:100%;background:#fff}
+  th,td{border:1px solid var(--b);padding:.7rem .8rem;text-align:left;font-size:.9rem}
+  th{background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);color:#fff;font-weight:600}
+  details{
+    border:2px solid var(--b);
+    border-radius:16px;
+    padding:1.2rem;
+    background:#fff;
+    margin-top:1.5rem;
+    box-shadow:0 2px 8px rgba(0,0,0,0.08);
+  }
+  summary{cursor:pointer;font-weight:600;font-size:1.1rem;color:var(--ink)}
+  summary::before{content:'⚙️ '}
+  footer{margin-top:3rem;color:var(--mut);font-size:.85rem;text-align:center;padding:1rem}
+  code{
+    font-family:'Fira Code','Courier New',monospace;
+    font-size:.9rem;
+    background:#e6fffa;
+    color:#234e52;
+    padding:.2rem .5rem;
+    border-radius:6px;
+    border:1px solid #81e6d9;
+  }
   @media (max-width:640px){
-    header{padding:.8rem .2rem}
-    body{padding:0 .7rem 2.5rem}
+    header{padding:1rem}
+    h1{font-size:1.4rem}
+    main{padding:1rem}
+    .cards{grid-template-columns:1fr;gap:.8rem}
   }
 </style>
 </head>
@@ -89,6 +230,17 @@
     <div class="form-group">
       <label for="trainNumber">Operativt tågnummer (valfritt)</label>
       <input id="trainNumber" type="text" placeholder="t.ex. 8074">
+    </div>
+    <div id="routeSuggestion" style="display:none;margin:.8rem 0;padding:1rem;background:linear-gradient(135deg, #e6fffa 0%, #c6f6d5 100%);border:2px solid #68d391;border-radius:12px">
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
+        <span style="font-size:1.2rem">💡</span>
+        <strong style="color:#22543d">Smart förslag baserat på historik</strong>
+      </div>
+      <p id="suggestionText" style="margin:.3rem 0;font-size:1rem;color:#2d3748"></p>
+      <div class="bar" style="margin-top:.7rem">
+        <button id="btnAcceptSuggestion" class="primary" style="font-size:.9rem">✓ Använd detta</button>
+        <button id="btnIgnoreSuggestion" class="ghost" style="font-size:.9rem">Ändra manuellt</button>
+      </div>
     </div>
     <div class="row">
       <div class="form-group">
@@ -194,38 +346,41 @@
   const STORAGE_KEY_LOGS = 'kmon_gps_logs_v1';
   const STORAGE_KEY_STATIONS = 'kmon_gps_station_meta_v1';
   const STORAGE_KEY_SAVE_FILE = 'kmon_gps_file_handle_v1';
+  const STORAGE_KEY_ROUTE_HISTORY = 'kmon_gps_route_history_v1';
+  const TRAFIKVERKET_API_KEY = '1acaea82911c472cb3409d57ae19707f';
+  const TRAFIKVERKET_API_URL = 'https://api.trafikinfo.trafikverket.se/v2/data.json';
 
   const baseStations = [
-    { name: 'Herrljunga', lat: 58.0788605, lon: 13.0208614, radius: 150 },
-    { name: 'Vedum', lat: 58.169087, lon: 12.9986447, radius: 150 },
-    { name: 'Vara', lat: 58.2606711, lon: 12.9522447, radius: 150 },
-    { name: 'Håkantorp', lat: 58.3070206, lon: 12.9073349, radius: 150 },
-    { name: 'Stora Levene', lat: 58.3260448, lon: 12.9258804, radius: 150 },
-    { name: 'Järpås', lat: 58.3790122, lon: 12.9700919, radius: 150 },
-    { name: 'Lovene', lat: 58.4411096, lon: 13.0479129, radius: 150 },
-    { name: 'Framnäs City', lat: 58.5076929, lon: 13.1470414, radius: 150 },
-    { name: 'Lidköping', lat: 58.504529, lon: 13.164946, radius: 150 },
-    { name: 'Filsbäck', lat: 58.493169, lon: 13.246874, radius: 150 },
-    { name: 'Källby', lat: 58.510579, lon: 13.301944, radius: 150 },
-    { name: 'Blomberg', lat: 58.540292, lon: 13.320681, radius: 150 },
-    { name: 'Trolmen', lat: 58.594766, lon: 13.347861, radius: 150 },
-    { name: 'Råbäck', lat: 58.610523, lon: 13.376457, radius: 150 },
-    { name: 'Hällekis', lat: 58.630055, lon: 13.432915, radius: 150 },
-    { name: 'Forshem', lat: 58.618067, lon: 13.491513, radius: 150 },
-    { name: 'Österäng', lat: 58.634102, lon: 13.559811, radius: 150 },
-    { name: 'Äskekärr', lat: 58.626118, lon: 13.608854, radius: 150 },
-    { name: 'Lugnås', lat: 58.644429, lon: 13.702182, radius: 150 },
-    { name: 'Mariestad', lat: 58.711321, lon: 13.825589, radius: 150 },
-    { name: 'Hasslerör', lat: 58.750332, lon: 13.939809, radius: 150 },
-    { name: 'Lyrestad', lat: 58.805135, lon: 14.057032, radius: 150 },
-    { name: 'Torved', lat: 58.825668, lon: 14.100155, radius: 150 },
-    { name: 'Hova', lat: 58.854937, lon: 14.215632, radius: 150 },
-    { name: 'Gårdsjö', lat: 58.871961, lon: 14.333386, radius: 150 },
-    { name: 'Laxå', lat: 58.989384, lon: 14.616495, radius: 150 },
-    { name: 'Hallsberg personbangård', lat: 59.0671196, lon: 15.1107975, radius: 150 },
-    { name: 'Kumla', lat: 59.126913, lon: 15.1406426, radius: 150 },
-    { name: 'Örebro Södra', lat: 59.2697009, lon: 15.2020665, radius: 150 },
-    { name: 'Örebro Central', lat: 59.278536, lon: 15.2116615, radius: 150 }
+    { name: 'Herrljunga', lat: 58.0788605, lon: 13.0208614, radius: 100 },
+    { name: 'Vedum', lat: 58.169087, lon: 12.9986447, radius: 100 },
+    { name: 'Vara', lat: 58.2606711, lon: 12.9522447, radius: 100 },
+    { name: 'Håkantorp', lat: 58.3070206, lon: 12.9073349, radius: 100 },
+    { name: 'Stora Levene', lat: 58.3260448, lon: 12.9258804, radius: 100 },
+    { name: 'Järpås', lat: 58.3790122, lon: 12.9700919, radius: 100 },
+    { name: 'Lovene', lat: 58.4411096, lon: 13.0479129, radius: 100 },
+    { name: 'Framnäs City', lat: 58.5076929, lon: 13.1470414, radius: 100 },
+    { name: 'Lidköping', lat: 58.50462, lon: 13.1639339, radius: 100 },
+    { name: 'Filsbäck', lat: 58.4931843, lon: 13.2469536, radius: 100 },
+    { name: 'Källby', lat: 58.5107931, lon: 13.3023402, radius: 100 },
+    { name: 'Blomberg', lat: 58.5402058, lon: 13.3206466, radius: 100 },
+    { name: 'Trolmen', lat: 58.594665, lon: 13.3477718, radius: 100 },
+    { name: 'Råbäck', lat: 58.6105061, lon: 13.376454, radius: 100 },
+    { name: 'Hällekis', lat: 58.6302156, lon: 13.432943, radius: 100 },
+    { name: 'Forshem', lat: 58.6180186, lon: 13.4912688, radius: 100 },
+    { name: 'Österäng', lat: 58.63415, lon: 13.5598621, radius: 100 },
+    { name: 'Äskekärr', lat: 58.6260531, lon: 13.6088607, radius: 100 },
+    { name: 'Lugnås', lat: 58.6443788, lon: 13.7022008, radius: 100 },
+    { name: 'Mariestad', lat: 58.7112536, lon: 13.8255412, radius: 100 },
+    { name: 'Hasslerör', lat: 58.7491527, lon: 13.9404069, radius: 100 },
+    { name: 'Lyrestad', lat: 58.8036306, lon: 14.0591279, radius: 100 },
+    { name: 'Torved', lat: 58.8242178, lon: 14.1007891, radius: 100 },
+    { name: 'Hova', lat: 58.8547965, lon: 14.2153363, radius: 100 },
+    { name: 'Gårdsjö', lat: 58.8721468, lon: 14.3335353, radius: 100 },
+    { name: 'Laxå', lat: 58.9893982, lon: 14.6185188, radius: 100 },
+    { name: 'Hallsberg personbangård', lat: 59.0671196, lon: 15.1107975, radius: 100 },
+    { name: 'Kumla', lat: 59.126913, lon: 15.1406426, radius: 100 },
+    { name: 'Örebro Södra', lat: 59.2697009, lon: 15.2020665, radius: 100 },
+    { name: 'Örebro Central', lat: 59.278536, lon: 15.2116615, radius: 100 }
   ];
 
   const els = {
@@ -260,6 +415,7 @@
 
   let stationOverrides = loadStationOverrides();
   let stationCatalog = composeStationCatalog();
+  let currentSuggestion = null;
 
   const state = {
     running: false,
@@ -352,9 +508,16 @@
       });
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    document.getElementById('trainNumber').addEventListener('input', handleTrainNumberInput);
+    document.getElementById('btnAcceptSuggestion').addEventListener('click', acceptSuggestion);
+    document.getElementById('btnIgnoreSuggestion').addEventListener('click', () => {
+      document.getElementById('routeSuggestion').style.display='none';
+      currentSuggestion = null;
+    });
   }
 
-  function startJourney(){
+  async function startJourney(){
     speedHistory.length=0; // nollställer tidigare hastighetsposter inför ny resa
     state.awaitingDepartureIndex=null;
     state.departureProvisionalIdx=null;
@@ -382,6 +545,8 @@
       customRadius:!!st.customRadius,
       actualArrival:null,
       actualDeparture:null,
+      scheduledArrival:null,
+      scheduledDeparture:null,
       arrivalSource:'',
       departSource:'',
       arrivalPosition:null,
@@ -417,6 +582,22 @@
     els.journeyMsg.style.display='none';
     renderRouteCards();
     requestGpsWatch();
+
+    if(state.trainNumber){
+      showJourneyMessage('Hämtar tidtabell från Trafikverket…', false);
+      const result = await fetchTimetable(state.trainNumber, state.startedAt);
+      if(result.success){
+        applyTimetableToRoute(result.timetable);
+        filterRouteByTimetable(result.stationStops);
+        renderRouteCards();
+        const stopCount = state.route.filter(s => s.shouldStop).length;
+        showJourneyMessage(`Tidtabell hämtad! (${stopCount} stopp)`, false);
+        setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
+      } else {
+        showJourneyMessage(`Tidtabell: ${result.error}`, true);
+        setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
+      }
+    }
   }
 
   function requestGpsWatch(){
@@ -607,10 +788,8 @@
     }:null;
     station.needsArrivalRetiming=false;
     station.reachedLowSpeed=false;
-    station.departureProvisional=true;
-    station.departureProvisionalAt=Date.now();
-    state.departureProvisionalIdx=idx;
-    state.awaitingDepartureIndex=idx;
+    station.departureProvisional=false;
+    station.departureProvisionalAt=null;
     advanceAfterDeparture(idx);
   }
 
@@ -804,9 +983,25 @@
       }
     }
     updateNextStopUI();
-    if(idx===state.route.length-1 && (!station || !station.departureProvisional)){
+    if(idx===state.route.length-1){
       stopJourney(false, 'Slutstation klar');
+    }else{
+      scrollToNextStation();
     }
+  }
+
+  function scrollToNextStation(){
+    if(state.nextIndex===null) return;
+    setTimeout(()=>{
+      const cards=els.cards.querySelectorAll('.card');
+      const nextCard=cards[state.nextIndex];
+      if(nextCard){
+        nextCard.scrollIntoView({
+          behavior:'smooth',
+          block:'center'
+        });
+      }
+    }, 500);
   }
 
   function updateNextStopUI(){
@@ -828,6 +1023,59 @@
       const dist=station.lastSeenDistance!=null?formatDistance(station.lastSeenDistance):'–';
       const classes=['card'];
       if(state.nextIndex===idx) classes.push('active');
+
+      const schedArr = station.scheduledArrival ? formatTime(station.scheduledArrival) : null;
+      const schedDep = station.scheduledDeparture ? formatTime(station.scheduledDeparture) : null;
+
+      let arrDelayBadge = '';
+      let depDelayBadge = '';
+
+      if(station.actualArrival && station.scheduledArrival){
+        const delayMin = Math.round((new Date(station.actualArrival) - new Date(station.scheduledArrival)) / 60000);
+        const absDelay = Math.abs(delayMin);
+        let badgeClass = '';
+        let delayText = '';
+
+        if(delayMin < -1){
+          badgeClass = 'early';
+          delayText = `${absDelay} min tidig`;
+        } else if(delayMin > 1 && delayMin <= 5){
+          badgeClass = 'late';
+          delayText = `+${delayMin} min`;
+        } else if(delayMin > 5){
+          badgeClass = 'very-late';
+          delayText = `+${delayMin} min`;
+        } else {
+          badgeClass = 'live';
+          delayText = 'I tid';
+        }
+
+        arrDelayBadge = ` <span class="badge ${badgeClass}">${delayText}</span>`;
+      }
+
+      if(station.actualDeparture && station.scheduledDeparture){
+        const delayMin = Math.round((new Date(station.actualDeparture) - new Date(station.scheduledDeparture)) / 60000);
+        const absDelay = Math.abs(delayMin);
+        let badgeClass = '';
+        let delayText = '';
+
+        if(delayMin < -1){
+          badgeClass = 'early';
+          delayText = `${absDelay} min tidig`;
+        } else if(delayMin > 1 && delayMin <= 5){
+          badgeClass = 'late';
+          delayText = `+${delayMin} min`;
+        } else if(delayMin > 5){
+          badgeClass = 'very-late';
+          delayText = `+${delayMin} min`;
+        } else {
+          badgeClass = 'live';
+          delayText = 'I tid';
+        }
+
+        depDelayBadge = ` <span class="badge ${badgeClass}">${delayText}</span>`;
+      }
+
       return `<div class="${classes.join(' ')}" data-idx="${idx}">
         <div class="bar" style="justify-content:space-between">
           <h3>${station.order}. ${station.name}</h3>
@@ -837,8 +1085,10 @@
         <div class="control-row">
           <button class="ghost" data-action="update-pos" data-idx="${idx}">Uppdatera koordinater med min position</button>
         </div>
-        <p><strong>Ankomst:</strong> ${arrival} ${station.arrivalSource==='gps'?'(GPS)':station.arrivalSource==='manual'?'(manuellt)':''}</p>
-        <p><strong>Avgång:</strong> ${depart} ${station.departSource==='gps'?'(GPS)':station.departSource==='manual'?'(manuellt)':''}</p>
+        <p><strong>Ankomst:</strong> ${arrival} ${station.arrivalSource==='gps'?'(GPS)':station.arrivalSource==='manual'?'(manuellt)':''}${arrDelayBadge}</p>
+        ${schedArr ? `<p class="scheduled">Schema: ${schedArr}</p>` : ''}
+        <p><strong>Avgång:</strong> ${depart} ${station.departSource==='gps'?'(GPS)':station.departSource==='manual'?'(manuellt)':''}${depDelayBadge}</p>
+        ${schedDep ? `<p class="scheduled">Schema: ${schedDep}</p>` : ''}
         <div class="meta">${station.shouldStop?'Planerat stopp':'Passeras utan stopp'}</div>
         <div class="row control-row">
           <label><input type="checkbox" data-action="toggle-stop" data-idx="${idx}" ${station.shouldStop?'checked':''}> Planerat stopp</label>
@@ -965,13 +1215,39 @@
     }
     const rows=logEntry.stops.map((st,idx)=>{
       const dwell=st.actualArrival&&st.actualDeparture?((new Date(st.actualDeparture)-new Date(st.actualArrival))/60000).toFixed(1)+' min':'–';
+
+      let arrDelay = '–';
+      if(st.actualArrival && st.scheduledArrival){
+        const delayMin = Math.round((new Date(st.actualArrival) - new Date(st.scheduledArrival)) / 60000);
+        if(delayMin < -1){
+          arrDelay = `${Math.abs(delayMin)} min tidig`;
+        } else if(delayMin > 1){
+          arrDelay = `+${delayMin} min`;
+        } else {
+          arrDelay = 'I tid';
+        }
+      }
+
+      let depDelay = '–';
+      if(st.actualDeparture && st.scheduledDeparture){
+        const delayMin = Math.round((new Date(st.actualDeparture) - new Date(st.scheduledDeparture)) / 60000);
+        if(delayMin < -1){
+          depDelay = `${Math.abs(delayMin)} min tidig`;
+        } else if(delayMin > 1){
+          depDelay = `+${delayMin} min`;
+        } else {
+          depDelay = 'I tid';
+        }
+      }
+
       return `<tr>
         <td>${idx+1}</td>
         <td>${st.name}</td>
-        <td>${st.actualArrival?formatTime(st.actualArrival):'–'}</td>
-        <td>${st.actualDeparture?formatTime(st.actualDeparture):'–'}</td>
+        <td>${st.actualArrival?formatTime(st.actualArrival):'–'}${st.scheduledArrival?`<br><span class="meta">Schema: ${formatTime(st.scheduledArrival)}</span>`:''}</td>
+        <td>${st.actualDeparture?formatTime(st.actualDeparture):'–'}${st.scheduledDeparture?`<br><span class="meta">Schema: ${formatTime(st.scheduledDeparture)}</span>`:''}</td>
         <td>${dwell}</td>
-        <td>${st.arrivalSource||'–'}</td>
+        <td>${arrDelay}</td>
+        <td>${depDelay}</td>
       </tr>`;
     }).join('');
     els.reportHTML.innerHTML=`
@@ -981,7 +1257,7 @@
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>#</th><th>Station</th><th>Ankomst</th><th>Avgång</th><th>Uppehåll</th><th>Källa</th></tr>
+            <tr><th>#</th><th>Station</th><th>Ankomst</th><th>Avgång</th><th>Uppehåll</th><th>Förseningank</th><th>Förseningavg</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
@@ -1005,6 +1281,8 @@
         name:st.name,
         actualArrival:st.actualArrival,
         actualDeparture:st.actualDeparture,
+        scheduledArrival:st.scheduledArrival,
+        scheduledDeparture:st.scheduledDeparture,
         arrivalSource:st.arrivalSource,
         departSource:st.departSource,
         shouldStop:st.shouldStop,
@@ -1016,6 +1294,11 @@
       localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(logs));
     }catch(e){}
     updateLogCount();
+
+    if(entry.trainNumber && entry.startStation && entry.endStation) {
+      updateRouteHistory(entry.trainNumber, entry.startStation, entry.endStation);
+    }
+
     return entry;
   }
 
@@ -1029,6 +1312,254 @@
     }catch(e){
       return [];
     }
+  }
+
+  function loadRouteHistory(){
+    try{
+      const raw=localStorage.getItem(STORAGE_KEY_ROUTE_HISTORY);
+      if(!raw) return {};
+      const parsed=JSON.parse(raw);
+      return parsed && typeof parsed==='object' ? parsed : {};
+    }catch(e){
+      console.error('Kunde ej ladda rutt-historik:', e);
+      return {};
+    }
+  }
+
+  function saveRouteHistory(history){
+    try{
+      localStorage.setItem(STORAGE_KEY_ROUTE_HISTORY, JSON.stringify(history));
+    }catch(e){
+      console.error('Kunde ej spara rutt-historik:', e);
+    }
+  }
+
+  function updateRouteHistory(trainNumber, startStation, endStation){
+    if(!trainNumber || !startStation || !endStation) return;
+
+    const history = loadRouteHistory();
+    if(!history[trainNumber]) {
+      history[trainNumber] = [];
+    }
+
+    const now = new Date();
+    history[trainNumber].push({
+      start: startStation,
+      end: endStation,
+      timestamp: now.toISOString(),
+      hour: now.getHours(),
+      minute: now.getMinutes()
+    });
+
+    if(history[trainNumber].length > 100) {
+      history[trainNumber] = history[trainNumber].slice(-100);
+    }
+
+    saveRouteHistory(history);
+  }
+
+  function analyzeRouteHistory(trainNumber, currentHour){
+    if(!trainNumber) return null;
+
+    const history = loadRouteHistory();
+    const routes = history[trainNumber];
+
+    if(!routes || routes.length === 0) return null;
+
+    const routeCounts = {};
+    const TIME_WINDOW = 2;
+
+    routes.forEach(r => {
+      const key = `${r.start}|${r.end}`;
+      if(!routeCounts[key]) {
+        routeCounts[key] = { start: r.start, end: r.end, count: 0, timeMatch: 0 };
+      }
+      routeCounts[key].count++;
+
+      if(currentHour !== undefined && r.hour !== undefined) {
+        const timeDiff = Math.abs(r.hour - currentHour);
+        if(timeDiff <= TIME_WINDOW) {
+          routeCounts[key].timeMatch++;
+        }
+      }
+    });
+
+    const sorted = Object.values(routeCounts).sort((a, b) => {
+      if(currentHour !== undefined && (a.timeMatch > 0 || b.timeMatch > 0)) {
+        if(a.timeMatch !== b.timeMatch) return b.timeMatch - a.timeMatch;
+      }
+      return b.count - a.count;
+    });
+
+    return sorted[0] || null;
+  }
+
+  async function handleTrainNumberInput(e){
+    const trainNumber = e.target.value.trim();
+
+    if(!trainNumber || trainNumber.length < 2) {
+      document.getElementById('routeSuggestion').style.display='none';
+      currentSuggestion = null;
+      return;
+    }
+
+    setTimeout(async () => {
+      const currentTime = new Date();
+      const currentHour = currentTime.getHours();
+      const currentMinute = currentTime.getMinutes();
+
+      let suggestion = null;
+      let suggestionSource = '';
+
+      const timetableResult = await fetchTimetable(trainNumber, currentTime);
+
+      if(timetableResult.success && timetableResult.timetable) {
+        const nearestStation = await findNearestStation();
+        const timeBasedRoute = findCurrentRouteSegment(
+          timetableResult.timetable,
+          nearestStation,
+          currentHour,
+          currentMinute
+        );
+
+        if(timeBasedRoute) {
+          suggestion = {
+            start: timeBasedRoute.start,
+            end: timeBasedRoute.end,
+            count: 0
+          };
+          suggestionSource = `GPS + tidtabell (${timeBasedRoute.startTime})`;
+        }
+      }
+
+      if(!suggestion) {
+        const historySuggestion = analyzeRouteHistory(trainNumber, currentHour);
+        if(historySuggestion && historySuggestion.count >= 1) {
+          suggestion = historySuggestion;
+          suggestionSource = historySuggestion.count === 1
+            ? '1 tidigare körning'
+            : `${historySuggestion.count} tidigare körningar`;
+        }
+      }
+
+      if(suggestion) {
+        currentSuggestion = suggestion;
+        const text = `Tåg ${trainNumber}: ${suggestion.start} → ${suggestion.end}`;
+
+        document.getElementById('suggestionText').innerHTML =
+          `<strong style="font-size:1.1rem">${text}</strong><br><span style="color:#718096;font-size:.9rem">${suggestionSource}</span>`;
+        document.getElementById('routeSuggestion').style.display='block';
+      } else {
+        document.getElementById('routeSuggestion').style.display='none';
+        currentSuggestion = null;
+      }
+    }, 300);
+  }
+
+  function acceptSuggestion(){
+    if(!currentSuggestion) return;
+
+    els.startSel.value = currentSuggestion.start;
+    els.endSel.value = currentSuggestion.end;
+    document.getElementById('routeSuggestion').style.display='none';
+
+    const msg = document.createElement('div');
+    msg.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);background:#48bb78;color:white;padding:.8rem 1.5rem;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:1000;font-weight:600;';
+    msg.textContent = `✓ Rutt vald: ${currentSuggestion.start} → ${currentSuggestion.end}`;
+    document.body.appendChild(msg);
+    setTimeout(() => msg.remove(), 2500);
+  }
+
+  async function findNearestStation(){
+    return new Promise((resolve) => {
+      if(!navigator.geolocation) {
+        resolve(null);
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const userLat = position.coords.latitude;
+          const userLon = position.coords.longitude;
+
+          let nearest = null;
+          let minDistance = Infinity;
+
+          stationCatalog.forEach(station => {
+            const dist = haversine(userLat, userLon, station.lat, station.lon);
+            if(dist < minDistance) {
+              minDistance = dist;
+              nearest = station.name;
+            }
+          });
+
+          resolve(nearest);
+        },
+        (error) => {
+          resolve(null);
+        },
+        { timeout: 5000, maximumAge: 60000 }
+      );
+    });
+  }
+
+  function findCurrentRouteSegment(timetable, nearestStation, currentHour, currentMinute){
+    if(!timetable || !nearestStation) return null;
+
+    const currentTimeMinutes = currentHour * 60 + currentMinute;
+    const BEFORE_MARGIN = 30;
+    const AFTER_MARGIN = 15;
+
+    const nearestSig = stationSignatures[nearestStation];
+    if(!nearestSig) return null;
+
+    const stationTimes = timetable[nearestSig];
+    if(!stationTimes) return null;
+
+    const departureTime = stationTimes.departure;
+    if(!departureTime) return null;
+
+    const depHour = departureTime.getHours();
+    const depMinute = departureTime.getMinutes();
+    const depTimeMinutes = depHour * 60 + depMinute;
+
+    const timeDiff = currentTimeMinutes - depTimeMinutes;
+
+    if(timeDiff >= -BEFORE_MARGIN && timeDiff <= AFTER_MARGIN) {
+      const sortedStations = Object.keys(timetable)
+        .map(sig => {
+          const info = timetable[sig];
+          const time = info.departure || info.arrival;
+          return { sig, time, info };
+        })
+        .filter(s => s.time)
+        .sort((a, b) => a.time - b.time);
+
+      const currentStationIndex = sortedStations.findIndex(s => s.sig === nearestSig);
+      if(currentStationIndex === -1) return null;
+
+      const startStation = nearestStation;
+
+      let endStation = null;
+      for(let i = sortedStations.length - 1; i > currentStationIndex; i--) {
+        const sig = sortedStations[i].sig;
+        const name = Object.keys(stationSignatures).find(k => stationSignatures[k] === sig);
+        if(name) {
+          endStation = name;
+          break;
+        }
+      }
+
+      if(!endStation) return null;
+
+      return {
+        start: startStation,
+        end: endStation,
+        startTime: `${String(depHour).padStart(2, '0')}:${String(depMinute).padStart(2, '0')}`
+      };
+    }
+
+    return null;
   }
 
   async function syncLogs(){
@@ -1345,6 +1876,186 @@
     return R*c;
   }
 
+  const stationSignatures = {
+    'Herrljunga': 'Hrc',
+    'Vedum': 'Ved',
+    'Vara': 'Vaa',
+    'Håkantorp': 'Håp',
+    'Stora Levene': 'Stlv',
+    'Järpås': 'Jps',
+    'Lovene': 'Lve',
+    'Framnäs City': 'Fc',
+    'Lidköping': 'Lkp',
+    'Filsbäck': 'Fiä',
+    'Källby': 'Kll',
+    'Blomberg': 'Bmb',
+    'Trolmen': 'Trm',
+    'Råbäck': 'Rbk',
+    'Hällekis': 'Hlk',
+    'Forshem': 'Fhm',
+    'Österäng': 'Öäg',
+    'Äskekärr': 'Äsr',
+    'Lugnås': 'Lnå',
+    'Mariestad': 'Mst',
+    'Hasslerör': 'Hsr',
+    'Lyrestad': 'Lyd',
+    'Torved': 'Tvd',
+    'Hova': 'Hova',
+    'Gårdsjö': 'Gdö',
+    'Laxå': 'Lå',
+    'Hallsberg personbangård': 'Hpbg',
+    'Kumla': 'Kla',
+    'Örebro Södra': 'Öb',
+    'Örebro Central': 'Ör'
+  };
+
+  async function fetchTimetable(otn, date){
+    if(!otn) return { success: false, error: 'Inget tågnummer angivet' };
+    try{
+      const targetDate = date ? new Date(date) : new Date();
+      const targetDateStr = targetDate.toISOString().split('T')[0];
+
+      const xmlRequest = `<REQUEST>
+        <LOGIN authenticationkey="${TRAFIKVERKET_API_KEY}" />
+        <QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="500">
+          <FILTER>
+            <EQ name="OperationalTrainNumber" value="${otn}" />
+          </FILTER>
+          <INCLUDE>LocationSignature</INCLUDE>
+          <INCLUDE>AdvertisedTimeAtLocation</INCLUDE>
+          <INCLUDE>ActivityType</INCLUDE>
+          <INCLUDE>OperationalTrainNumber</INCLUDE>
+          <INCLUDE>DepartureDateOTN</INCLUDE>
+          <INCLUDE>Advertised</INCLUDE>
+        </QUERY>
+      </REQUEST>`;
+
+      const response = await fetch(TRAFIKVERKET_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/xml' },
+        body: xmlRequest
+      });
+
+      if(!response.ok) {
+        return { success: false, error: `API-fel: HTTP ${response.status}` };
+      }
+
+      const data = await response.json();
+      const announcements = data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [];
+
+      if(!announcements.length) {
+        return { success: false, error: `Tåg ${otn} hittades inte i tidtabellen` };
+      }
+
+      const filtered = announcements.filter(ann => {
+        if(!ann.AdvertisedTimeAtLocation) return false;
+        const annDate = new Date(ann.AdvertisedTimeAtLocation).toISOString().split('T')[0];
+        return annDate === targetDateStr;
+      });
+
+      if(!filtered.length) {
+        const availableDates = [...new Set(announcements
+          .filter(a => a.AdvertisedTimeAtLocation)
+          .map(a => new Date(a.AdvertisedTimeAtLocation).toISOString().split('T')[0])
+        )].sort();
+
+        return {
+          success: false,
+          error: `Tåg ${otn} går inte ${targetDateStr}. Går: ${availableDates.join(', ')}`
+        };
+      }
+
+      const timetable = {};
+      const stationStops = new Set();
+
+      filtered.forEach(ann => {
+        const sig = ann.LocationSignature;
+        const time = ann.AdvertisedTimeAtLocation;
+        const activity = ann.ActivityType;
+        const advertised = ann.Advertised;
+
+        if(!sig || !time) return;
+
+        if(!timetable[sig]) timetable[sig] = { hasArrival: false, hasDeparture: false };
+
+        if(activity === 'Ankomst') {
+          timetable[sig].arrival = new Date(time);
+          timetable[sig].hasArrival = true;
+        } else if(activity === 'Avgang') {
+          timetable[sig].departure = new Date(time);
+          timetable[sig].hasDeparture = true;
+        }
+      });
+
+      Object.keys(timetable).forEach(sig => {
+        const info = timetable[sig];
+        if(info.hasArrival || info.hasDeparture) {
+          stationStops.add(sig);
+        }
+      });
+
+      return {
+        success: true,
+        timetable,
+        stationStops: Array.from(stationStops),
+        stationCount: Object.keys(timetable).length
+      };
+    }catch(err){
+      console.error('Kunde inte hämta tidtabell:', err);
+      return { success: false, error: err.message || 'Okänt fel vid API-anrop' };
+    }
+  }
+
+  function applyTimetableToRoute(timetable){
+    if(!timetable || !state.route) return;
+
+    state.route.forEach((station, idx) => {
+      const sig = stationSignatures[station.name];
+      if(!sig || !timetable[sig]) return;
+
+      const isFirst = idx === 0;
+      const isLast = idx === state.route.length - 1;
+
+      if(!isFirst && timetable[sig].arrival) {
+        station.scheduledArrival = timetable[sig].arrival;
+      }
+
+      if(!isLast && timetable[sig].departure) {
+        station.scheduledDeparture = timetable[sig].departure;
+      }
+    });
+  }
+
+  function filterRouteByTimetable(stationStops){
+    if(!stationStops || !state.route) return;
+
+    const stopsSet = new Set(stationStops);
+    const newRoute = [];
+
+    state.route.forEach((station, idx) => {
+      const sig = stationSignatures[station.name];
+      const isFirst = idx === 0;
+      const isLast = idx === state.route.length - 1;
+
+      if(isFirst || isLast || stopsSet.has(sig)) {
+        station.shouldStop = true;
+        newRoute.push(station);
+      } else {
+        station.shouldStop = false;
+      }
+    });
+
+    if(newRoute.length > 0) {
+      newRoute.forEach((station, idx) => {
+        station.order = idx + 1;
+      });
+
+      state.route = newRoute;
+      state.lastReachedIndex = 0;
+      state.nextIndex = newRoute.length > 1 ? 1 : null;
+    }
+  }
+
   function normalizeLogEntry(entry){
     if(!entry || typeof entry!=='object') return null;
     const stopsArray=Array.isArray(entry.stops)?entry.stops:[];
@@ -1359,6 +2070,8 @@
       name: stop.name || stop.station || `Uppehåll ${idx+1}`,
       actualArrival: stop.actualArrival || stop.arrival || stop.arr || null,
       actualDeparture: stop.actualDeparture || stop.departure || stop.dep || null,
+      scheduledArrival: stop.scheduledArrival || null,
+      scheduledDeparture: stop.scheduledDeparture || null,
       arrivalSource: stop.arrivalSource || '',
       departSource: stop.departSource || '',
       shouldStop: stop.shouldStop!=null ? !!stop.shouldStop : !stop.skipNoStop,
