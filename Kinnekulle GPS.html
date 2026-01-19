@@ -10,200 +10,289 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
   :root{
-    --bg:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    --bg-solid:#f0f4f8;
-    --ink:#1a202c;
-    --mut:#718096;
-    --pri:#48bb78;
-    --pri-dark:#38a169;
-    --sec:#ed8936;
-    --b:#e2e8f0;
-    --soft:#e6fffa;
-    --softb:#81e6d9;
-    --err:#fed7d7;
-    --good:#c6f6d5;
-    --card-bg:#ffffff;
+    --bg:#1a1d23;
+    --bg-solid:#0d0f12;
+    --ink:#e8eaed;
+    --ink-dim:#9aa0a6;
+    --mut:#6b7280;
+    --pri:#22c55e;
+    --pri-dark:#16a34a;
+    --pri-glow:rgba(34,197,94,0.15);
+    --sec:#f59e0b;
+    --b:#2d3139;
+    --b-light:#3d4149;
+    --soft:rgba(34,197,94,0.1);
+    --softb:#22c55e;
+    --err:#ef4444;
+    --err-bg:rgba(239,68,68,0.15);
+    --good:#22c55e;
+    --good-bg:rgba(34,197,94,0.15);
+    --card-bg:#1e2128;
+    --warn:#f59e0b;
+    --warn-bg:rgba(245,158,11,0.15);
+    --blue:#3b82f6;
+    --blue-bg:rgba(59,130,246,0.15);
   }
-  *{box-sizing:border-box}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html{font-size:15px}
   body{
-    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     margin:0;
     padding:0;
-    line-height:1.6;
+    line-height:1.5;
     background:var(--bg-solid);
     color:var(--ink);
+    min-height:100vh;
+    min-height:100dvh;
   }
   header{
     position:sticky;
     top:0;
-    background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    padding:1.2rem 1.5rem;
+    background:var(--bg);
+    padding:.75rem 1rem;
     margin:0;
-    box-shadow:0 4px 6px rgba(0,0,0,0.1);
+    border-bottom:1px solid var(--b);
     z-index:10;
   }
   h1{
-    margin:0 0 .8rem;
-    font-size:1.8rem;
-    font-weight:700;
-    color:#fff;
-    text-shadow:0 2px 4px rgba(0,0,0,0.1);
+    margin:0 0 .5rem;
+    font-size:1.1rem;
+    font-weight:600;
+    color:var(--ink);
+    letter-spacing:-0.01em;
   }
   h1::before{content:'🚂 '}
   h2{
-    margin:2rem 0 1rem;
-    font-size:1.4rem;
+    margin:1.25rem 0 .75rem;
+    font-size:1rem;
     font-weight:600;
     color:var(--ink);
   }
-  h2::before{content:'📍 '}
-  main{padding:1.5rem;max-width:1400px;margin:0 auto}
-  .bar{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
-  .row{display:flex;gap:.6rem;flex-wrap:wrap}
+  h2::before{content:''}
+  main{padding:.75rem;max-width:600px;margin:0 auto}
+  .bar{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
+  .row{display:flex;gap:.4rem;flex-wrap:wrap}
   .grow{flex:1 1 auto}
-  .form-group{margin:.6rem 0;min-width:12rem}
-  label{display:block;margin:.3rem 0 .2rem;font-weight:500;color:var(--ink);font-size:.9rem}
+  .form-group{margin:.5rem 0}
+  label{display:block;margin:.2rem 0;font-weight:500;color:var(--ink-dim);font-size:.8rem;text-transform:uppercase;letter-spacing:.03em}
   input,select,button,textarea{
-    font-size:1rem;
-    padding:.65rem .9rem;
-    border:2px solid var(--b);
-    border-radius:8px;
+    font-size:.95rem;
+    padding:.5rem .75rem;
+    border:1px solid var(--b);
+    border-radius:6px;
     font-family:inherit;
-    transition:all 0.2s ease;
+    background:var(--card-bg);
+    color:var(--ink);
+    transition:border-color 0.15s,box-shadow 0.15s;
   }
   input:focus,select:focus,textarea:focus{
     outline:none;
     border-color:var(--pri);
-    box-shadow:0 0 0 3px rgba(72,187,120,0.1);
+    box-shadow:0 0 0 2px var(--pri-glow);
   }
-  input[type="checkbox"]{padding:0;width:auto;border-radius:4px}
-  select{background:#fff}
+  input[type="checkbox"]{
+    padding:0;
+    width:1.1rem;
+    height:1.1rem;
+    border-radius:4px;
+    accent-color:var(--pri);
+  }
+  select{background:var(--card-bg)}
   button{
     cursor:pointer;
-    font-weight:600;
-    transition:all 0.2s ease;
+    font-weight:500;
+    font-size:.85rem;
+    padding:.4rem .7rem;
+    transition:all 0.15s ease;
+    border:1px solid var(--b);
+    background:var(--card-bg);
+    color:var(--ink);
   }
-  button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 8px rgba(0,0,0,0.15)}
-  button:active:not(:disabled){transform:translateY(0)}
+  button:hover:not(:disabled){background:var(--b)}
+  button:active:not(:disabled){transform:scale(0.98)}
   button.primary{
     background:var(--pri);
-    color:#fff;
+    color:#000;
     border-color:var(--pri);
-    box-shadow:0 2px 4px rgba(72,187,120,0.2);
+    font-weight:600;
   }
   button.primary:hover:not(:disabled){background:var(--pri-dark)}
   button.ghost{
-    background:#fff;
+    background:transparent;
     color:var(--pri);
-    border-color:var(--pri);
+    border-color:var(--b);
   }
-  button.ghost:hover:not(:disabled){background:var(--soft)}
+  button.ghost:hover:not(:disabled){background:var(--pri-glow);border-color:var(--pri)}
   button.danger{
-    background:#fff;
-    color:#e53e3e;
-    border-color:#fc8181;
+    background:transparent;
+    color:var(--err);
+    border-color:var(--b);
   }
-  button.danger:hover:not(:disabled){background:#fff5f5}
-  button:disabled{opacity:.5;cursor:not-allowed}
+  button.danger:hover:not(:disabled){background:var(--err-bg);border-color:var(--err)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.sm{padding:.25rem .5rem;font-size:.75rem}
   .cards{
-    display:grid;
-    gap:1rem;
-    grid-template-columns:repeat(auto-fit,minmax(20rem,1fr));
-    margin:1.5rem 0;
+    display:flex;
+    flex-direction:column;
+    gap:.5rem;
+    margin:.75rem 0;
   }
   .card{
-    border:2px solid var(--b);
-    border-radius:16px;
-    padding:1.2rem;
+    border:1px solid var(--b);
+    border-radius:8px;
+    padding:.6rem .75rem;
     background:var(--card-bg);
-    box-shadow:0 2px 8px rgba(0,0,0,0.08);
-    transition:all 0.3s ease;
+    transition:border-color 0.2s,background 0.2s;
   }
-  .card:hover{
-    box-shadow:0 8px 16px rgba(0,0,0,0.12);
-    transform:translateY(-2px);
-  }
+  .card:hover{border-color:var(--b-light)}
   .card.active{
     border-color:var(--pri);
-    box-shadow:0 0 0 3px rgba(72,187,120,0.2),0 8px 16px rgba(72,187,120,0.15);
-    background:linear-gradient(135deg, #ffffff 0%, #f0fff4 100%);
+    background:linear-gradient(135deg, var(--card-bg) 0%, rgba(34,197,94,0.05) 100%);
+    box-shadow:0 0 0 1px var(--pri-glow);
+  }
+  .card.done{opacity:0.6}
+  .card-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:.5rem;
+    cursor:pointer;
   }
   .card h3{
-    margin:.2rem 0 .5rem;
-    font-size:1.15rem;
-    font-weight:700;
-    color:var(--ink);
-  }
-  .card h3::before{content:'🚉 '}
-  .meta{font-size:.85rem;color:var(--mut);line-height:1.4}
-  .badge{
-    background:var(--soft);
-    border:1px solid var(--softb);
-    border-radius:999px;
-    padding:.2rem .7rem;
-    font-size:.8rem;
+    margin:0;
+    font-size:.95rem;
     font-weight:600;
-    display:inline-block;
+    color:var(--ink);
+    display:flex;
+    align-items:center;
+    gap:.4rem;
   }
-  .badge.live{background:#c6f6d5;border-color:#68d391;color:#22543d}
-  .badge.warn{background:#fed7d7;border-color:#fc8181;color:#742a2a}
-  .badge.early{background:#bee3f8;border-color:#63b3ed;color:#2c5282}
-  .badge.late{background:#feebc8;border-color:#f6ad55;color:#7c2d12}
-  .badge.very-late{background:#fed7d7;border-color:#fc8181;color:#742a2a}
-  .scheduled{font-size:.85rem;color:var(--mut);margin-top:.3rem}
+  .card h3 .station-num{
+    color:var(--mut);
+    font-weight:400;
+    font-size:.8rem;
+    min-width:1.5rem;
+  }
+  .card-times{
+    display:flex;
+    gap:.75rem;
+    font-size:.8rem;
+    color:var(--ink-dim);
+    margin-top:.35rem;
+  }
+  .card-times strong{color:var(--ink);font-weight:600}
+  .card-times .arr::before{content:'↓ ';color:var(--pri)}
+  .card-times .dep::before{content:'↑ ';color:var(--sec)}
+  .card-expand{
+    max-height:0;
+    overflow:hidden;
+    transition:max-height 0.25s ease;
+  }
+  .card.expanded .card-expand{max-height:20rem}
+  .card-expand-inner{
+    padding-top:.6rem;
+    margin-top:.5rem;
+    border-top:1px solid var(--b);
+  }
+  .card-toggle{
+    width:1.5rem;
+    height:1.5rem;
+    border-radius:4px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:.7rem;
+    color:var(--mut);
+    transition:transform 0.2s;
+  }
+  .card.expanded .card-toggle{transform:rotate(180deg)}
+  .meta{font-size:.75rem;color:var(--mut);line-height:1.4}
+  .badge{
+    background:var(--b);
+    border-radius:4px;
+    padding:.15rem .4rem;
+    font-size:.7rem;
+    font-weight:600;
+    display:inline-flex;
+    align-items:center;
+    color:var(--ink-dim);
+  }
+  .badge.live{background:var(--good-bg);color:var(--good)}
+  .badge.warn{background:var(--err-bg);color:var(--err)}
+  .badge.early{background:var(--blue-bg);color:var(--blue)}
+  .badge.late{background:var(--warn-bg);color:var(--warn)}
+  .badge.very-late{background:var(--err-bg);color:var(--err)}
+  .badge.dist{background:transparent;color:var(--ink-dim);font-weight:500;font-variant-numeric:tabular-nums}
+  .scheduled{font-size:.7rem;color:var(--mut);margin:.15rem 0 0}
   .status-grid{
     display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));
-    gap:.8rem;
-    margin:1rem 0;
+    grid-template-columns:repeat(2,1fr);
+    gap:.5rem;
+    margin:.75rem 0;
   }
   .status-box{
-    border:2px solid var(--b);
-    border-radius:12px;
-    padding:1rem;
+    border:1px solid var(--b);
+    border-radius:8px;
+    padding:.6rem .75rem;
     background:var(--card-bg);
-    box-shadow:0 2px 4px rgba(0,0,0,0.05);
   }
   .status-box h4{
-    margin:0 0 .5rem;
-    font-size:.8rem;
+    margin:0 0 .2rem;
+    font-size:.65rem;
     color:var(--mut);
     text-transform:uppercase;
-    letter-spacing:.05em;
-    font-weight:700;
+    letter-spacing:.04em;
+    font-weight:600;
   }
-  .status-box strong{font-size:1.3rem;color:var(--ink);font-weight:700}
-  .control-row{margin:.5rem 0}
-  .card-actions{margin-top:.8rem;gap:.6rem;flex-wrap:wrap}
-  .table-wrap{overflow-x:auto;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.08)}
-  table{border-collapse:collapse;width:100%;background:#fff}
-  th,td{border:1px solid var(--b);padding:.7rem .8rem;text-align:left;font-size:.9rem}
-  th{background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);color:#fff;font-weight:600}
+  .status-box strong{font-size:1rem;color:var(--ink);font-weight:600;display:block}
+  .status-box .meta{margin-top:.15rem}
+  .control-row{margin:.4rem 0}
+  .control-row label{
+    display:inline-flex;
+    align-items:center;
+    gap:.4rem;
+    font-size:.8rem;
+    color:var(--ink-dim);
+    text-transform:none;
+    letter-spacing:0;
+    cursor:pointer;
+  }
+  .card-actions{margin-top:.5rem;gap:.4rem;flex-wrap:wrap}
+  .table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--b)}
+  table{border-collapse:collapse;width:100%;background:var(--card-bg);font-size:.8rem}
+  th,td{border:1px solid var(--b);padding:.5rem .6rem;text-align:left}
+  th{background:var(--bg);color:var(--ink-dim);font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.03em}
+  td input{width:5rem;padding:.3rem .4rem;font-size:.8rem}
   details{
-    border:2px solid var(--b);
-    border-radius:16px;
-    padding:1.2rem;
-    background:#fff;
-    margin-top:1.5rem;
-    box-shadow:0 2px 8px rgba(0,0,0,0.08);
+    border:1px solid var(--b);
+    border-radius:8px;
+    padding:.75rem;
+    background:var(--card-bg);
+    margin-top:1rem;
   }
-  summary{cursor:pointer;font-weight:600;font-size:1.1rem;color:var(--ink)}
-  summary::before{content:'⚙️ '}
-  footer{margin-top:3rem;color:var(--mut);font-size:.85rem;text-align:center;padding:1rem}
+  summary{cursor:pointer;font-weight:500;font-size:.9rem;color:var(--ink)}
+  summary::before{content:'⚙️ ';font-size:.8rem}
+  footer{margin-top:2rem;color:var(--mut);font-size:.75rem;text-align:center;padding:.75rem}
   code{
-    font-family:'Fira Code','Courier New',monospace;
-    font-size:.9rem;
-    background:#e6fffa;
-    color:#234e52;
-    padding:.2rem .5rem;
-    border-radius:6px;
-    border:1px solid #81e6d9;
+    font-family:ui-monospace,monospace;
+    font-size:.8rem;
+    background:var(--b);
+    color:var(--ink);
+    padding:.15rem .35rem;
+    border-radius:4px;
   }
   @media (max-width:640px){
-    header{padding:1rem}
-    h1{font-size:1.4rem}
-    main{padding:1rem}
-    .cards{grid-template-columns:1fr;gap:.8rem}
+    html{font-size:14px}
+    header{padding:.6rem .75rem}
+    h1{font-size:1rem}
+    main{padding:.5rem}
+    .status-grid{grid-template-columns:1fr 1fr}
+    .status-box{padding:.5rem}
+    .bar{gap:.3rem}
+    button{padding:.35rem .6rem}
+  }
+  @media (min-width:641px){
+    .cards{max-width:500px}
   }
 </style>
 </head>
@@ -231,15 +320,15 @@
       <label for="trainNumber">Operativt tågnummer (valfritt)</label>
       <input id="trainNumber" type="text" placeholder="t.ex. 8074">
     </div>
-    <div id="routeSuggestion" style="display:none;margin:.8rem 0;padding:1rem;background:linear-gradient(135deg, #e6fffa 0%, #c6f6d5 100%);border:2px solid #68d391;border-radius:12px">
-      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
-        <span style="font-size:1.2rem">💡</span>
-        <strong style="color:#22543d">Smart förslag baserat på historik</strong>
+    <div id="routeSuggestion" style="display:none;margin:.6rem 0;padding:.75rem;background:var(--pri-glow);border:1px solid var(--pri);border-radius:8px">
+      <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.4rem">
+        <span style="font-size:1rem">💡</span>
+        <strong style="color:var(--pri)">Förslag från historik</strong>
       </div>
-      <p id="suggestionText" style="margin:.3rem 0;font-size:1rem;color:#2d3748"></p>
-      <div class="bar" style="margin-top:.7rem">
-        <button id="btnAcceptSuggestion" class="primary" style="font-size:.9rem">✓ Använd detta</button>
-        <button id="btnIgnoreSuggestion" class="ghost" style="font-size:.9rem">Ändra manuellt</button>
+      <p id="suggestionText" style="margin:.2rem 0;font-size:.9rem;color:var(--ink)"></p>
+      <div class="bar" style="margin-top:.5rem">
+        <button id="btnAcceptSuggestion" class="primary">✓ Använd</button>
+        <button id="btnIgnoreSuggestion" class="ghost">Ändra</button>
       </div>
     </div>
     <div class="row">
@@ -771,7 +860,12 @@
         station.arrivalPosition=station.closestPosition;
       }
     }else if(station.needsArrivalRetiming && station.closestDistance!=null && dist>station.closestDistance+PASS_DISTANCE_MARGIN){
-      markPassingDeparture(idx);
+      // Markera passering endast om vi rör oss i hög fart (inte bromsar)
+      const speed = state.lastSpeed;
+      const clearlyPassing = typeof speed === 'number' && speed > SPEED_THRESHOLD_MS * 2; // >10 km/h
+      if(clearlyPassing){
+        markPassingDeparture(idx);
+      }
     }
   }
 
@@ -948,6 +1042,11 @@
       const pos=state.lastPosition;
       const speed=state.lastSpeed;
       const movingFast=typeof speed==='number' && speed>SPEED_THRESHOLD_MS;
+      // Om vi inte har stannat ännu och rör oss långsamt är det troligen GPS-fluktuation
+      // under inbromsning - vänta tills vi antingen stannar eller tydligt passerar
+      if(!station.reachedLowSpeed && !movingFast){
+        return;
+      }
       station.actualDeparture=new Date();
       station.departSource='gps';
       station.departurePosition=pos?{
@@ -1076,29 +1175,41 @@
         depDelayBadge = ` <span class="badge ${badgeClass}">${delayText}</span>`;
       }
 
+      const isDone = station.actualArrival && station.actualDeparture;
+      if(isDone) classes.push('done');
+      const stopIcon = station.shouldStop ? '' : ' ⏩';
+
       return `<div class="${classes.join(' ')}" data-idx="${idx}">
-        <div class="bar" style="justify-content:space-between">
-          <h3>${station.order}. ${station.name}</h3>
-          <span class="badge">${dist}</span>
+        <div class="card-header" data-action="toggle-expand" data-idx="${idx}">
+          <div>
+            <h3><span class="station-num">${station.order}</span>${station.name}${stopIcon}</h3>
+            <div class="card-times">
+              <span class="arr"><strong>${arrival}</strong>${arrDelayBadge}</span>
+              <span class="dep"><strong>${depart}</strong>${depDelayBadge}</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:.4rem">
+            <span class="badge dist">${dist}</span>
+            <span class="card-toggle">▼</span>
+          </div>
         </div>
-        <p class="meta">Radie ${Math.round(station.radius)} m • ${station.lat!=null?station.lat.toFixed(4):'–'}, ${station.lon!=null?station.lon.toFixed(4):'–'}</p>
-        <div class="control-row">
-          <button class="ghost" data-action="update-pos" data-idx="${idx}">Uppdatera koordinater med min position</button>
-        </div>
-        <p><strong>Ankomst:</strong> ${arrival} ${station.arrivalSource==='gps'?'(GPS)':station.arrivalSource==='manual'?'(manuellt)':''}${arrDelayBadge}</p>
-        ${schedArr ? `<p class="scheduled">Schema: ${schedArr}</p>` : ''}
-        <p><strong>Avgång:</strong> ${depart} ${station.departSource==='gps'?'(GPS)':station.departSource==='manual'?'(manuellt)':''}${depDelayBadge}</p>
-        ${schedDep ? `<p class="scheduled">Schema: ${schedDep}</p>` : ''}
-        <div class="meta">${station.shouldStop?'Planerat stopp':'Passeras utan stopp'}</div>
-        <div class="row control-row">
-          <label><input type="checkbox" data-action="toggle-stop" data-idx="${idx}" ${station.shouldStop?'checked':''}> Planerat stopp</label>
-        </div>
-        <div class="row control-row">
-          <label class="meta"><input type="checkbox" data-action="exclude-run" data-idx="${idx}" ${station.excludeInboundRun?'checked':''}> Sen av annan orsak – exkludera gångtiden hit</label>
-        </div>
-        <div class="bar card-actions">
-          <button class="ghost" data-action="arrive" data-idx="${idx}">Markera ankomst</button>
-          <button class="ghost" data-action="depart" data-idx="${idx}">Markera avgång</button>
+        <div class="card-expand">
+          <div class="card-expand-inner">
+            ${schedArr ? `<p class="scheduled">Ank schema: ${schedArr}</p>` : ''}
+            ${schedDep ? `<p class="scheduled">Avg schema: ${schedDep}</p>` : ''}
+            <p class="meta">${Math.round(station.radius)} m radie • ${station.lat!=null?station.lat.toFixed(4):'–'}, ${station.lon!=null?station.lon.toFixed(4):'–'}</p>
+            <div class="control-row">
+              <label><input type="checkbox" data-action="toggle-stop" data-idx="${idx}" ${station.shouldStop?'checked':''}> Planerat stopp</label>
+            </div>
+            <div class="control-row">
+              <label><input type="checkbox" data-action="exclude-run" data-idx="${idx}" ${station.excludeInboundRun?'checked':''}> Exkludera gångtid</label>
+            </div>
+            <div class="bar card-actions">
+              <button class="ghost sm" data-action="arrive" data-idx="${idx}">↓ Ankomst</button>
+              <button class="ghost sm" data-action="depart" data-idx="${idx}">↑ Avgång</button>
+              <button class="ghost sm" data-action="update-pos" data-idx="${idx}">📍 Uppdatera pos</button>
+            </div>
+          </div>
         </div>
       </div>`;
     }).join('');
@@ -1116,6 +1227,13 @@
   }
 
   function handleCardButton(ev){
+    // Handle card header toggle
+    const header=ev.target.closest('[data-action="toggle-expand"]');
+    if(header){
+      const card=header.closest('.card');
+      if(card) card.classList.toggle('expanded');
+      return;
+    }
     const btn=ev.target.closest('button[data-action]');
     if(!btn) return;
     const idx=parseInt(btn.dataset.idx,10);
