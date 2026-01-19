@@ -300,7 +300,8 @@
 <header>
   <h1>Kinnekulle Tågmonitor – GPS-version</h1>
   <div class="bar">
-    <button id="btnExport" class="primary" aria-label="Exportera sparade körningar">Exportera loggar</button>
+    <button id="btnExport" class="primary" aria-label="Exportera sparade körningar som JSON">JSON</button>
+    <button id="btnExportCSV" class="primary" aria-label="Exportera sparade körningar som CSV">CSV</button>
     <button id="btnSaveFile" class="ghost" aria-label="Spara loggar till fil">Spara loggar</button>
     <button id="btnSync" class="ghost" aria-label="Synkronisera loggfil">Synka loggfil</button>
     <button id="btnClear" class="ghost" aria-label="Ta bort alla sparade körningar">Töm loggar</button>
@@ -308,6 +309,7 @@
     <button id="btnUpdate" class="ghost" style="display:none" aria-label="Ladda om med ny version">Uppdatera appen</button>
     <button id="btnInstall" class="ghost" style="display:none" aria-label="Installera som app">Installera appen</button>
     <span id="headerStatus" class="badge" style="display:none"></span>
+    <span id="offlineIndicator" class="badge warn" style="display:none" role="status" aria-live="polite">⚡ Offline</span>
     <span id="logCountTop" class="badge" role="status" aria-live="polite" style="margin-left:auto">Loggar: 0</span>
     <span id="gpsStatusBadge" class="badge">Ingen GPS ännu</span>
   </div>
@@ -538,6 +540,31 @@
     bindEvents();
     setupPWA();
     updateWakeButton();
+    setupOnlineStatus();
+  }
+
+  // Vibration feedback for arrivals/departures
+  function vibrate(pattern){
+    if('vibrate' in navigator){
+      try{ navigator.vibrate(pattern); }catch(e){}
+    }
+  }
+
+  // Online/offline status
+  function setupOnlineStatus(){
+    updateOnlineStatus();
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+  }
+
+  function updateOnlineStatus(){
+    const indicator = document.getElementById('offlineIndicator');
+    if(!indicator) return;
+    if(navigator.onLine){
+      indicator.style.display = 'none';
+    }else{
+      indicator.style.display = 'inline-flex';
+    }
   }
 
   function populateStationSelects(preserveSelection){
@@ -570,6 +597,7 @@
     document.getElementById('btnAbort').addEventListener('click', () => stopJourney(true, 'Resan avbröts manuellt'));
     document.getElementById('btnFinish').addEventListener('click', () => stopJourney(false, 'Avslutad manuellt'));
     document.getElementById('btnExport').addEventListener('click', exportLogs);
+    document.getElementById('btnExportCSV').addEventListener('click', exportLogsCSV);
     if(els.saveBtn){
       els.saveBtn.addEventListener('click', saveLogsToFile);
     }
@@ -784,7 +812,16 @@
 
   function handlePositionError(err){
     updateGpsStatus(null, err);
-    showJourneyMessage(err&&err.message?err.message:'Kunde inte läsa GPS.', true);
+    let msg = 'Kunde inte läsa GPS.';
+    if(err){
+      switch(err.code){
+        case 1: msg = 'GPS-åtkomst nekad – aktivera platsbehörighet'; break;
+        case 2: msg = 'GPS-signal otillgänglig – försök utomhus'; break;
+        case 3: msg = 'GPS timeout – försöker igen...'; break;
+        default: msg = err.message || msg;
+      }
+    }
+    showJourneyMessage(msg, true);
   }
 
   function updateGpsStatus(pos, error){
@@ -999,7 +1036,7 @@
       station.arrivalPosition=posInfo;
       state.lastReachedIndex=idx;
       state.nextIndex=idx+1<state.route.length?idx+1:null;
-      
+      vibrate([100, 50, 100]); // Double pulse for arrival
       updateNextStopUI();
     }
     if(!station.shouldStop){
@@ -1079,6 +1116,7 @@
       station.needsArrivalRetiming=false;
       if(!station.departureProvisional){
         station.departureProvisionalAt=null;
+        vibrate(200); // Single pulse for confirmed departure
       }
     }
     updateNextStopUI();
@@ -1272,6 +1310,7 @@
     if(!station) return;
     station.actualArrival=new Date();
     station.arrivalSource='manual';
+    vibrate([100, 50, 100]); // Double pulse for arrival
     station.arrivalPosition=state.lastPosition?{
       lat:state.lastPosition.coords.latitude,
       lon:state.lastPosition.coords.longitude,
@@ -1293,6 +1332,7 @@
     if(!station) return;
     station.actualDeparture=new Date();
     station.departSource='manual';
+    vibrate(200); // Single pulse for departure
     station.departurePosition=state.lastPosition?{
       lat:state.lastPosition.coords.latitude,
       lon:state.lastPosition.coords.longitude,
@@ -1748,6 +1788,44 @@
     URL.revokeObjectURL(url);
   }
 
+  function exportLogsCSV(){
+    const logs=loadLogs();
+    if(!logs.length){
+      showHeaderStatus('Inga loggar att exportera.', true);
+      return;
+    }
+    const rows=[['Datum','Tåg','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa']];
+    logs.forEach(log=>{
+      const logDate=log.startedAt?new Date(log.startedAt).toLocaleDateString('sv-SE'):'';
+      const trainNum=log.trainNumber||'';
+      const fromSt=log.route&&log.route[0]?log.route[0].name:'';
+      const toSt=log.route&&log.route.length?log.route[log.route.length-1].name:'';
+      (log.route||[]).forEach(st=>{
+        const arr=st.actualArrival?new Date(st.actualArrival).toLocaleTimeString('sv-SE'):'';
+        const dep=st.actualDeparture?new Date(st.actualDeparture).toLocaleTimeString('sv-SE'):'';
+        const schArr=st.scheduledArrival?new Date(st.scheduledArrival).toLocaleTimeString('sv-SE'):'';
+        const schDep=st.scheduledDeparture?new Date(st.scheduledDeparture).toLocaleTimeString('sv-SE'):'';
+        let delay='';
+        if(st.actualArrival&&st.scheduledArrival){
+          delay=Math.round((new Date(st.actualArrival)-new Date(st.scheduledArrival))/60000);
+        }
+        const source=st.arrivalSource||'';
+        rows.push([logDate,trainNum,fromSt,toSt,st.name,st.order||'',arr,dep,schArr,schDep,delay,source]);
+      });
+    });
+    const csv=rows.map(r=>r.map(c=>'"'+(c+'').replace(/"/g,'""')+'"').join(';')).join('\n');
+    const bom='\uFEFF';
+    const blob=new Blob([bom+csv],{type:'text/csv;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download='kinnekulle_gps_logs.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function saveLogsToFile(){
     const localLogs=loadLogs();
     if(!('showOpenFilePicker' in window)){
@@ -2120,7 +2198,15 @@
       };
     }catch(err){
       console.error('Kunde inte hämta tidtabell:', err);
-      return { success: false, error: err.message || 'Okänt fel vid API-anrop' };
+      let errorMsg = 'Okänt fel vid API-anrop';
+      if(!navigator.onLine){
+        errorMsg = 'Ingen internetanslutning – tidtabell kunde inte hämtas';
+      }else if(err.name === 'TypeError' && err.message.includes('fetch')){
+        errorMsg = 'Nätverksfel – kontrollera anslutningen';
+      }else if(err.message){
+        errorMsg = err.message;
+      }
+      return { success: false, error: errorMsg };
     }
   }
 
