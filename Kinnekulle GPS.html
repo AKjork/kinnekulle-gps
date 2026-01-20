@@ -898,11 +898,14 @@
         station.arrivalPosition=station.closestPosition;
       }
     }else if(station.needsArrivalRetiming && station.closestDistance!=null && dist>station.closestDistance+PASS_DISTANCE_MARGIN){
-      // Markera passering endast om vi rör oss i hög fart (inte bromsar)
-      const speed = state.lastSpeed;
-      const clearlyPassing = typeof speed === 'number' && speed > SPEED_THRESHOLD_MS * 2; // >10 km/h
-      if(clearlyPassing){
-        markPassingDeparture(idx);
+      // Markera passering ENDAST för stationer utan planerat stopp
+      // För stationer med stopp: vänta på att användaren stannar och avgår normalt
+      if(!station.shouldStop){
+        const speed = state.lastSpeed;
+        const clearlyPassing = typeof speed === 'number' && speed > SPEED_THRESHOLD_MS * 2; // >10 km/h
+        if(clearlyPassing){
+          markPassingDeparture(idx);
+        }
       }
     }
   }
