@@ -532,6 +532,7 @@
   let pendingServiceWorker = null;
   let updateTriggered = false;
   let hadController = !!navigator.serviceWorker.controller;
+  let expandedCards = new Set(); // Track which cards are expanded
 
   function init(){
     populateStationSelects();
@@ -1079,9 +1080,10 @@
       const pos=state.lastPosition;
       const speed=state.lastSpeed;
       const movingFast=typeof speed==='number' && speed>SPEED_THRESHOLD_MS;
-      // Om vi inte har stannat ännu och rör oss långsamt är det troligen GPS-fluktuation
-      // under inbromsning - vänta tills vi antingen stannar eller tydligt passerar
-      if(!station.reachedLowSpeed && !movingFast){
+      // Avgång vid geofence-utgång kräver att vi faktiskt rör oss
+      // Om vi står still (har stannat men inte börjat köra igen) är det troligen GPS-fluktuation
+      // Låt processSpeedTriggers hantera avgång baserat på acceleration istället
+      if(!movingFast){
         return;
       }
       station.actualDeparture=new Date();
@@ -1160,6 +1162,7 @@
       const dist=station.lastSeenDistance!=null?formatDistance(station.lastSeenDistance):'–';
       const classes=['card'];
       if(state.nextIndex===idx) classes.push('active');
+      if(expandedCards.has(idx)) classes.push('expanded');
 
       const schedArr = station.scheduledArrival ? formatTime(station.scheduledArrival) : null;
       const schedDep = station.scheduledDeparture ? formatTime(station.scheduledDeparture) : null;
@@ -1269,7 +1272,15 @@
     const header=ev.target.closest('[data-action="toggle-expand"]');
     if(header){
       const card=header.closest('.card');
-      if(card) card.classList.toggle('expanded');
+      if(card){
+        const idx=parseInt(card.dataset.idx,10);
+        card.classList.toggle('expanded');
+        if(card.classList.contains('expanded')){
+          expandedCards.add(idx);
+        }else{
+          expandedCards.delete(idx);
+        }
+      }
       return;
     }
     const btn=ev.target.closest('button[data-action]');
