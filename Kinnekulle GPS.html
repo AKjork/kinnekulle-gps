@@ -902,8 +902,8 @@
       // För stationer med stopp: vänta på att användaren stannar och avgår normalt
       if(!station.shouldStop){
         const speed = state.lastSpeed;
-        const clearlyPassing = typeof speed === 'number' && speed > SPEED_THRESHOLD_MS * 2; // >10 km/h
-        if(clearlyPassing){
+        const isMoving = typeof speed === 'number' && speed > SPEED_THRESHOLD_MS; // >5 km/h
+        if(isMoving){
           markPassingDeparture(idx);
         }
       }
