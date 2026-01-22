@@ -139,8 +139,8 @@
   }
   .card{
     border:1px solid var(--b);
-    border-radius:8px;
-    padding:.6rem .75rem;
+    border-radius:10px;
+    padding:.9rem 1rem;
     background:var(--card-bg);
     transition:border-color 0.2s,background 0.2s;
   }
@@ -157,28 +157,29 @@
     justify-content:space-between;
     gap:.5rem;
     cursor:pointer;
+    min-height:2.5rem;
   }
   .card h3{
     margin:0;
-    font-size:.95rem;
+    font-size:1.1rem;
     font-weight:600;
     color:var(--ink);
     display:flex;
     align-items:center;
-    gap:.4rem;
+    gap:.5rem;
   }
   .card h3 .station-num{
     color:var(--mut);
     font-weight:400;
-    font-size:.8rem;
-    min-width:1.5rem;
+    font-size:.9rem;
+    min-width:1.7rem;
   }
   .card-times{
     display:flex;
-    gap:.75rem;
-    font-size:.8rem;
+    gap:1rem;
+    font-size:.9rem;
     color:var(--ink-dim);
-    margin-top:.35rem;
+    margin-top:.5rem;
   }
   .card-times strong{color:var(--ink);font-weight:600}
   .card-times .arr::before{content:'↓ ';color:var(--pri)}
@@ -206,6 +207,56 @@
     transition:transform 0.2s;
   }
   .card.expanded .card-toggle{transform:rotate(180deg)}
+
+  /* Autocomplete station search */
+  .station-search-container{position:relative;flex:1}
+  .station-search{width:100%}
+  .station-dropdown{
+    position:absolute;
+    top:100%;
+    left:0;
+    right:0;
+    max-height:280px;
+    overflow-y:auto;
+    background:var(--card-bg);
+    border:1px solid var(--pri);
+    border-radius:6px;
+    margin-top:2px;
+    z-index:100;
+    box-shadow:0 4px 12px rgba(0,0,0,0.4);
+    display:none;
+  }
+  .station-dropdown.open{display:block}
+  .station-dropdown-item{
+    padding:.65rem .85rem;
+    cursor:pointer;
+    border-bottom:1px solid var(--b);
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+  }
+  .station-dropdown-item:last-child{border-bottom:none}
+  .station-dropdown-item:hover,.station-dropdown-item.selected{background:var(--pri-glow)}
+  .station-dropdown-item .station-name{font-weight:500;color:var(--ink)}
+  .station-dropdown-item .station-sig{font-size:.75rem;color:var(--mut)}
+  .station-dropdown-item .station-dist{font-size:.75rem;color:var(--pri)}
+  .station-section-header{
+    padding:.4rem .85rem;
+    font-size:.7rem;
+    font-weight:600;
+    color:var(--mut);
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    background:var(--bg);
+    border-bottom:1px solid var(--b);
+  }
+  .loading-stations{
+    padding:1rem;
+    text-align:center;
+    color:var(--mut);
+    font-size:.85rem;
+  }
+
   .meta{font-size:.75rem;color:var(--mut);line-height:1.4}
   .badge{
     background:var(--b);
@@ -334,15 +385,18 @@
       </div>
     </div>
     <div class="row">
-      <div class="form-group">
+      <div class="form-group station-search-container">
         <label for="startStation">Startstation</label>
-        <select id="startStation"></select>
+        <input type="text" id="startStation" class="station-search" placeholder="Sök station..." autocomplete="off">
+        <div id="startStationDropdown" class="station-dropdown"></div>
       </div>
-      <div class="form-group">
+      <div class="form-group station-search-container">
         <label for="endStation">Slutstation</label>
-        <select id="endStation"></select>
+        <input type="text" id="endStation" class="station-search" placeholder="Sök station..." autocomplete="off">
+        <div id="endStationDropdown" class="station-dropdown"></div>
       </div>
     </div>
+    <div id="stationLoadStatus" class="loading-stations" style="display:none">Laddar stationer...</div>
     <div class="form-group">
       <label for="startNotes">Anteckningar (syns i rapporten)</label>
       <textarea id="startNotes" rows="2" placeholder="Skriv här om du vill anteckna något om mätningen …"></textarea>
@@ -438,6 +492,10 @@
   const STORAGE_KEY_STATIONS = 'kmon_gps_station_meta_v1';
   const STORAGE_KEY_SAVE_FILE = 'kmon_gps_file_handle_v1';
   const STORAGE_KEY_ROUTE_HISTORY = 'kmon_gps_route_history_v1';
+  const STORAGE_KEY_ALL_STATIONS = 'kmon_all_stations_v1';
+  const STORAGE_KEY_RECENT_STATIONS = 'kmon_recent_stations_v1';
+  const STATIONS_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dagar
+  const MAX_RECENT_STATIONS = 20;
   const TRAFIKVERKET_API_KEY = '1acaea82911c472cb3409d57ae19707f';
   const TRAFIKVERKET_API_URL = 'https://api.trafikinfo.trafikverket.se/v2/data.json';
 
@@ -475,8 +533,11 @@
   ];
 
   const els = {
-    startSel: document.getElementById('startStation'),
-    endSel: document.getElementById('endStation'),
+    startInput: document.getElementById('startStation'),
+    endInput: document.getElementById('endStation'),
+    startDropdown: document.getElementById('startStationDropdown'),
+    endDropdown: document.getElementById('endStationDropdown'),
+    stationLoadStatus: document.getElementById('stationLoadStatus'),
     cards: document.getElementById('cards'),
     setup: document.getElementById('setup'),
     journey: document.getElementById('journey'),
@@ -507,6 +568,12 @@
   let stationOverrides = loadStationOverrides();
   let stationCatalog = composeStationCatalog();
   let currentSuggestion = null;
+  let allStationsCache = [];
+  let recentStations = loadRecentStations();
+  let userLocation = null;
+  let selectedStartStation = null;
+  let selectedEndStation = null;
+  let activeDropdown = null;
 
   const state = {
     running: false,
@@ -534,14 +601,16 @@
   let hadController = !!navigator.serviceWorker.controller;
   let expandedCards = new Set(); // Track which cards are expanded
 
-  function init(){
-    populateStationSelects();
+  async function init(){
     renderCalibrationTable();
     updateLogCount();
     bindEvents();
     setupPWA();
     updateWakeButton();
     setupOnlineStatus();
+    setupStationSearch();
+    await loadAllStations();
+    getUserLocation();
   }
 
   // Vibration feedback for arrivals/departures
@@ -568,29 +637,335 @@
     }
   }
 
-  function populateStationSelects(preserveSelection){
-    const currentStart=preserveSelection?els.startSel.value:null;
-    const currentEnd=preserveSelection?els.endSel.value:null;
-    const fragStart=new DocumentFragment();
-    const fragEnd=new DocumentFragment();
-    stationCatalog.forEach(st=>{
-      const opt1=document.createElement('option');
-      opt1.value=st.name;
-      opt1.textContent=st.name;
-      fragStart.appendChild(opt1);
-      const opt2=document.createElement('option');
-      opt2.value=st.name;
-      opt2.textContent=st.name;
-      fragEnd.appendChild(opt2);
+  // === Station Search & Loading ===
+
+  function loadRecentStations(){
+    try{
+      const data = localStorage.getItem(STORAGE_KEY_RECENT_STATIONS);
+      return data ? JSON.parse(data) : [];
+    }catch(e){ return []; }
+  }
+
+  function saveRecentStations(){
+    try{
+      localStorage.setItem(STORAGE_KEY_RECENT_STATIONS, JSON.stringify(recentStations.slice(0, MAX_RECENT_STATIONS)));
+    }catch(e){}
+  }
+
+  function addToRecentStations(station){
+    if(!station || !station.name) return;
+    recentStations = recentStations.filter(s => s.name !== station.name);
+    recentStations.unshift({ name: station.name, sig: station.sig, lat: station.lat, lon: station.lon });
+    recentStations = recentStations.slice(0, MAX_RECENT_STATIONS);
+    saveRecentStations();
+  }
+
+  function getUserLocation(){
+    if(!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      pos => { userLocation = { lat: pos.coords.latitude, lon: pos.coords.longitude }; },
+      () => {},
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+    );
+  }
+
+  async function loadAllStations(){
+    els.stationLoadStatus.style.display = 'block';
+    els.stationLoadStatus.textContent = 'Laddar stationer från Trafikverket...';
+
+    // Try cache first
+    const cached = loadStationsFromCache();
+    if(cached && cached.length > 0){
+      allStationsCache = cached;
+      els.stationLoadStatus.style.display = 'none';
+      return;
+    }
+
+    // Fetch from API
+    try{
+      const stations = await fetchAllStationsFromAPI();
+      if(stations && stations.length > 0){
+        allStationsCache = stations;
+        saveStationsToCache(stations);
+        els.stationLoadStatus.style.display = 'none';
+      }else{
+        throw new Error('Inga stationer hämtade');
+      }
+    }catch(e){
+      console.error('Failed to load stations:', e);
+      // Fallback to baseStations
+      allStationsCache = baseStations.map(s => ({ name: s.name, sig: '', lat: s.lat, lon: s.lon }));
+      els.stationLoadStatus.textContent = 'Kunde inte hämta stationer, använder lokal lista';
+      setTimeout(() => { els.stationLoadStatus.style.display = 'none'; }, 3000);
+    }
+  }
+
+  function loadStationsFromCache(){
+    try{
+      const data = localStorage.getItem(STORAGE_KEY_ALL_STATIONS);
+      if(!data) return null;
+      const parsed = JSON.parse(data);
+      if(Date.now() - parsed.timestamp > STATIONS_CACHE_MAX_AGE_MS) return null;
+      return parsed.stations;
+    }catch(e){ return null; }
+  }
+
+  function saveStationsToCache(stations){
+    try{
+      localStorage.setItem(STORAGE_KEY_ALL_STATIONS, JSON.stringify({
+        timestamp: Date.now(),
+        stations: stations
+      }));
+    }catch(e){}
+  }
+
+  async function fetchAllStationsFromAPI(){
+    const xmlRequest = `<REQUEST>
+      <LOGIN authenticationkey="${TRAFIKVERKET_API_KEY}" />
+      <QUERY objecttype="TrainStation" schemaversion="1.4">
+        <FILTER>
+          <EQ name="Advertised" value="true" />
+        </FILTER>
+        <INCLUDE>AdvertisedLocationName</INCLUDE>
+        <INCLUDE>LocationSignature</INCLUDE>
+        <INCLUDE>Geometry.WGS84</INCLUDE>
+      </QUERY>
+    </REQUEST>`;
+
+    const resp = await fetch(TRAFIKVERKET_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/xml' },
+      body: xmlRequest
     });
-    els.startSel.innerHTML='';
-    els.endSel.innerHTML='';
-    els.startSel.appendChild(fragStart);
-    els.endSel.appendChild(fragEnd);
-    const startExists=stationCatalog.some(s=>s.name===currentStart);
-    const endExists=stationCatalog.some(s=>s.name===currentEnd);
-    els.startSel.value=startExists&&currentStart?currentStart:'Lidköping';
-    els.endSel.value=endExists&&currentEnd?currentEnd:'Mariestad';
+
+    if(!resp.ok) throw new Error('API error: ' + resp.status);
+    const data = await resp.json();
+
+    if(!data.RESPONSE || !data.RESPONSE.RESULT || !data.RESPONSE.RESULT[0]) {
+      throw new Error('Invalid API response');
+    }
+
+    const trainStations = data.RESPONSE.RESULT[0].TrainStation || [];
+    return trainStations.map(st => {
+      let lat = null, lon = null;
+      if(st.Geometry && st.Geometry.WGS84){
+        const match = st.Geometry.WGS84.match(/POINT\s*\(\s*([\d.-]+)\s+([\d.-]+)\s*\)/i);
+        if(match){
+          lon = parseFloat(match[1]);
+          lat = parseFloat(match[2]);
+        }
+      }
+      return {
+        name: st.AdvertisedLocationName || '',
+        sig: st.LocationSignature || '',
+        lat: lat,
+        lon: lon
+      };
+    }).filter(s => s.name && s.lat && s.lon).sort((a, b) => a.name.localeCompare(b.name, 'sv'));
+  }
+
+  function filterStations(query, limit = 30){
+    const q = (query || '').toLowerCase().trim();
+    const results = [];
+    const seen = new Set();
+
+    // If empty query, show recent + nearby
+    if(!q){
+      // Add recent stations
+      for(const rs of recentStations){
+        const st = allStationsCache.find(s => s.name === rs.name);
+        if(st && !seen.has(st.name)){
+          results.push({ ...st, section: 'recent' });
+          seen.add(st.name);
+        }
+      }
+
+      // Add nearby stations if we have location
+      if(userLocation){
+        const withDist = allStationsCache.map(s => ({
+          ...s,
+          dist: haversine(userLocation.lat, userLocation.lon, s.lat, s.lon)
+        })).sort((a, b) => a.dist - b.dist);
+
+        for(const st of withDist.slice(0, 10)){
+          if(!seen.has(st.name)){
+            results.push({ ...st, section: 'nearby' });
+            seen.add(st.name);
+          }
+        }
+      }
+
+      return results.slice(0, limit);
+    }
+
+    // Search by name or signature
+    const matches = allStationsCache.filter(s => {
+      const nameLower = s.name.toLowerCase();
+      const sigLower = (s.sig || '').toLowerCase();
+      return nameLower.startsWith(q) || sigLower.startsWith(q) || nameLower.includes(q);
+    });
+
+    // Sort: exact start match first, then by name
+    matches.sort((a, b) => {
+      const aStarts = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+      const bStarts = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+      if(aStarts !== bStarts) return aStarts - bStarts;
+      return a.name.localeCompare(b.name, 'sv');
+    });
+
+    // Add distance if available
+    if(userLocation){
+      for(const st of matches){
+        st.dist = haversine(userLocation.lat, userLocation.lon, st.lat, st.lon);
+      }
+    }
+
+    return matches.slice(0, limit);
+  }
+
+  function setupStationSearch(){
+    const inputs = [
+      { input: els.startInput, dropdown: els.startDropdown, type: 'start' },
+      { input: els.endInput, dropdown: els.endDropdown, type: 'end' }
+    ];
+
+    for(const cfg of inputs){
+      cfg.input.addEventListener('focus', () => {
+        activeDropdown = cfg.type;
+        updateDropdown(cfg, cfg.input.value);
+      });
+
+      cfg.input.addEventListener('input', () => {
+        updateDropdown(cfg, cfg.input.value);
+      });
+
+      cfg.input.addEventListener('blur', () => {
+        setTimeout(() => {
+          cfg.dropdown.classList.remove('open');
+        }, 200);
+      });
+
+      cfg.input.addEventListener('keydown', (e) => {
+        if(e.key === 'Escape'){
+          cfg.dropdown.classList.remove('open');
+          cfg.input.blur();
+        }else if(e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+          e.preventDefault();
+          navigateDropdown(cfg, e.key === 'ArrowDown' ? 1 : -1);
+        }else if(e.key === 'Enter'){
+          e.preventDefault();
+          selectHighlightedItem(cfg);
+        }
+      });
+
+      cfg.dropdown.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const item = e.target.closest('.station-dropdown-item');
+        if(item){
+          selectStation(cfg, item.dataset.name);
+        }
+      });
+    }
+
+    // Close dropdowns when clicking outside
+    document.addEventListener('click', (e) => {
+      if(!e.target.closest('.station-search-container')){
+        els.startDropdown.classList.remove('open');
+        els.endDropdown.classList.remove('open');
+      }
+    });
+  }
+
+  function updateDropdown(cfg, query){
+    const stations = filterStations(query);
+    let html = '';
+    let currentSection = '';
+
+    for(const st of stations){
+      if(st.section && st.section !== currentSection){
+        currentSection = st.section;
+        const sectionLabel = st.section === 'recent' ? 'Senast använda' : 'I närheten';
+        html += `<div class="station-section-header">${sectionLabel}</div>`;
+      }
+      const distText = st.dist != null ? `${formatDistance(st.dist)}` : '';
+      html += `<div class="station-dropdown-item" data-name="${escapeHtml(st.name)}">
+        <span class="station-name">${escapeHtml(st.name)}</span>
+        <span>
+          <span class="station-sig">${escapeHtml(st.sig || '')}</span>
+          ${distText ? `<span class="station-dist">${distText}</span>` : ''}
+        </span>
+      </div>`;
+    }
+
+    if(stations.length === 0){
+      html = '<div class="loading-stations">Inga stationer hittades</div>';
+    }
+
+    cfg.dropdown.innerHTML = html;
+    cfg.dropdown.classList.add('open');
+  }
+
+  function navigateDropdown(cfg, direction){
+    const items = cfg.dropdown.querySelectorAll('.station-dropdown-item');
+    if(items.length === 0) return;
+
+    const current = cfg.dropdown.querySelector('.station-dropdown-item.selected');
+    let idx = current ? Array.from(items).indexOf(current) : -1;
+    idx += direction;
+    if(idx < 0) idx = items.length - 1;
+    if(idx >= items.length) idx = 0;
+
+    items.forEach(it => it.classList.remove('selected'));
+    items[idx].classList.add('selected');
+    items[idx].scrollIntoView({ block: 'nearest' });
+  }
+
+  function selectHighlightedItem(cfg){
+    const selected = cfg.dropdown.querySelector('.station-dropdown-item.selected');
+    if(selected){
+      selectStation(cfg, selected.dataset.name);
+    }else{
+      const first = cfg.dropdown.querySelector('.station-dropdown-item');
+      if(first) selectStation(cfg, first.dataset.name);
+    }
+  }
+
+  function selectStation(cfg, name){
+    const station = allStationsCache.find(s => s.name === name);
+    if(!station) return;
+
+    cfg.input.value = station.name;
+    cfg.dropdown.classList.remove('open');
+
+    if(cfg.type === 'start'){
+      selectedStartStation = station;
+    }else{
+      selectedEndStation = station;
+    }
+
+    addToRecentStations(station);
+  }
+
+  function getSelectedRoute(){
+    // Returns the array of stations between start and end
+    if(!selectedStartStation || !selectedEndStation) return null;
+    if(selectedStartStation.name === selectedEndStation.name) return null;
+
+    // Check if both are in our station catalog (for route building)
+    const startIdx = stationCatalog.findIndex(s => s.name === selectedStartStation.name);
+    const endIdx = stationCatalog.findIndex(s => s.name === selectedEndStation.name);
+
+    if(startIdx >= 0 && endIdx >= 0){
+      // Both in catalog - use existing route logic
+      const forward = startIdx < endIdx;
+      return forward ? stationCatalog.slice(startIdx, endIdx + 1) : stationCatalog.slice(endIdx, startIdx + 1).reverse();
+    }
+
+    // Stations not in catalog - just return start and end
+    return [
+      { ...selectedStartStation, radius: DEFAULT_RADIUS },
+      { ...selectedEndStation, radius: DEFAULT_RADIUS }
+    ];
   }
 
   function bindEvents(){
@@ -641,21 +1016,37 @@
     state.departureProvisionalIdx=null;
     state.lastSpeed=null;
     state.lastSpeedTime=null;
-    const startName=els.startSel.value;
-    const endName=els.endSel.value;
-    if(startName===endName){
+
+    // Validate selection
+    if(!selectedStartStation || !selectedEndStation){
+      showSetupError('Välj start- och slutstation.');
+      return;
+    }
+    const startName = selectedStartStation.name;
+    const endName = selectedEndStation.name;
+    if(startName === endName){
       showSetupError('Start- och slutstation måste vara olika.');
       return;
     }
-    const startIdx=stationCatalog.findIndex(s=>s.name===startName);
-    const endIdx=stationCatalog.findIndex(s=>s.name===endName);
-    if(startIdx<0||endIdx<0){
-      showSetupError('Kunde inte hitta stationerna.');
-      return;
+
+    // Try to build route from stationCatalog if both stations exist there
+    const startIdx = stationCatalog.findIndex(s => s.name === startName);
+    const endIdx = stationCatalog.findIndex(s => s.name === endName);
+    let slice;
+
+    if(startIdx >= 0 && endIdx >= 0){
+      // Both in catalog - use existing route logic
+      const forward = startIdx < endIdx;
+      slice = forward ? stationCatalog.slice(startIdx, endIdx + 1) : stationCatalog.slice(endIdx, startIdx + 1).reverse();
+    }else{
+      // One or both stations not in catalog - just start and end
+      slice = [
+        { ...selectedStartStation, radius: DEFAULT_RADIUS },
+        { ...selectedEndStation, radius: DEFAULT_RADIUS }
+      ];
     }
-    const forward=startIdx<endIdx;
-    const slice=forward ? stationCatalog.slice(startIdx,endIdx+1) : stationCatalog.slice(endIdx,startIdx+1).reverse();
-    const route=slice.map((st,idx)=>({
+
+    const route = slice.map((st, idx) => ({
       name:st.name,
       lat:st.lat,
       lon:st.lon,
@@ -1631,8 +2022,21 @@
   function acceptSuggestion(){
     if(!currentSuggestion) return;
 
-    els.startSel.value = currentSuggestion.start;
-    els.endSel.value = currentSuggestion.end;
+    // Find stations in cache and set them
+    const startStation = allStationsCache.find(s => s.name === currentSuggestion.start) ||
+                        stationCatalog.find(s => s.name === currentSuggestion.start);
+    const endStation = allStationsCache.find(s => s.name === currentSuggestion.end) ||
+                      stationCatalog.find(s => s.name === currentSuggestion.end);
+
+    if(startStation){
+      els.startInput.value = startStation.name;
+      selectedStartStation = startStation;
+    }
+    if(endStation){
+      els.endInput.value = endStation.name;
+      selectedEndStation = endStation;
+    }
+
     document.getElementById('routeSuggestion').style.display='none';
 
     const msg = document.createElement('div');
@@ -1920,7 +2324,6 @@
 
   function renderCalibrationTable(){
     stationCatalog=composeStationCatalog();
-    populateStationSelects(true);
     const rows=stationCatalog.map(st=>{
       return `<tr data-name="${st.name}">
         <td>${st.name}</td>

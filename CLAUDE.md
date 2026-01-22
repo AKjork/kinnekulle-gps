@@ -1,7 +1,7 @@
 # Kinnekulle Tågmonitor
 
 ## Projektöversikt
-GPS-baserad app för att logga tågresor längs Kinnekullebanan. Används av tågförare för att automatiskt registrera ankomst- och avgångstider vid stationer.
+GPS-baserad app för att logga tågresor längs alla svenska järnvägsbanor. Används av tågförare för att automatiskt registrera ankomst- och avgångstider vid stationer. Stöder alla stationer i Sverige via Trafikverkets API.
 
 ## Tech Stack
 - **Single HTML-fil** med inbäddad CSS och JavaScript
@@ -21,10 +21,37 @@ GPS-baserad app för att logga tågresor längs Kinnekullebanan. Används av tå
 
 ## Viktiga konstanter (i koden)
 ```javascript
-SPEED_THRESHOLD_KMH = 5      // Hastighet för "stillastående" (<5 km/h = stannat)
-PASS_DISTANCE_MARGIN = 5     // Meter för att detektera passering
-DEFAULT_RADIUS = 100         // Standard geofence-radie (meter)
-EXTRA_MARGIN = 120           // Extra marginal för geofence-utgång
+SPEED_THRESHOLD_KMH = 5            // Hastighet för "stillastående" (<5 km/h = stannat)
+PASS_DISTANCE_MARGIN = 5           // Meter för att detektera passering
+DEFAULT_RADIUS = 100               // Standard geofence-radie (meter)
+EXTRA_MARGIN = 120                 // Extra marginal för geofence-utgång
+STATIONS_CACHE_MAX_AGE_MS = 7d     // Cache för stationsdata (7 dagar)
+MAX_RECENT_STATIONS = 20           // Max antal senast använda stationer
+```
+
+## Stationshantering
+
+### Dynamisk stationslista
+- Hämtar alla svenska stationer från Trafikverket TrainStation API
+- Ca 500+ stationer med GPS-koordinater (WGS84)
+- Cachas i localStorage för offline-bruk
+- Fallback till hårdkodad lista om API misslyckas
+
+### Stationssökning (Autocomplete)
+- **Sökfält** ersätter tidigare dropdown-listor
+- **Smart filtrering**:
+  - Söker på stationsnamn och signatur
+  - Visar senast använda stationer först
+  - Visar närliggande stationer baserat på GPS-position
+- **Keyboard-navigation**: Pil upp/ned + Enter för snabbval
+
+### API-anrop för stationer
+```javascript
+// TrainStation API query
+objecttype: "TrainStation"
+schemaversion: "1.4"
+filter: Advertised=true (endast "synliga" stationer)
+includes: AdvertisedLocationName, LocationSignature, Geometry.WGS84
 ```
 
 ## Stationslogik
@@ -63,7 +90,9 @@ EXTRA_MARGIN = 120           // Extra marginal för geofence-utgång
 
 ## UI/UX
 - **Mörkt tema** - industriellt, optimerat för mobil
-- **Kompakta kort** - expanderbara med tap (behåller expanded-state vid uppdatering)
+- **Större stationskort** - lättlästa med tydlig text och knappar
+- **Expanderbara kort** - tap för detaljer (behåller expanded-state vid uppdatering)
+- **Sökbar stationslista** - autocomplete med smart filtrering
 - **Vibration** - dubbelpuls vid ankomst, enkelpuls vid avgång
 - **Offline-indikator** - visas i header
 - **CSV-export** - svensk semikolon-separator för Excel
@@ -88,3 +117,30 @@ EXTRA_MARGIN = 120           // Extra marginal för geofence-utgång
 - Vibration vid ankomst/avgång
 - Offline-indikator i header
 - Förbättrade felmeddelanden för GPS och API
+
+## Uppdatering (2026-01-22)
+
+### Ny funktionalitet: Alla svenska stationer
+- **TrainStation API** - Hämtar alla annonserade stationer från Trafikverket
+- **Autocomplete-sökning** - Ersätter tidigare dropdown-listor
+- **Smart filtrering**:
+  - Senast använda stationer visas först
+  - Närliggande stationer (baserat på GPS) föreslås
+  - Sök på stationsnamn eller signatur (t.ex. "Cst" för Stockholm C)
+- **Stationscache** - Sparas lokalt i 7 dagar för offline-bruk
+- **Större stationskort** - Ökad padding och textstorlek för bättre läsbarhet
+
+### Nya funktioner
+| Funktion | Beskrivning |
+|----------|-------------|
+| `fetchAllStationsFromAPI` | Hämtar alla stationer från TrainStation API |
+| `filterStations` | Smart filtrering: sök + senaste + närhet |
+| `setupStationSearch` | Konfigurerar autocomplete för sökfält |
+| `loadRecentStations` | Läser senast använda från localStorage |
+| `addToRecentStations` | Sparar vald station för snabbval |
+
+### localStorage-nycklar
+```javascript
+STORAGE_KEY_ALL_STATIONS = 'kmon_all_stations_v1'     // Cache för alla stationer
+STORAGE_KEY_RECENT_STATIONS = 'kmon_recent_stations_v1' // Senast använda
+```
