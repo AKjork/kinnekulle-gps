@@ -47,8 +47,9 @@ EXTRA_MARGIN = 120           // Extra marginal för geofence-utgång
 
 ### Passering (för stationer med shouldStop=false)
 - `markPassingDeparture` triggas ENDAST för stationer utan planerat stopp
-- Kräver hastighet >10 km/h efter att ha passerat mittpunkten
+- Kräver hastighet >5 km/h (dvs rör sig) efter att ha passerat mittpunkten
 - Ankomst = närmaste punkt, Avgång = strax efter
+- Fungerar vid alla hastigheter så länge tåget inte stannar
 
 ## Viktiga funktioner
 
@@ -79,6 +80,7 @@ EXTRA_MARGIN = 120           // Extra marginal för geofence-utgång
 - **Avgång vid stillastående**: GPS-fluktuation triggar inte längre avgång
 - **Felaktig passering**: `markPassingDeparture` triggas endast för `shouldStop=false`
 - **Kort kollapsade**: Expanded-state bevaras nu vid GPS-uppdateringar (`expandedCards` Set)
+- **Passering vid medelhastighet**: Sänkt tröskelvärde från >10 km/h till >5 km/h för passeringsdetektering
 
 ### Nya funktioner
 - Kompakt mörkt tema för mobil
