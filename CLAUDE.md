@@ -144,3 +144,71 @@ includes: AdvertisedLocationName, LocationSignature, Geometry.WGS84
 STORAGE_KEY_ALL_STATIONS = 'kmon_all_stations_v1'     // Cache för alla stationer
 STORAGE_KEY_RECENT_STATIONS = 'kmon_recent_stations_v1' // Senast använda
 ```
+
+## Uppdatering (2026-01-23)
+
+### Nya funktioner
+
+#### 1. Tidtabellsjämförelse
+- Visar avvikelse mot tidtabell i realtid på varje stationskort
+- Format: `+2 min` (sen), `-1 min` (tidig), `I tid` (inom ±1 min)
+- Färgkodning: grön (i tid), gul (1-5 min sen), röd (>5 min sen)
+- Förseningssummering visas i header under körning
+
+#### 2. Statistikvy
+- Öppnas via ⋮-menyn → "Statistik"
+- Visar historisk data per sträcka (station → station)
+- Statistik: antal körningar, medeltid, bästa tid, sämsta tid
+- Filtrera på fordonstyp och rutt
+- Stapelgrafik för visuell jämförelse
+
+#### 3. Kartvy
+- SVG-baserad karta (ingen extern kartleverantör)
+- Visar rutten som linje med stationsmarkörer
+- Färgkodning: grå (ej passerad), orange (ankommit), grön (klar), blå (aktiv)
+- Pulsande markör för aktuell GPS-position
+- Kollapsbar - klicka på "Karta" för att visa/dölja
+
+#### 4. Anteckningar
+- Textfält i varje expanderat stationskort
+- Spara kommentarer (t.ex. "signal på rött", "möte")
+- Sparas i loggen och exporteras med CSV/JSON
+
+#### 5. Ljudsignaler
+- Web Audio API för ljudåterkoppling
+- Två korta toner (800Hz) vid ankomst
+- En längre ton (600Hz) vid avgång
+- Aktiveras via "Ljud av/på"-knappen i header
+- Sparas i localStorage
+
+#### 6. Större typsnitt-läge
+- Aktiveras via "Aa"-knappen i header
+- Ökar typsnitt för enklare avläsning i kupén
+- Påverkar kort, badges, knappar och statusboxar
+- Sparas i localStorage
+
+#### 7. Landskapsläge
+- Optimerad layout för horisontellt läge
+- Stationskort visas i två kolumner
+- Kompaktare header och statusrutor
+- Aktiveras automatiskt via CSS media query
+
+### Nya funktioner (kod)
+| Funktion | Beskrivning |
+|----------|-------------|
+| `playTone` | Spelar ton via Web Audio API |
+| `playArrivalSound` | Två korta toner vid ankomst |
+| `playDepartureSound` | En längre ton vid avgång |
+| `toggleSound` | Växlar ljud av/på |
+| `toggleLargeText` | Växlar stort typsnitt |
+| `showStatistics` | Visar statistikvyn |
+| `renderStatistics` | Renderar statistikdata |
+| `renderRouteMap` | Renderar SVG-kartan |
+| `updateDelaySummary` | Uppdaterar förseningsvisning i header |
+| `handleCardInput` | Hanterar anteckningar i stationskort |
+
+### Nya localStorage-nycklar
+```javascript
+STORAGE_KEY_SOUND_ENABLED = 'railtimer_sound_v1'    // Ljud på/av
+STORAGE_KEY_LARGE_TEXT = 'railtimer_large_text_v1' // Stort typsnitt på/av
+```
