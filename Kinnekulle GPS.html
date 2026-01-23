@@ -480,9 +480,9 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2024-11-24b';
-  const DEFAULT_RADIUS = 100;
-  const EXTRA_MARGIN = 120;
+  const APP_VERSION = '2026-01-23';
+  const DEFAULT_RADIUS = 200;
+  const EXTRA_MARGIN = 150;
   const SPEED_THRESHOLD_KMH = 5;
   const SPEED_THRESHOLD_MS = SPEED_THRESHOLD_KMH / 3.6;
   const CLOSE_APPROACH_EPS = 1; // meters
@@ -499,38 +499,9 @@
   const TRAFIKVERKET_API_KEY = '1acaea82911c472cb3409d57ae19707f';
   const TRAFIKVERKET_API_URL = 'https://api.trafikinfo.trafikverket.se/v2/data.json';
 
-  const baseStations = [
-    { name: 'Herrljunga', lat: 58.0788605, lon: 13.0208614, radius: 100 },
-    { name: 'Vedum', lat: 58.169087, lon: 12.9986447, radius: 100 },
-    { name: 'Vara', lat: 58.2606711, lon: 12.9522447, radius: 100 },
-    { name: 'Håkantorp', lat: 58.3070206, lon: 12.9073349, radius: 100 },
-    { name: 'Stora Levene', lat: 58.3260448, lon: 12.9258804, radius: 100 },
-    { name: 'Järpås', lat: 58.3790122, lon: 12.9700919, radius: 100 },
-    { name: 'Lovene', lat: 58.4411096, lon: 13.0479129, radius: 100 },
-    { name: 'Framnäs City', lat: 58.5076929, lon: 13.1470414, radius: 100 },
-    { name: 'Lidköping', lat: 58.50462, lon: 13.1639339, radius: 100 },
-    { name: 'Filsbäck', lat: 58.4931843, lon: 13.2469536, radius: 100 },
-    { name: 'Källby', lat: 58.5107931, lon: 13.3023402, radius: 100 },
-    { name: 'Blomberg', lat: 58.5402058, lon: 13.3206466, radius: 100 },
-    { name: 'Trolmen', lat: 58.594665, lon: 13.3477718, radius: 100 },
-    { name: 'Råbäck', lat: 58.6105061, lon: 13.376454, radius: 100 },
-    { name: 'Hällekis', lat: 58.6302156, lon: 13.432943, radius: 100 },
-    { name: 'Forshem', lat: 58.6180186, lon: 13.4912688, radius: 100 },
-    { name: 'Österäng', lat: 58.63415, lon: 13.5598621, radius: 100 },
-    { name: 'Äskekärr', lat: 58.6260531, lon: 13.6088607, radius: 100 },
-    { name: 'Lugnås', lat: 58.6443788, lon: 13.7022008, radius: 100 },
-    { name: 'Mariestad', lat: 58.7112536, lon: 13.8255412, radius: 100 },
-    { name: 'Hasslerör', lat: 58.7491527, lon: 13.9404069, radius: 100 },
-    { name: 'Lyrestad', lat: 58.8036306, lon: 14.0591279, radius: 100 },
-    { name: 'Torved', lat: 58.8242178, lon: 14.1007891, radius: 100 },
-    { name: 'Hova', lat: 58.8547965, lon: 14.2153363, radius: 100 },
-    { name: 'Gårdsjö', lat: 58.8721468, lon: 14.3335353, radius: 100 },
-    { name: 'Laxå', lat: 58.9893982, lon: 14.6185188, radius: 100 },
-    { name: 'Hallsberg personbangård', lat: 59.0671196, lon: 15.1107975, radius: 100 },
-    { name: 'Kumla', lat: 59.126913, lon: 15.1406426, radius: 100 },
-    { name: 'Örebro Södra', lat: 59.2697009, lon: 15.2020665, radius: 100 },
-    { name: 'Örebro Central', lat: 59.278536, lon: 15.2116615, radius: 100 }
-  ];
+  // Stationer hämtas dynamiskt från Trafikverket API
+  // baseStations används endast som fallback om API:t misslyckas
+  const baseStations = [];
 
   const els = {
     startInput: document.getElementById('startStation'),
@@ -2103,11 +2074,9 @@
   function acceptSuggestion(){
     if(!currentSuggestion) return;
 
-    // Find stations in cache and set them
-    const startStation = allStationsCache.find(s => s.name === currentSuggestion.start) ||
-                        stationCatalog.find(s => s.name === currentSuggestion.start);
-    const endStation = allStationsCache.find(s => s.name === currentSuggestion.end) ||
-                      stationCatalog.find(s => s.name === currentSuggestion.end);
+    // Find stations in cache
+    const startStation = allStationsCache.find(s => s.name === currentSuggestion.start);
+    const endStation = allStationsCache.find(s => s.name === currentSuggestion.end);
 
     if(startStation){
       els.startInput.value = startStation.name;
@@ -2142,7 +2111,9 @@
           let nearest = null;
           let minDistance = Infinity;
 
-          stationCatalog.forEach(station => {
+          // Use allStationsCache instead of stationCatalog
+          allStationsCache.forEach(station => {
+            if(!station.lat || !station.lon) return;
             const dist = haversine(userLat, userLon, station.lat, station.lon);
             if(dist < minDistance) {
               minDistance = dist;
@@ -2167,7 +2138,9 @@
     const BEFORE_MARGIN = 30;
     const AFTER_MARGIN = 15;
 
-    const nearestSig = stationSignatures[nearestStation];
+    // Find signature from allStationsCache
+    const nearestStationData = allStationsCache.find(s => s.name === nearestStation);
+    const nearestSig = nearestStationData ? nearestStationData.sig : null;
     if(!nearestSig) return null;
 
     const stationTimes = timetable[nearestSig];
@@ -2200,9 +2173,10 @@
       let endStation = null;
       for(let i = sortedStations.length - 1; i > currentStationIndex; i--) {
         const sig = sortedStations[i].sig;
-        const name = Object.keys(stationSignatures).find(k => stationSignatures[k] === sig);
-        if(name) {
-          endStation = name;
+        // Find station name from allStationsCache by signature
+        const stationData = allStationsCache.find(s => s.sig === sig);
+        if(stationData) {
+          endStation = stationData.name;
           break;
         }
       }
@@ -2570,38 +2544,7 @@
     return R*c;
   }
 
-  const stationSignatures = {
-    'Herrljunga': 'Hrc',
-    'Vedum': 'Ved',
-    'Vara': 'Vaa',
-    'Håkantorp': 'Håp',
-    'Stora Levene': 'Stlv',
-    'Järpås': 'Jps',
-    'Lovene': 'Lve',
-    'Framnäs City': 'Fc',
-    'Lidköping': 'Lkp',
-    'Filsbäck': 'Fiä',
-    'Källby': 'Kll',
-    'Blomberg': 'Bmb',
-    'Trolmen': 'Trm',
-    'Råbäck': 'Rbk',
-    'Hällekis': 'Hlk',
-    'Forshem': 'Fhm',
-    'Österäng': 'Öäg',
-    'Äskekärr': 'Äsr',
-    'Lugnås': 'Lnå',
-    'Mariestad': 'Mst',
-    'Hasslerör': 'Hsr',
-    'Lyrestad': 'Lyd',
-    'Torved': 'Tvd',
-    'Hova': 'Hova',
-    'Gårdsjö': 'Gdö',
-    'Laxå': 'Lå',
-    'Hallsberg personbangård': 'Hpbg',
-    'Kumla': 'Kla',
-    'Örebro Södra': 'Öb',
-    'Örebro Central': 'Ör'
-  };
+  // Stationssignaturer hämtas nu dynamiskt från API:t via station.sig
 
   async function fetchTimetable(otn, date){
     if(!otn) return { success: false, error: 'Inget tågnummer angivet' };
@@ -2712,7 +2655,8 @@
     if(!timetable || !state.route) return;
 
     state.route.forEach((station, idx) => {
-      const sig = stationSignatures[station.name];
+      // Use station.sig directly (set when route was built)
+      const sig = station.sig;
       if(!sig || !timetable[sig]) return;
 
       const isFirst = idx === 0;
@@ -2735,7 +2679,8 @@
     const newRoute = [];
 
     state.route.forEach((station, idx) => {
-      const sig = stationSignatures[station.name];
+      // Use station.sig directly (set when route was built)
+      const sig = station.sig;
       const isFirst = idx === 0;
       const isLast = idx === state.route.length - 1;
 

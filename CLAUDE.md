@@ -23,8 +23,8 @@ GPS-baserad app för att logga tågresor längs alla svenska järnvägsbanor. An
 ```javascript
 SPEED_THRESHOLD_KMH = 5            // Hastighet för "stillastående" (<5 km/h = stannat)
 PASS_DISTANCE_MARGIN = 5           // Meter för att detektera passering
-DEFAULT_RADIUS = 100               // Standard geofence-radie (meter)
-EXTRA_MARGIN = 120                 // Extra marginal för geofence-utgång
+DEFAULT_RADIUS = 200               // Standard geofence-radie (meter) - ökad för API-koordinater
+EXTRA_MARGIN = 150                 // Extra marginal för geofence-utgång
 STATIONS_CACHE_MAX_AGE_MS = 7d     // Cache för stationsdata (7 dagar)
 MAX_RECENT_STATIONS = 20           // Max antal senast använda stationer
 ```
