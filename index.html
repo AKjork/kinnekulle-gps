@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#2563eb">
-<title>Kinnekulle Tågmonitor – GPS-version</title>
+<title>RailTimer – Gångtidsmätare för tåg</title>
 <link rel="manifest" href="kinnekulle-gps.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -349,7 +349,7 @@
 </head>
 <body>
 <header>
-  <h1>Kinnekulle Tågmonitor – GPS-version</h1>
+  <h1>RailTimer</h1>
   <div class="bar">
     <button id="btnExport" class="primary" aria-label="Exportera sparade körningar som JSON">JSON</button>
     <button id="btnExportCSV" class="primary" aria-label="Exportera sparade körningar som CSV">CSV</button>
@@ -369,9 +369,53 @@
 <main>
   <section id="setup">
     <h2>1. Ställ in resan</h2>
-    <div class="form-group">
-      <label for="trainNumber">Operativt tågnummer (valfritt)</label>
-      <input id="trainNumber" type="text" placeholder="t.ex. 8074">
+    <div class="row">
+      <div class="form-group grow">
+        <label for="trainNumber">Tågnummer (valfritt)</label>
+        <input id="trainNumber" type="text" placeholder="t.ex. 8074">
+      </div>
+      <div class="form-group grow">
+        <label for="vehicleType">Fordonstyp *</label>
+        <select id="vehicleType" required>
+          <option value="">Välj fordonstyp...</option>
+          <optgroup label="Motorvagnar">
+            <option value="X2">X2 (X2000)</option>
+            <option value="X3">X3 (SJ 3000)</option>
+            <option value="X10">X10</option>
+            <option value="X11">X11</option>
+            <option value="X12">X12</option>
+            <option value="X14">X14</option>
+            <option value="X40">X40 (Västtåg)</option>
+            <option value="X50">X50 (Regina)</option>
+            <option value="X51">X51 (Regina)</option>
+            <option value="X52">X52 (Regina)</option>
+            <option value="X53">X53 (Regina)</option>
+            <option value="X54">X54 (Regina)</option>
+            <option value="X55">X55 (Regina)</option>
+            <option value="X60">X60 (Pendeltåg)</option>
+            <option value="X61">X61 (Pågatåg)</option>
+            <option value="X62">X62 (Norrtåg)</option>
+            <option value="X74">X74 (Itino)</option>
+            <option value="ER1">ER1 (Mälartåg)</option>
+          </optgroup>
+          <optgroup label="Lok + vagnar">
+            <option value="Rc">Rc-lok</option>
+            <option value="Rd">Rd-lok</option>
+            <option value="TRAXX">TRAXX</option>
+            <option value="Vectron">Vectron</option>
+            <option value="T44">T44</option>
+          </optgroup>
+          <optgroup label="Dieselmotorvagnar">
+            <option value="Y1">Y1</option>
+            <option value="Y2">Y2</option>
+            <option value="Y31">Y31 (Itino)</option>
+            <option value="Y32">Y32 (Itino)</option>
+          </optgroup>
+          <optgroup label="Övrigt">
+            <option value="Annat">Annat</option>
+          </optgroup>
+        </select>
+      </div>
     </div>
     <div id="routeSuggestion" style="display:none;margin:.6rem 0;padding:.75rem;background:var(--pri-glow);border:1px solid var(--pri);border-radius:8px">
       <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.4rem">
@@ -551,6 +595,7 @@
     watchId: null,
     route: [],
     trainNumber: '',
+    vehicleType: '',
     notes: '',
     startedAt: null,
     lastPosition: null,
@@ -1000,6 +1045,12 @@
       return;
     }
 
+    const vehicleType = document.getElementById('vehicleType').value;
+    if(!vehicleType){
+      showSetupError('Välj fordonstyp.');
+      return;
+    }
+
     const trainNumber = (document.getElementById('trainNumber').value||'').trim();
     let slice = null;
     let timetableResult = null;
@@ -1070,6 +1121,7 @@
     state.route=route;
     state.running=true;
     state.trainNumber=trainNumber;
+    state.vehicleType=vehicleType;
     state.notes=(document.getElementById('startNotes').value||'').trim();
     state.startedAt=new Date();
     state.lastReachedIndex=0;
@@ -1080,7 +1132,7 @@
     els.setup.style.display='none';
     els.journey.style.display='block';
     els.report.style.display='none';
-    els.journeyTitle.textContent=`${startName} → ${endName} • tåg ${state.trainNumber||'–'}`;
+    els.journeyTitle.textContent=`${startName} → ${endName} • ${state.vehicleType} • tåg ${state.trainNumber||'–'}`;
     els.journeyMsg.style.display='none';
     renderRouteCards();
     requestGpsWatch();
@@ -1866,7 +1918,7 @@
       </tr>`;
     }).join('');
     els.reportHTML.innerHTML=`
-      <p><strong>Tåg:</strong> ${logEntry.trainNumber||'–'} • <strong>Sträcka:</strong> ${logEntry.startStation} → ${logEntry.endStation}</p>
+      <p><strong>Tåg:</strong> ${logEntry.trainNumber||'–'} • <strong>Fordon:</strong> ${logEntry.vehicleType||'–'} • <strong>Sträcka:</strong> ${logEntry.startStation} → ${logEntry.endStation}</p>
       <p><strong>Start:</strong> ${logEntry.startedAt?new Date(logEntry.startedAt).toLocaleString('sv-SE'):'–'} • <strong>Slut:</strong> ${logEntry.finishedAt?new Date(logEntry.finishedAt).toLocaleString('sv-SE'):'–'}</p>
       ${logEntry.notes?`<p><strong>Anteckningar:</strong> ${escapeHtml(logEntry.notes)}</p>`:''}
       <div class="table-wrap">
@@ -1886,6 +1938,7 @@
     const entry={
       id:Date.now().toString(36),
       trainNumber:state.trainNumber,
+      vehicleType:state.vehicleType,
       startStation:state.route[0]?.name||'',
       endStation:state.route[state.route.length-1]?.name||'',
       startedAt:state.startedAt,
@@ -2254,7 +2307,7 @@
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     a.href=url;
-    a.download='kinnekulle_gps_logs.json';
+    a.download='railtimer_logs.json';
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -2267,10 +2320,11 @@
       showHeaderStatus('Inga loggar att exportera.', true);
       return;
     }
-    const rows=[['Datum','Tåg','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa']];
+    const rows=[['Datum','Tåg','Fordon','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa']];
     logs.forEach(log=>{
       const logDate=log.startedAt?new Date(log.startedAt).toLocaleDateString('sv-SE'):'';
       const trainNum=log.trainNumber||'';
+      const vehicleType=log.vehicleType||'';
       const fromSt=log.route&&log.route[0]?log.route[0].name:'';
       const toSt=log.route&&log.route.length?log.route[log.route.length-1].name:'';
       (log.route||[]).forEach(st=>{
@@ -2283,7 +2337,7 @@
           delay=Math.round((new Date(st.actualArrival)-new Date(st.scheduledArrival))/60000);
         }
         const source=st.arrivalSource||'';
-        rows.push([logDate,trainNum,fromSt,toSt,st.name,st.order||'',arr,dep,schArr,schDep,delay,source]);
+        rows.push([logDate,trainNum,vehicleType,fromSt,toSt,st.name,st.order||'',arr,dep,schArr,schDep,delay,source]);
       });
     });
     const csv=rows.map(r=>r.map(c=>'"'+(c+'').replace(/"/g,'""')+'"').join(';')).join('\n');
@@ -2292,7 +2346,7 @@
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     a.href=url;
-    a.download='kinnekulle_gps_logs.csv';
+    a.download='railtimer_logs.csv';
     document.body.appendChild(a);
     a.click();
     a.remove();

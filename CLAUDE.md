@@ -1,7 +1,7 @@
-# Kinnekulle Tågmonitor
+# RailTimer
 
 ## Projektöversikt
-GPS-baserad app för att logga tågresor längs alla svenska järnvägsbanor. Används av tågförare för att automatiskt registrera ankomst- och avgångstider vid stationer. Stöder alla stationer i Sverige via Trafikverkets API.
+GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. Används av tågförare för att automatiskt registrera ankomst- och avgångstider vid stationer. Stöder alla stationer i Sverige via Trafikverkets API.
 
 ## Tech Stack
 - **Single HTML-fil** med inbäddad CSS och JavaScript

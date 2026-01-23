@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(frontend-design)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix departure detection bugs and add compact dark UI\n\n- Fix premature departure when braking \\(check reachedLowSpeed\\)\n- Fix passing detection when stopping after center point\n- Lower passing speed threshold to 10 km/h\n- New compact dark theme optimized for mobile\n- Collapsible station cards \\(tap to expand\\)\n- Smaller footprint for easier use while driving\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(git checkout:*)",
+      "Bash(git rebase:*)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:akjork.github.io)",
+      "Bash(ls:*)",
+      "Bash(git commit:*)",
+      "WebSearch",
+      "WebFetch(domain:api.trafikinfo.trafikverket.se)",
+      "WebFetch(domain:www.nuget.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.trafiklab.se)",
+      "WebFetch(domain:www.clearbyte.org)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:www.home-assistant.io)"
+    ]
+  }
+}

@@ -1,13 +1,13 @@
 {
-  "name": "Kinnekulle Tågmonitor GPS",
-  "short_name": "Kinnekulle GPS",
-  "description": "Offlinekapabel GPS-app för att logga Kinnekullebanans stationer.",
+  "name": "RailTimer - Gångtidsmätare",
+  "short_name": "RailTimer",
+  "description": "GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f8fafc",
-  "theme_color": "#2563eb",
+  "background_color": "#0d0f12",
+  "theme_color": "#22c55e",
   "icons": [
     {
       "src": "icons/icon-192.png",
