@@ -209,6 +209,41 @@
   .card.expanded .card-toggle{transform:rotate(180deg)}
 
   /* Autocomplete station search */
+  /* Header dropdown menus */
+  .header-menu{position:relative}
+  .header-menu-btn{
+    min-width:auto;
+    padding:.4rem .6rem;
+  }
+  .header-menu-dropdown{
+    position:absolute;
+    top:100%;
+    right:0;
+    min-width:160px;
+    background:var(--card-bg);
+    border:1px solid var(--b);
+    border-radius:6px;
+    margin-top:4px;
+    z-index:100;
+    box-shadow:0 4px 12px rgba(0,0,0,0.4);
+    display:none;
+  }
+  .header-menu-dropdown.open{display:block}
+  .header-menu-dropdown button{
+    display:block;
+    width:100%;
+    text-align:left;
+    border:none;
+    border-radius:0;
+    background:transparent;
+    padding:.6rem .8rem;
+    font-size:.85rem;
+  }
+  .header-menu-dropdown button:hover{background:var(--b)}
+  .header-menu-dropdown button:first-child{border-radius:6px 6px 0 0}
+  .header-menu-dropdown button:last-child{border-radius:0 0 6px 6px}
+  .header-menu-dropdown hr{border:none;border-top:1px solid var(--b);margin:0}
+
   .station-search-container{position:relative;flex:1}
   .station-search{width:100%}
   .station-dropdown{
@@ -351,18 +386,30 @@
 <header>
   <h1>RailTimer</h1>
   <div class="bar">
-    <button id="btnExport" class="primary" aria-label="Exportera sparade körningar som JSON">JSON</button>
-    <button id="btnExportCSV" class="primary" aria-label="Exportera sparade körningar som CSV">CSV</button>
-    <button id="btnSaveFile" class="ghost" aria-label="Spara loggar till fil">Spara loggar</button>
-    <button id="btnSync" class="ghost" aria-label="Synkronisera loggfil">Synka loggfil</button>
-    <button id="btnClear" class="ghost" aria-label="Ta bort alla sparade körningar">Töm loggar</button>
-    <button id="btnWakeLock" class="ghost" aria-pressed="false" aria-label="Hindra att skärmen slocknar">Håll skärmen vaken</button>
-    <button id="btnUpdate" class="ghost" style="display:none" aria-label="Ladda om med ny version">Uppdatera appen</button>
-    <button id="btnInstall" class="ghost" style="display:none" aria-label="Installera som app">Installera appen</button>
+    <div class="header-menu">
+      <button id="btnExportMenu" class="primary header-menu-btn" aria-label="Exportera">Exportera ▾</button>
+      <div id="exportMenuDropdown" class="header-menu-dropdown">
+        <button id="btnExportCSV">CSV (Excel)</button>
+        <button id="btnExport">JSON</button>
+      </div>
+    </div>
+    <button id="btnWakeLock" class="ghost" aria-pressed="false" aria-label="Hindra att skärmen slocknar">Skärm på</button>
+    <div class="header-menu">
+      <button id="btnMoreMenu" class="ghost header-menu-btn" aria-label="Fler alternativ">⋮</button>
+      <div id="moreMenuDropdown" class="header-menu-dropdown">
+        <button id="btnSaveFile">Spara till fil</button>
+        <button id="btnSync">Synka loggfil</button>
+        <hr>
+        <button id="btnClear" class="danger">Töm alla loggar</button>
+        <hr>
+        <button id="btnInstall" style="display:none">Installera app</button>
+        <button id="btnUpdate" style="display:none">Uppdatera app</button>
+      </div>
+    </div>
     <span id="headerStatus" class="badge" style="display:none"></span>
-    <span id="offlineIndicator" class="badge warn" style="display:none" role="status" aria-live="polite">⚡ Offline</span>
-    <span id="logCountTop" class="badge" role="status" aria-live="polite" style="margin-left:auto">Loggar: 0</span>
-    <span id="gpsStatusBadge" class="badge">Ingen GPS ännu</span>
+    <span id="offlineIndicator" class="badge warn" style="display:none" role="status" aria-live="polite">Offline</span>
+    <span id="logCountTop" class="badge" role="status" aria-live="polite" style="margin-left:auto">0</span>
+    <span id="gpsStatusBadge" class="badge">GPS</span>
   </div>
 </header>
 
@@ -990,13 +1037,11 @@
     document.getElementById('btnStart').addEventListener('click', startJourney);
     document.getElementById('btnAbort').addEventListener('click', () => stopJourney(true, 'Resan avbröts manuellt'));
     document.getElementById('btnFinish').addEventListener('click', () => stopJourney(false, 'Avslutad manuellt'));
-    document.getElementById('btnExport').addEventListener('click', exportLogs);
-    document.getElementById('btnExportCSV').addEventListener('click', exportLogsCSV);
-    if(els.saveBtn){
-      els.saveBtn.addEventListener('click', saveLogsToFile);
-    }
-    document.getElementById('btnClear').addEventListener('click', clearLogs);
-    document.getElementById('btnSync').addEventListener('click', syncLogs);
+    document.getElementById('btnExport').addEventListener('click', () => { closeAllMenus(); exportLogs(); });
+    document.getElementById('btnExportCSV').addEventListener('click', () => { closeAllMenus(); exportLogsCSV(); });
+    document.getElementById('btnSaveFile').addEventListener('click', () => { closeAllMenus(); saveLogsToFile(); });
+    document.getElementById('btnClear').addEventListener('click', () => { closeAllMenus(); clearLogs(); });
+    document.getElementById('btnSync').addEventListener('click', () => { closeAllMenus(); syncLogs(); });
     document.getElementById('btnNew').addEventListener('click', resetForNewRun);
     els.cards.addEventListener('click', handleCardButton);
     els.cards.addEventListener('change', handleCardChange);
@@ -1007,6 +1052,7 @@
     }
     if(els.updateBtn){
       els.updateBtn.addEventListener('click', ()=> {
+        closeAllMenus();
         if(pendingServiceWorker){
           updateTriggered=true;
           els.updateBtn.disabled=true;
@@ -1020,12 +1066,36 @@
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
+    // Header dropdown menus
+    document.getElementById('btnExportMenu').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMenu('exportMenuDropdown');
+    });
+    document.getElementById('btnMoreMenu').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMenu('moreMenuDropdown');
+    });
+    document.addEventListener('click', closeAllMenus);
+
     document.getElementById('trainNumber').addEventListener('input', handleTrainNumberInput);
     document.getElementById('btnAcceptSuggestion').addEventListener('click', acceptSuggestion);
     document.getElementById('btnIgnoreSuggestion').addEventListener('click', () => {
       document.getElementById('routeSuggestion').style.display='none';
       currentSuggestion = null;
     });
+  }
+
+  function toggleMenu(menuId){
+    const menu = document.getElementById(menuId);
+    const wasOpen = menu.classList.contains('open');
+    closeAllMenus();
+    if(!wasOpen){
+      menu.classList.add('open');
+    }
+  }
+
+  function closeAllMenus(){
+    document.querySelectorAll('.header-menu-dropdown').forEach(m => m.classList.remove('open'));
   }
 
   async function startJourney(){
@@ -2432,7 +2502,8 @@
 
   function updateLogCount(){
     const count=loadLogs().length;
-    els.logCountTop.textContent=`Loggar: ${count}`;
+    els.logCountTop.textContent=count;
+    els.logCountTop.title=`${count} sparade loggar`;
   }
 
   function renderCalibrationTable(){
