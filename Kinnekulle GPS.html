@@ -2422,16 +2422,22 @@
     stations.forEach((st, idx) => {
       const x = toX(st.lon);
       const y = toY(st.lat);
-      const isActive = state.nextIndex === idx;
       const isDone = st.actualArrival && st.actualDeparture;
       const isArrived = st.actualArrival && !st.actualDeparture;
+      const isStartingHere = idx === 0 && !st.actualDeparture; // At start, haven't left yet
 
-      let color = 'var(--mut)';
-      if(isDone) color = 'var(--pri)';
-      else if(isArrived) color = 'var(--sec)';
-      else if(isActive) color = 'var(--blue)';
+      // Only show next station as blue if we've departed from previous station
+      const prevStation = idx > 0 ? state.route[idx-1] : null;
+      const prevDeparted = prevStation ? prevStation.actualDeparture : false;
+      const isNextEnRoute = state.nextIndex === idx && prevDeparted;
 
-      const r = isActive ? 8 : 6;
+      let color = 'var(--mut)'; // gray = not visited
+      if(isDone) color = 'var(--pri)'; // green = completed
+      else if(isArrived || isStartingHere) color = 'var(--sec)'; // orange = you're here
+      else if(isNextEnRoute) color = 'var(--blue)'; // blue = next (only when traveling)
+
+      const isCurrent = isArrived || isStartingHere;
+      const r = isCurrent ? 8 : 6;
       svg += `<g class="map-station">
         <circle cx="${x}" cy="${y}" r="${r}" fill="${color}" stroke="var(--bg)" stroke-width="2"/>
         ${idx === 0 || idx === stations.length-1 ?
