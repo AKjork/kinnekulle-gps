@@ -1029,33 +1029,55 @@
       return;
     }
 
-    // Try to build route from stationCatalog if both stations exist there
-    const startIdx = stationCatalog.findIndex(s => s.name === startName);
-    const endIdx = stationCatalog.findIndex(s => s.name === endName);
-    let slice;
+    const trainNumber = (document.getElementById('trainNumber').value||'').trim();
+    let slice = null;
+    let timetableResult = null;
 
-    if(startIdx >= 0 && endIdx >= 0){
-      // Both in catalog - use existing route logic
-      const forward = startIdx < endIdx;
-      slice = forward ? stationCatalog.slice(startIdx, endIdx + 1) : stationCatalog.slice(endIdx, startIdx + 1).reverse();
-    }else{
-      // One or both stations not in catalog - just start and end
-      slice = [
-        { ...selectedStartStation, radius: DEFAULT_RADIUS },
-        { ...selectedEndStation, radius: DEFAULT_RADIUS }
-      ];
+    // If train number provided, try to build route from timetable
+    if(trainNumber){
+      showSetupError('');
+      document.getElementById('btnStart').disabled = true;
+      document.getElementById('btnStart').textContent = 'Hämtar tidtabell...';
+
+      timetableResult = await fetchTimetable(trainNumber, new Date());
+
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStart').textContent = 'Starta GPS-resan';
+
+      if(timetableResult.success && timetableResult.stationStops && timetableResult.stationStops.length > 0){
+        // Build route from timetable - get all stations between start and end
+        slice = buildRouteFromTimetable(timetableResult, selectedStartStation.sig, selectedEndStation.sig);
+      }
+    }
+
+    // Fallback: try stationCatalog or just start/end
+    if(!slice || slice.length === 0){
+      const startIdx = stationCatalog.findIndex(s => s.name === startName || s.name.startsWith(startName) || startName.startsWith(s.name));
+      const endIdx = stationCatalog.findIndex(s => s.name === endName || s.name.startsWith(endName) || endName.startsWith(s.name));
+
+      if(startIdx >= 0 && endIdx >= 0 && startIdx !== endIdx){
+        const forward = startIdx < endIdx;
+        slice = forward ? stationCatalog.slice(startIdx, endIdx + 1) : stationCatalog.slice(endIdx, startIdx + 1).reverse();
+      }else{
+        // Just start and end
+        slice = [
+          { ...selectedStartStation, radius: DEFAULT_RADIUS },
+          { ...selectedEndStation, radius: DEFAULT_RADIUS }
+        ];
+      }
     }
 
     const route = slice.map((st, idx) => ({
       name:st.name,
+      sig:st.sig||'',
       lat:st.lat,
       lon:st.lon,
       radius:isFinite(st.radius)?st.radius:DEFAULT_RADIUS,
       customRadius:!!st.customRadius,
       actualArrival:null,
       actualDeparture:null,
-      scheduledArrival:null,
-      scheduledDeparture:null,
+      scheduledArrival:st.scheduledArrival||null,
+      scheduledDeparture:st.scheduledDeparture||null,
       arrivalSource:'',
       departSource:'',
       arrivalPosition:null,
@@ -1076,7 +1098,7 @@
     }));
     state.route=route;
     state.running=true;
-    state.trainNumber=(document.getElementById('trainNumber').value||'').trim();
+    state.trainNumber=trainNumber;
     state.notes=(document.getElementById('startNotes').value||'').trim();
     state.startedAt=new Date();
     state.lastReachedIndex=0;
@@ -1092,20 +1114,79 @@
     renderRouteCards();
     requestGpsWatch();
 
-    if(state.trainNumber){
-      showJourneyMessage('Hämtar tidtabell från Trafikverket…', false);
-      const result = await fetchTimetable(state.trainNumber, state.startedAt);
-      if(result.success){
-        applyTimetableToRoute(result.timetable);
-        filterRouteByTimetable(result.stationStops);
-        renderRouteCards();
-        const stopCount = state.route.filter(s => s.shouldStop).length;
-        showJourneyMessage(`Tidtabell hämtad! (${stopCount} stopp)`, false);
-        setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
-      } else {
-        showJourneyMessage(`Tidtabell: ${result.error}`, true);
-        setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
-      }
+    if(timetableResult && timetableResult.success){
+      const stopCount = state.route.length;
+      showJourneyMessage(`Tidtabell hämtad! (${stopCount} stationer)`, false);
+      setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
+    }else if(trainNumber && timetableResult){
+      showJourneyMessage(`Tidtabell: ${timetableResult.error}`, true);
+      setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
+    }
+  }
+
+  function buildRouteFromTimetable(timetableResult, startSig, endSig){
+    const { timetable, stationStops } = timetableResult;
+    if(!timetable || !stationStops) return null;
+
+    // Build ordered list of stations from timetable
+    const stationsWithTime = [];
+    for(const sig of stationStops){
+      const info = timetable[sig];
+      if(!info) continue;
+
+      // Find station in allStationsCache by signature
+      const stationData = allStationsCache.find(s => s.sig === sig);
+      if(!stationData || !stationData.lat || !stationData.lon) continue;
+
+      // Get time for sorting (use departure or arrival)
+      const time = info.departure || info.arrival;
+      if(!time) continue;
+
+      stationsWithTime.push({
+        sig: sig,
+        name: stationData.name,
+        lat: stationData.lat,
+        lon: stationData.lon,
+        radius: DEFAULT_RADIUS,
+        time: time,
+        scheduledArrival: info.arrival || null,
+        scheduledDeparture: info.departure || null
+      });
+    }
+
+    // Sort by time
+    stationsWithTime.sort((a, b) => a.time - b.time);
+
+    // Find start and end indices
+    let startIdx = stationsWithTime.findIndex(s => s.sig === startSig);
+    let endIdx = stationsWithTime.findIndex(s => s.sig === endSig);
+
+    // If exact match not found, try matching by name similarity
+    if(startIdx < 0 && selectedStartStation){
+      startIdx = stationsWithTime.findIndex(s =>
+        s.name === selectedStartStation.name ||
+        s.name.includes(selectedStartStation.name) ||
+        selectedStartStation.name.includes(s.name)
+      );
+    }
+    if(endIdx < 0 && selectedEndStation){
+      endIdx = stationsWithTime.findIndex(s =>
+        s.name === selectedEndStation.name ||
+        s.name.includes(selectedEndStation.name) ||
+        selectedEndStation.name.includes(s.name)
+      );
+    }
+
+    // If still not found, try first and last
+    if(startIdx < 0) startIdx = 0;
+    if(endIdx < 0) endIdx = stationsWithTime.length - 1;
+
+    // Extract the route slice
+    if(startIdx <= endIdx){
+      return stationsWithTime.slice(startIdx, endIdx + 1);
+    }else{
+      // Reverse direction
+      return stationsWithTime.slice(endIdx, startIdx + 1).reverse();
     }
   }
 
