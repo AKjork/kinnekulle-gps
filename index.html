@@ -536,6 +536,7 @@
   const STORAGE_KEY_STATIONS = 'kmon_gps_station_meta_v1';
   const STORAGE_KEY_SAVE_FILE = 'kmon_gps_file_handle_v1';
   const STORAGE_KEY_ROUTE_HISTORY = 'kmon_gps_route_history_v1';
+  const STORAGE_KEY_ACTIVE_JOURNEY = 'railtimer_active_journey_v1';
   const STORAGE_KEY_ALL_STATIONS = 'kmon_all_stations_v1';
   const STORAGE_KEY_RECENT_STATIONS = 'kmon_recent_stations_v1';
   const STATIONS_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dagar
@@ -627,6 +628,7 @@
     setupStationSearch();
     await loadAllStations();
     getUserLocation();
+    checkForInterruptedJourney();
   }
 
   // Vibration feedback for arrivals/departures
@@ -1267,6 +1269,7 @@
     });
     processSpeedTriggers(speed);
     renderRouteCards();
+    saveActiveJourney(); // Auto-save journey state
   }
 
   const speedHistory=[];
@@ -1866,6 +1869,7 @@
     state.aborted=!!aborted;
     state.autoReason=reason||'';
     state.departureProvisionalIdx=null;
+    clearActiveJourney(); // Clear saved journey since it's now complete
     els.journeyMsg.textContent=reason|| (aborted?'Resan avslutad':'Resan sparad');
     els.journeyMsg.style.display='inline-block';
     const logEntry=saveLog(aborted);
@@ -2864,9 +2868,143 @@
   }
 
   function handleVisibilityChange(){
-    if(document.visibilityState==='visible' && keepScreenAwake && !wakeLockSentinel){
-      requestWakeLock();
+    if(document.visibilityState==='visible'){
+      if(keepScreenAwake && !wakeLockSentinel){
+        requestWakeLock();
+      }
+      // Check if journey was interrupted while in background
+      if(state.running){
+        const saved = loadActiveJourney();
+        if(saved && saved.lastSaveTime){
+          const timeSinceLastSave = Date.now() - saved.lastSaveTime;
+          if(timeSinceLastSave > 60000){ // More than 1 minute
+            showJourneyMessage(`Appen var i bakgrunden i ${Math.round(timeSinceLastSave/60000)} min - GPS fortsätter`, false);
+            setTimeout(() => { els.journeyMsg.style.display='none'; }, 5000);
+          }
+        }
+      }
+    }else if(document.visibilityState==='hidden'){
+      // Save journey when going to background
+      if(state.running){
+        saveActiveJourney();
+      }
     }
+  }
+
+  // === Active Journey Persistence ===
+
+  function saveActiveJourney(){
+    if(!state.running || !state.route.length) return;
+    try{
+      const journeyState = {
+        running: state.running,
+        route: state.route,
+        trainNumber: state.trainNumber,
+        vehicleType: state.vehicleType,
+        notes: state.notes,
+        startedAt: state.startedAt,
+        lastReachedIndex: state.lastReachedIndex,
+        nextIndex: state.nextIndex,
+        awaitingDepartureIndex: state.awaitingDepartureIndex,
+        lastSaveTime: Date.now()
+      };
+      localStorage.setItem(STORAGE_KEY_ACTIVE_JOURNEY, JSON.stringify(journeyState));
+    }catch(e){
+      console.warn('Could not save active journey:', e);
+    }
+  }
+
+  function loadActiveJourney(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY_ACTIVE_JOURNEY);
+      if(!raw) return null;
+      return JSON.parse(raw);
+    }catch(e){
+      return null;
+    }
+  }
+
+  function clearActiveJourney(){
+    try{
+      localStorage.removeItem(STORAGE_KEY_ACTIVE_JOURNEY);
+    }catch(e){}
+  }
+
+  function checkForInterruptedJourney(){
+    const saved = loadActiveJourney();
+    if(!saved || !saved.running || !saved.route || !saved.route.length) return;
+
+    // Check if journey is less than 12 hours old
+    const journeyAge = Date.now() - new Date(saved.startedAt).getTime();
+    if(journeyAge > 12 * 60 * 60 * 1000){
+      clearActiveJourney();
+      return;
+    }
+
+    // Show resume dialog
+    const startStation = saved.route[0]?.name || '?';
+    const endStation = saved.route[saved.route.length-1]?.name || '?';
+    const startTime = saved.startedAt ? new Date(saved.startedAt).toLocaleTimeString('sv-SE', {hour:'2-digit', minute:'2-digit'}) : '?';
+
+    const resumeDialog = document.createElement('div');
+    resumeDialog.id = 'resumeDialog';
+    resumeDialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;display:flex;align-items:center;justify-content:center;padding:1rem;';
+    resumeDialog.innerHTML = `
+      <div style="background:var(--card-bg);border:1px solid var(--pri);border-radius:12px;padding:1.5rem;max-width:400px;width:100%;">
+        <h3 style="margin:0 0 1rem;color:var(--pri);">Återuppta resa?</h3>
+        <p style="margin:0 0 .5rem;color:var(--ink);">En pågående resa hittades:</p>
+        <p style="margin:0 0 1rem;color:var(--ink-dim);font-size:.9rem;">
+          <strong>${startStation} → ${endStation}</strong><br>
+          Fordon: ${saved.vehicleType || '–'} • Tåg: ${saved.trainNumber || '–'}<br>
+          Startad: ${startTime}
+        </p>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+          <button id="btnResumeJourney" class="primary" style="flex:1;">Återuppta</button>
+          <button id="btnDiscardJourney" class="danger" style="flex:1;">Kasta bort</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(resumeDialog);
+
+    document.getElementById('btnResumeJourney').addEventListener('click', () => {
+      resumeJourney(saved);
+      resumeDialog.remove();
+    });
+
+    document.getElementById('btnDiscardJourney').addEventListener('click', () => {
+      clearActiveJourney();
+      resumeDialog.remove();
+    });
+  }
+
+  function resumeJourney(saved){
+    // Restore state
+    state.running = true;
+    state.route = saved.route;
+    state.trainNumber = saved.trainNumber;
+    state.vehicleType = saved.vehicleType;
+    state.notes = saved.notes;
+    state.startedAt = saved.startedAt ? new Date(saved.startedAt) : new Date();
+    state.lastReachedIndex = saved.lastReachedIndex || 0;
+    state.nextIndex = saved.nextIndex;
+    state.awaitingDepartureIndex = saved.awaitingDepartureIndex;
+    state.aborted = false;
+
+    // Update UI
+    hideSetupError();
+    els.setup.style.display = 'none';
+    els.journey.style.display = 'block';
+    els.report.style.display = 'none';
+
+    const startName = state.route[0]?.name || '?';
+    const endName = state.route[state.route.length-1]?.name || '?';
+    els.journeyTitle.textContent = `${startName} → ${endName} • ${state.vehicleType} • tåg ${state.trainNumber||'–'}`;
+
+    renderRouteCards();
+    requestGpsWatch();
+
+    showJourneyMessage('Resa återupptagen!', false);
+    setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
   }
 
   function setupPWA(){
