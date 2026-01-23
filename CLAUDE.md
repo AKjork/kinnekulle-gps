@@ -16,6 +16,7 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 |-----|-------------|
 | `Kinnekulle GPS.html` | Huvudappen (GPS-version) |
 | `index.html` | Kopia av GPS-appen för GitHub Pages |
+| `Analys.html` | Analysverktyg för gång- och uppehållstider |
 | `sw.js` | Service Worker för PWA |
 | `kinnekulle-gps.webmanifest` | PWA manifest |
 
@@ -212,3 +213,75 @@ STORAGE_KEY_RECENT_STATIONS = 'kmon_recent_stations_v1' // Senast använda
 STORAGE_KEY_SOUND_ENABLED = 'railtimer_sound_v1'    // Ljud på/av
 STORAGE_KEY_LARGE_TEXT = 'railtimer_large_text_v1' // Stort typsnitt på/av
 ```
+
+## Analys.html - Tidsanalysverktyg
+
+### Översikt
+Fristående analysverktyg för att analysera sparade körningsloggar. Visar statistik för gångtider (tid mellan stationer) och uppehållstider (tid stillastående vid station).
+
+### Funktioner
+
+#### Datakällor
+- **Ladda från RailTimer** - Läser direkt från localStorage (`kmon_gps_logs_v1`)
+- **Importera JSON-filer** - Stöd för flera filer samtidigt med dublettkontroll
+
+#### Lägen (Mode tabs)
+- **Gångtider** - Tid från avgång vid station A till ankomst vid station B
+- **Uppehållstider** - Tid från ankomst till avgång vid samma station
+
+#### Filter
+| Filter | Beskrivning |
+|--------|-------------|
+| Fordonstyp | Filtrera på typ av fordon |
+| Tågnummer | Filtrera på specifikt tåg |
+| Station 1 & 2 | Sökbara fält med autocomplete |
+| Datum från/till | Datumintervall |
+| Slå ihop riktningar | Sammanslår A→B och B→A |
+
+#### Stationsfiltrering
+När **två stationer** väljs:
+- Visar endast körningar med de stationerna som start OCH slut
+- Skapar segment mellan **konsekutiva stationer** (A→B, B→C, C→D)
+- Lägger till **totalsträcka** (A→D total) markerad i orange
+
+#### Statistikkolumner
+| Kolumn | Förklaring |
+|--------|------------|
+| Antal | Antal observationer/mätningar |
+| Snitt | Medelvärde (summan / antal) |
+| Std | Standardavvikelse - spridningsmått (lågt=jämnt, högt=varierande) |
+| Median | Mittvärdet (50% snabbare, 50% långsammare) |
+| P90 | 90:e percentilen (90% av tiderna är kortare) |
+| Min/Max | Kortaste/längsta uppmätta tiden |
+
+#### Vyer (Data tabs)
+- **Diagram** - Stapeldiagram med snitt per sträcka (grön=segment, orange=total)
+- **Tabell** - Statistik per sträcka med alla kolumner
+- **Avvikare** - Tågnummer med tider >2 standardavvikelser från snitt
+- **Detaljer** - Alla enskilda observationer (max 200 rader)
+
+### Tekniska detaljer
+
+#### Segment-beräkning
+```javascript
+// Gångtid = avgång station A → ankomst station B (konsekutiva)
+minutes = (toStop.actualArrival - fromStop.actualDeparture) / 60000
+
+// Uppehållstid = ankomst → avgång vid samma station
+minutes = (stop.actualDeparture - stop.actualArrival) / 60000
+```
+
+#### Dublettkontroll vid filinläsning
+- Kontrollerar på `log.id` (unikt per körning)
+- Fallback: `startedAt + trainNumber` om id saknas
+- Visar antal borttagna dubletter i statusmeddelande
+
+#### Viktiga funktioner
+| Funktion | Beskrivning |
+|----------|-------------|
+| `buildSegmentsBetweenStations` | Bygger segment mellan två valda stationer |
+| `buildRunningSegments` | Bygger alla gångtidssegment |
+| `buildDwellSegments` | Bygger uppehållstidssegment |
+| `renderChart` | Renderar stapeldiagram på canvas |
+| `renderSummaryTable` | Renderar statistiktabell |
+| `renderOutliersTable` | Hittar avvikande tågnummer (z-score > 2) |
