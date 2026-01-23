@@ -674,29 +674,6 @@
     <div id="statsContent"></div>
   </section>
 
-  <section id="calibration">
-    <details>
-      <summary>Stationernas GPS-punkter och radier</summary>
-      <p>Appen använder geofencing runt varje station. Justera koordinaterna om du står i närheten men det inte registreras. Radien anges i meter.</p>
-      <div class="bar" style="margin-bottom:.5rem">
-        <span class="badge" id="calibrationMsg" style="display:none"></span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Station</th>
-              <th>Lat</th>
-              <th>Lon</th>
-              <th>Radie (m)</th>
-              <th>Åtgärd</th>
-            </tr>
-          </thead>
-          <tbody id="calibrationBody"></tbody>
-        </table>
-      </div>
-    </details>
-  </section>
 </main>
 
 <footer>
@@ -758,8 +735,6 @@
     nextStopInfo: document.getElementById('nextStopInfo'),
     journeyTitle: document.getElementById('journeyTitle'),
     logCountTop: document.getElementById('logCountTop'),
-    calibrationBody: document.getElementById('calibrationBody'),
-    calibrationMsg: document.getElementById('calibrationMsg'),
     installBtn: document.getElementById('btnInstall'),
     updateBtn: document.getElementById('btnUpdate'),
     headerStatus: document.getElementById('headerStatus'),
@@ -809,7 +784,6 @@
   let audioCtx = null;
 
   async function init(){
-    renderCalibrationTable();
     updateLogCount();
     bindEvents();
     setupPWA();
@@ -1258,8 +1232,6 @@
     document.getElementById('btnNew').addEventListener('click', resetForNewRun);
     els.cards.addEventListener('click', handleCardButton);
     els.cards.addEventListener('change', handleCardChange);
-    els.calibrationBody.addEventListener('input', handleCalibrationInput);
-    els.calibrationBody.addEventListener('click', handleCalibrationClick);
     if(els.wakeBtn){
       els.wakeBtn.addEventListener('click', toggleWakeLock);
     }
@@ -2255,7 +2227,6 @@
     document.getElementById('setup').style.display = 'none';
     document.getElementById('journey').style.display = 'none';
     document.getElementById('report').style.display = 'none';
-    document.getElementById('calibration').style.display = 'none';
     document.getElementById('statistics').style.display = 'block';
     populateStatsFilters();
     renderStatistics();
@@ -2264,7 +2235,6 @@
   function hideStatistics(){
     document.getElementById('statistics').style.display = 'none';
     document.getElementById('setup').style.display = 'block';
-    document.getElementById('calibration').style.display = 'block';
   }
 
   function populateStatsFilters(){
@@ -3018,55 +2988,6 @@
     els.logCountTop.title=`${count} sparade loggar`;
   }
 
-  function renderCalibrationTable(){
-    stationCatalog=composeStationCatalog();
-    const rows=stationCatalog.map(st=>{
-      return `<tr data-name="${st.name}">
-        <td>${st.name}</td>
-        <td><input type="number" step="0.000001" data-field="lat" value="${st.lat!=null?st.lat.toFixed(6):''}" placeholder="lat"></td>
-        <td><input type="number" step="0.000001" data-field="lon" value="${st.lon!=null?st.lon.toFixed(6):''}" placeholder="lon"></td>
-        <td><input type="number" step="10" data-field="radius" value="${st.radius||DEFAULT_RADIUS}"></td>
-        <td><button type="button" class="ghost" data-action="use-current">Använd min position</button></td>
-      </tr>`;
-    }).join('');
-    els.calibrationBody.innerHTML=rows;
-  }
-
-  function handleCalibrationInput(ev){
-    const row=ev.target.closest('tr[data-name]');
-    if(!row) return;
-    const name=row.dataset.name;
-    const field=ev.target.dataset.field;
-    if(!field) return;
-    const value=ev.target.value.trim();
-    if(value===''){
-      if(stationOverrides[name]){
-        delete stationOverrides[name][field];
-        if(!Object.keys(stationOverrides[name]).length){
-          delete stationOverrides[name];
-        }
-      }
-    }else{
-      const num=parseFloat(value);
-      if(!stationOverrides[name]) stationOverrides[name]={};
-      if(!Number.isNaN(num)){
-        stationOverrides[name][field]=num;
-      }
-    }
-    saveStationOverrides();
-    stationCatalog=composeStationCatalog();
-    renderRouteCards();
-  }
-
-  function handleCalibrationClick(ev){
-    const btn=ev.target.closest('button[data-action="use-current"]');
-    if(!btn) return;
-    const row=btn.closest('tr[data-name]');
-    if(!row) return;
-    const name=row.dataset.name;
-    calibrateWithCurrentPosition(name);
-  }
-
   function calibrateWithCurrentPosition(name, updateActiveRoute){
     const applyPosition=pos=>{
       if(!stationOverrides[name]) stationOverrides[name]={};
@@ -3081,9 +3002,10 @@
           }
         });
         renderRouteCards();
+        renderRouteMap();
       }
-      renderCalibrationTable();
-      showCalibrationMessage(`Uppdaterade ${name} med aktuell position.`, false);
+      showJourneyMessage(`Uppdaterade ${name}`, false);
+      setTimeout(()=>{ els.journeyMsg.style.display='none'; },3000);
     };
     if(state.lastPosition){
       applyPosition(state.lastPosition);
@@ -3092,19 +3014,11 @@
         state.lastPosition=pos;
         applyPosition(pos);
       }, err=>{
-        showCalibrationMessage(err&&err.message?err.message:'Kunde inte läsa GPS.', true);
+        showJourneyMessage(err&&err.message?err.message:'Kunde inte läsa GPS.', true);
       }, {enableHighAccuracy:true, timeout:20000});
     }else{
-      showCalibrationMessage('GPS saknas.', true);
+      showJourneyMessage('GPS saknas.', true);
     }
-  }
-
-  function showCalibrationMessage(text, isError){
-    els.calibrationMsg.textContent=text;
-    els.calibrationMsg.style.display='inline-block';
-    els.calibrationMsg.style.background=isError?'#fee2e2':'#dcfce7';
-    els.calibrationMsg.style.borderColor=isError?'#fecaca':'#86efac';
-    setTimeout(()=>{ els.calibrationMsg.style.display='none'; },4000);
   }
 
   function loadStationOverrides(){
