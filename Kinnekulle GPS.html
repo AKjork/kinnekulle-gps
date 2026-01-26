@@ -687,7 +687,7 @@
   const APP_VERSION = '2026-01-23b';
   const DEFAULT_RADIUS = 200;
   const EXTRA_MARGIN = 150;
-  const SPEED_THRESHOLD_KMH = 5;
+  const SPEED_THRESHOLD_KMH = 2; // Sänkt från 5 - endast riktigt stopp räknas
   const SPEED_THRESHOLD_MS = SPEED_THRESHOLD_KMH / 3.6;
   const CLOSE_APPROACH_EPS = 1; // meters
   const PASS_DISTANCE_MARGIN = 5; // meters before we consider leaving after pass
@@ -1675,13 +1675,31 @@
         station.arrivalPosition=station.closestPosition;
       }
     }else if(station.needsArrivalRetiming && station.closestDistance!=null && dist>station.closestDistance+PASS_DISTANCE_MARGIN){
-      // Markera passering ENDAST för stationer utan planerat stopp
-      // För stationer med stopp: vänta på att användaren stannar och avgår normalt
-      if(!station.shouldStop){
-        const speed = state.lastSpeed;
-        const isMoving = typeof speed === 'number' && speed > SPEED_THRESHOLD_MS; // >5 km/h
-        if(isMoving){
+      // Passerat mittpunkten - avståndet ökar nu
+      const speed = state.lastSpeed;
+      const isMoving = typeof speed === 'number' && speed > SPEED_THRESHOLD_MS; // >2 km/h
+      if(isMoving && !station.actualDeparture){
+        if(!station.shouldStop){
+          // Station utan planerat stopp - bekräfta passering direkt
           markPassingDeparture(idx);
+        }else{
+          // Station med planerat stopp men vi passerar utan att stanna
+          // Sätt provisorisk avgång - kan återkallas om vi stannar
+          const pos = state.lastPosition;
+          station.actualDeparture = new Date();
+          station.departSource = 'gps-pass';
+          station.departurePosition = pos ? {
+            lat: pos.coords.latitude,
+            lon: pos.coords.longitude,
+            accuracy: pos.coords.accuracy || null
+          } : null;
+          station.departureProvisional = true;
+          station.departureProvisionalAt = Date.now();
+          state.departureProvisionalIdx = idx;
+          // Lås ankomsttiden till närmaste punkt
+          station.actualArrival = station.closestTime || station.actualArrival;
+          station.arrivalPosition = station.closestPosition || station.arrivalPosition;
+          station.needsArrivalRetiming = false;
         }
       }
     }
@@ -1875,8 +1893,9 @@
         accuracy:pos.coords.accuracy||null
       }:null;
       station.needsArrivalRetiming=false;
-      station.reachedLowSpeed=true;
-      station.departureProvisional=station.shouldStop && movingFast;
+      // Om vi aldrig stannade (reachedLowSpeed=false) är detta en passering - bekräfta direkt
+      // Om vi stannade men nu rör oss, är avgången också bekräftad
+      station.departureProvisional=false;
       station.departureProvisionalAt=station.departureProvisional?Date.now():null;
       if(station.departureProvisional){
         state.departureProvisionalIdx=idx;

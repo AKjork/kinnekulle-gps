@@ -22,7 +22,7 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 
 ## Viktiga konstanter (i koden)
 ```javascript
-SPEED_THRESHOLD_KMH = 5            // Hastighet för "stillastående" (<5 km/h = stannat)
+SPEED_THRESHOLD_KMH = 2            // Hastighet för "stillastående" (<2 km/h = stannat)
 PASS_DISTANCE_MARGIN = 5           // Meter för att detektera passering
 DEFAULT_RADIUS = 200               // Standard geofence-radie (meter) - ökad för API-koordinater
 EXTRA_MARGIN = 150                 // Extra marginal för geofence-utgång
