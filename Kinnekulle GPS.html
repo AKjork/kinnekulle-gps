@@ -1757,6 +1757,15 @@
           state.awaitingDepartureIndex=idx;
           state.departureProvisionalIdx=null;
           station.reachedLowSpeed=true;
+          // Uppdatera ankomst till stoppögonblicket (passerade mittpunkt sen stannade)
+          station.actualArrival=new Date();
+          station.arrivalSource='gps';
+          station.arrivalPosition=pos?{
+            lat:pos.coords.latitude,
+            lon:pos.coords.longitude,
+            accuracy:pos.coords.accuracy||null
+          }:null;
+          station.needsArrivalRetiming=false;
           state.lastReachedIndex=idx;
           state.nextIndex=idx+1<state.route.length?idx+1:null;
           updateNextStopUI();

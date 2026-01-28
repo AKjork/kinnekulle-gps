@@ -58,26 +58,48 @@ includes: AdvertisedLocationName, LocationSignature, Geometry.WGS84
 ## Stationslogik
 
 ### Grundprincip
-- Ankomst "rullar" och uppdateras tills tåget stannar
-- Avgång registreras endast när tåget faktiskt börjar röra sig igen
-- Fungerar oavsett vilken sida om mittpunkten tåget stannar på
+- Ankomst "rullar" och uppdateras tills tåget stannar ELLER passerar mittpunkten
+- Avgång registreras när tåget börjar röra sig igen (om det stannade) eller vid mittpunktspassering (om det inte stannade)
+- **Enkel regel**: Antingen stannar tåget (<2 km/h) eller så gör det inte det
 
-### Ankomst
-1. Registreras när tåget kommer in i geofence (radie)
+### Tre scenarier
+
+#### 1. Tåget stannar vid stationen
+1. Ankomst registreras vid geofence-ingång
 2. Uppdateras löpande till närmaste punkt mot centrum
-3. **Låses** när tåget stannar (<5 km/h)
+3. **Låses** när tåget stannar (<2 km/h) - `reachedLowSpeed=true`
+4. Avgång registreras när tåget börjar röra sig igen (>2 km/h)
 
-### Avgång (för stationer med shouldStop=true)
-- Kräver att `reachedLowSpeed=true` (tåget har stannat)
-- Triggas av `processSpeedTriggers` när hastighet går över 5 km/h igen
-- Geofence-utgång markerar avgång ENDAST om tåget rör sig (>5 km/h)
-- GPS-fluktuation medan stillastående triggar INTE avgång
+#### 2. Tåget passerar utan att stanna (shouldStop=false)
+1. Ankomst registreras vid geofence-ingång
+2. Uppdateras till närmaste punkt (mittpunkten)
+3. Avgång registreras direkt när avståndet börjar öka (passerat mittpunkten)
+4. `markPassingDeparture` bekräftar passeringen
 
-### Passering (för stationer med shouldStop=false)
-- `markPassingDeparture` triggas ENDAST för stationer utan planerat stopp
-- Kräver hastighet >5 km/h (dvs rör sig) efter att ha passerat mittpunkten
-- Ankomst = närmaste punkt, Avgång = strax efter
-- Fungerar vid alla hastigheter så länge tåget inte stannar
+#### 3. Tåget passerar utan att stanna (shouldStop=true - planerat stopp men stannade inte)
+1. Ankomst registreras vid geofence-ingång
+2. Uppdateras till närmaste punkt
+3. **Provisorisk avgång** sätts när avståndet börjar öka (`departureProvisional=true`)
+4. Om tåget sedan stannar: provisorisk avgång återkallas, **ankomst uppdateras till stoppögonblicket**, hanteras som scenario 1
+5. Om tåget lämnar zonen utan att stanna: provisorisk avgång bekräftas
+
+#### 4. Tåget passerar mittpunkten och sedan stannar
+1. Provisorisk avgång sätts vid mittpunktspassering
+2. När tåget stannar (<2 km/h) återkallas provisorisk avgång
+3. **Ankomsttid uppdateras till stoppögonblicket** (inte närmaste punkt-tiden)
+4. Avgång registreras när tåget börjar röra sig igen (som scenario 1)
+
+### Hastighetsdetektering
+- **Stillastående**: <2 km/h (sänkt från 5 km/h för att undvika falska stopp vid låg fart)
+- **Rör sig**: >2 km/h
+- `reachedLowSpeed` flagga spårar om tåget faktiskt har stannat
+
+### Provisorisk avgång
+- Används för stationer med planerat stopp (`shouldStop=true`) där tåget passerar utan att stanna
+- `departureProvisional=true` markerar osäker avgång
+- `state.departureProvisionalIdx` håller reda på vilken station som har provisorisk avgång
+- Återkallas automatiskt om tåget sedan stannar (<2 km/h)
+- Bekräftas vid geofence-utgång om tåget fortfarande rör sig
 
 ## Viktiga funktioner
 
@@ -106,11 +128,11 @@ includes: AdvertisedLocationName, LocationSignature, Geometry.WGS84
 ## Buggfixar och ändringar (2026-01-19)
 
 ### Fixade buggar
-- **Avgång vid inbromsning**: Geofence-utgång kräver nu rörelse (>5 km/h)
+- **Avgång vid inbromsning**: Geofence-utgång kräver nu rörelse (>2 km/h)
 - **Avgång vid stillastående**: GPS-fluktuation triggar inte längre avgång
 - **Felaktig passering**: `markPassingDeparture` triggas endast för `shouldStop=false`
 - **Kort kollapsade**: Expanded-state bevaras nu vid GPS-uppdateringar (`expandedCards` Set)
-- **Passering vid medelhastighet**: Sänkt tröskelvärde från >10 km/h till >5 km/h för passeringsdetektering
+- **Passering vid medelhastighet**: Sänkt tröskelvärde från >10 km/h till >2 km/h för passeringsdetektering
 
 ### Nya funktioner
 - Kompakt mörkt tema för mobil
@@ -214,6 +236,46 @@ STORAGE_KEY_SOUND_ENABLED = 'railtimer_sound_v1'    // Ljud på/av
 STORAGE_KEY_LARGE_TEXT = 'railtimer_large_text_v1' // Stort typsnitt på/av
 ```
 
+## Uppdatering (2026-01-26)
+
+### Förbättrad passeringsdetektering
+
+**Problem**: Vid passering av stationer i låg hastighet (3-5 km/h) registrerades felaktigt stopp.
+
+**Lösning**: Sänkt hastighetströskel och ny logik för mittpunktspassering.
+
+### Ändringar
+
+#### Hastighetströskel sänkt
+- `SPEED_THRESHOLD_KMH`: 5 → 2 km/h
+- Endast tåg som verkligen står stilla (<2 km/h) räknas som "stoppade"
+- Förhindrar falska stopp vid långsam passering
+
+#### Avgång vid mittpunktspassering
+- Avgång sätts nu när avståndet till stationscentrum börjar öka
+- Gäller både för stationer med och utan planerat stopp
+- Provisorisk avgång (`departureProvisional`) för planerade stopp som inte genomförs
+
+#### Hantering av "passera sen stanna"
+- Om tåget passerar mittpunkten och sedan stannar, återkallas provisorisk avgång
+- **Ankomsttid uppdateras till stoppögonblicket** (inte närmaste punkt-tiden)
+- Stationen behandlas då som ett normalt stopp
+- Förhindrar felaktig registrering vid inbromsning efter mittpunkt
+
+### Nya fält i station-objektet
+```javascript
+station.departureProvisional      // true = osäker avgång, kan återkallas
+station.departureProvisionalAt    // Tidstämpel för provisorisk avgång
+state.departureProvisionalIdx     // Index för station med provisorisk avgång
+```
+
+### Uppdaterade funktioner
+| Funktion | Ändring |
+|----------|---------|
+| `trackClosestApproach` | Sätter provisorisk avgång vid mittpunktspassering |
+| `processSpeedTriggers` | Återkallar provisorisk avgång om tåget stannar, uppdaterar ankomst till stoppögonblicket |
+| `handleStationExit` | Bekräftar provisorisk avgång vid zonlämning |
+
 ## Analys.html - Tidsanalysverktyg
 
 ### Översikt
@@ -285,3 +347,37 @@ minutes = (stop.actualDeparture - stop.actualArrival) / 60000
 | `renderChart` | Renderar stapeldiagram på canvas |
 | `renderSummaryTable` | Renderar statistiktabell |
 | `renderOutliersTable` | Hittar avvikande tågnummer (z-score > 2) |
+
+## Uppdatering (2026-01-28)
+
+### Fix: Ankomsttid vid "passera sen stanna"
+
+**Problem**: När tåget passerade mittpunkten och sedan stannade, behölls ankomsttiden från närmaste punkt istället för att uppdateras till stoppögonblicket.
+
+**Lösning**: I `processSpeedTriggers`, när en provisorisk avgång återkallas (tåget stannar), uppdateras nu även ankomsttiden till stoppögonblicket.
+
+**Ändrad kod** (i `processSpeedTriggers`):
+```javascript
+if(speed<=SPEED_THRESHOLD_MS && (withinDist || withinTime)){
+  station.actualDeparture=null;
+  // ... återkalla provisorisk avgång ...
+  station.reachedLowSpeed=true;
+  // NY: Uppdatera ankomst till stoppögonblicket
+  station.actualArrival=new Date();
+  station.arrivalSource='gps';
+  station.arrivalPosition=pos?{...}:null;
+  station.needsArrivalRetiming=false;
+}
+```
+
+### Förenklad logik
+
+Nu finns endast två möjliga utfall:
+
+1. **STOPP** (hastighet < 2 km/h):
+   - Ankomst = stoppögonblicket
+   - Avgång = när tåget börjar röra sig igen
+
+2. **PASSERING** (aldrig < 2 km/h):
+   - Ankomst = närmaste punkt till stationskoordinaterna
+   - Avgång = när avståndet börjar öka
