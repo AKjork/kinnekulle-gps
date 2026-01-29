@@ -381,3 +381,31 @@ Nu finns endast två möjliga utfall:
 2. **PASSERING** (aldrig < 2 km/h):
    - Ankomst = närmaste punkt till stationskoordinaterna
    - Avgång = när avståndet börjar öka
+
+## Uppdatering (2026-01-29)
+
+### Fix: API-anrop med datumfilter
+
+**Problem**: Tåg med många poster (t.ex. 3335 med 745+ poster) överskred API-gränsen `limit=500`. Detta gjorde att dagens data inte hämtades.
+
+**Lösning**: Lade till datumfilter direkt i API-anropet (GTE/LTE på AdvertisedTimeAtLocation) istället för att filtrera lokalt.
+
+**Före:**
+```xml
+<FILTER>
+  <EQ name="OperationalTrainNumber" value="${otn}" />
+</FILTER>
+```
+
+**Efter:**
+```xml
+<FILTER>
+  <AND>
+    <EQ name="OperationalTrainNumber" value="${otn}" />
+    <GTE name="AdvertisedTimeAtLocation" value="${dateStart}" />
+    <LTE name="AdvertisedTimeAtLocation" value="${dateEnd}" />
+  </AND>
+</FILTER>
+```
+
+Detta säkerställer att endast relevant data för det valda datumet hämtas, oavsett hur många totala poster tågnumret har.
