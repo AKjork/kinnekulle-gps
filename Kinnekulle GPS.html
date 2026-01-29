@@ -3135,11 +3135,19 @@
       const targetDate = date ? new Date(date) : new Date();
       const targetDateStr = targetDate.toISOString().split('T')[0];
 
+      // Skapa datumintervall för API-filtret (hela dygnet)
+      const dateStart = targetDateStr + 'T00:00:00';
+      const dateEnd = targetDateStr + 'T23:59:59';
+
       const xmlRequest = `<REQUEST>
         <LOGIN authenticationkey="${TRAFIKVERKET_API_KEY}" />
         <QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="500">
           <FILTER>
-            <EQ name="OperationalTrainNumber" value="${otn}" />
+            <AND>
+              <EQ name="OperationalTrainNumber" value="${otn}" />
+              <GTE name="AdvertisedTimeAtLocation" value="${dateStart}" />
+              <LTE name="AdvertisedTimeAtLocation" value="${dateEnd}" />
+            </AND>
           </FILTER>
           <INCLUDE>LocationSignature</INCLUDE>
           <INCLUDE>AdvertisedTimeAtLocation</INCLUDE>
@@ -3161,28 +3169,10 @@
       }
 
       const data = await response.json();
-      const announcements = data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [];
-
-      if(!announcements.length) {
-        return { success: false, error: `Tåg ${otn} hittades inte i tidtabellen` };
-      }
-
-      const filtered = announcements.filter(ann => {
-        if(!ann.AdvertisedTimeAtLocation) return false;
-        const annDate = new Date(ann.AdvertisedTimeAtLocation).toISOString().split('T')[0];
-        return annDate === targetDateStr;
-      });
+      const filtered = data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [];
 
       if(!filtered.length) {
-        const availableDates = [...new Set(announcements
-          .filter(a => a.AdvertisedTimeAtLocation)
-          .map(a => new Date(a.AdvertisedTimeAtLocation).toISOString().split('T')[0])
-        )].sort();
-
-        return {
-          success: false,
-          error: `Tåg ${otn} går inte ${targetDateStr}. Går: ${availableDates.join(', ')}`
-        };
+        return { success: false, error: `Tåg ${otn} hittades inte för ${targetDateStr}` };
       }
 
       const timetable = {};
