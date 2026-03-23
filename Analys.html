@@ -282,7 +282,7 @@
     </div>
     <div class="stat-box">
       <div class="value" id="statAvgTime">-</div>
-      <div class="label">Snitt gångtid</div>
+      <div class="label" id="statAvgLabel">Snitt gångtid</div>
     </div>
   </div>
 
@@ -463,6 +463,8 @@
     document.getElementById('modeDescription').innerHTML = isRunning
       ? '<strong>Gångtid</strong> = Tid från avgång vid en station till ankomst vid nästa station (exkl. uppehåll).'
       : '<strong>Uppehållstid</strong> = Tid från ankomst till avgång vid samma station (hur länge tåget stod stilla).';
+    // Update stats label
+    document.getElementById('statAvgLabel').textContent = isRunning ? 'Snitt gångtid' : 'Snitt uppehåll';
   }
 
   // Data tabs
@@ -660,17 +662,7 @@
       const stops = log.stops || [];
       if(stops.length < 2) continue;
 
-      // Only include journeys where start/end stations match the selected stations
-      const journeyStart = log.startStation || (stops[0] && stops[0].name);
-      const journeyEnd = log.endStation || (stops[stops.length-1] && stops[stops.length-1].name);
-
-      const matchesRoute =
-        (journeyStart === station1 && journeyEnd === station2) ||
-        (journeyStart === station2 && journeyEnd === station1);
-
-      if(!matchesRoute) continue;
-
-      // Find indices of both stations
+      // Include any journey containing both stations
       const idx1 = stops.findIndex(s => s.name === station1);
       const idx2 = stops.findIndex(s => s.name === station2);
 
@@ -1105,7 +1097,8 @@
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.font = 'bold 14px system-ui, sans-serif';
-    ctx.fillText('Snitt gångtid per sträcka (minuter)', padding.left, 10);
+    const chartTitle = currentMode === 'running' ? 'Snitt gångtid per sträcka (minuter)' : 'Snitt uppehållstid per station (minuter)';
+    ctx.fillText(chartTitle, padding.left, 10);
   }
 
   function niceMax(maxV){
@@ -1285,7 +1278,10 @@
       }
 
       let arrMin = null;
-      if(!isFirst && runTime !== null){ cum += runTime; arrMin = cum; }
+      if(!isFirst){
+        if(runTime !== null){ cum += runTime; arrMin = cum; }
+        else { arrMin = cum; } // no data for this segment, keep cumulative
+      }
 
       let depMin = null;
       if(isFirst) depMin = 0;

@@ -1757,6 +1757,15 @@
           state.awaitingDepartureIndex=idx;
           state.departureProvisionalIdx=null;
           station.reachedLowSpeed=true;
+          // Uppdatera ankomst till stoppögonblicket (passerade mittpunkt sen stannade)
+          station.actualArrival=new Date();
+          station.arrivalSource='gps';
+          station.arrivalPosition=pos?{
+            lat:pos.coords.latitude,
+            lon:pos.coords.longitude,
+            accuracy:pos.coords.accuracy||null
+          }:null;
+          station.needsArrivalRetiming=false;
           state.lastReachedIndex=idx;
           state.nextIndex=idx+1<state.route.length?idx+1:null;
           updateNextStopUI();
@@ -2646,7 +2655,8 @@
       return;
     }
 
-    setTimeout(async () => {
+    clearTimeout(handleTrainNumberInput._timer);
+    handleTrainNumberInput._timer = setTimeout(async () => {
       const currentTime = new Date();
       const currentHour = currentTime.getHours();
       const currentMinute = currentTime.getMinutes();
@@ -2900,9 +2910,9 @@
       const logDate=log.startedAt?new Date(log.startedAt).toLocaleDateString('sv-SE'):'';
       const trainNum=log.trainNumber||'';
       const vehicleType=log.vehicleType||'';
-      const fromSt=log.route&&log.route[0]?log.route[0].name:'';
-      const toSt=log.route&&log.route.length?log.route[log.route.length-1].name:'';
-      (log.route||[]).forEach(st=>{
+      const fromSt=log.startStation||'';
+      const toSt=log.endStation||'';
+      (log.stops||[]).forEach(st=>{
         const arr=st.actualArrival?new Date(st.actualArrival).toLocaleTimeString('sv-SE'):'';
         const dep=st.actualDeparture?new Date(st.actualDeparture).toLocaleTimeString('sv-SE'):'';
         const schArr=st.scheduledArrival?new Date(st.scheduledArrival).toLocaleTimeString('sv-SE'):'';
@@ -3126,11 +3136,19 @@
       const targetDate = date ? new Date(date) : new Date();
       const targetDateStr = targetDate.toISOString().split('T')[0];
 
+      // Skapa datumintervall för API-filtret (hela dygnet)
+      const dateStart = targetDateStr + 'T00:00:00';
+      const dateEnd = targetDateStr + 'T23:59:59';
+
       const xmlRequest = `<REQUEST>
         <LOGIN authenticationkey="${TRAFIKVERKET_API_KEY}" />
         <QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="500">
           <FILTER>
-            <EQ name="OperationalTrainNumber" value="${otn}" />
+            <AND>
+              <EQ name="OperationalTrainNumber" value="${otn}" />
+              <GTE name="AdvertisedTimeAtLocation" value="${dateStart}" />
+              <LTE name="AdvertisedTimeAtLocation" value="${dateEnd}" />
+            </AND>
           </FILTER>
           <INCLUDE>LocationSignature</INCLUDE>
           <INCLUDE>AdvertisedTimeAtLocation</INCLUDE>
@@ -3152,28 +3170,10 @@
       }
 
       const data = await response.json();
-      const announcements = data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [];
-
-      if(!announcements.length) {
-        return { success: false, error: `Tåg ${otn} hittades inte i tidtabellen` };
-      }
-
-      const filtered = announcements.filter(ann => {
-        if(!ann.AdvertisedTimeAtLocation) return false;
-        const annDate = new Date(ann.AdvertisedTimeAtLocation).toISOString().split('T')[0];
-        return annDate === targetDateStr;
-      });
+      const filtered = data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [];
 
       if(!filtered.length) {
-        const availableDates = [...new Set(announcements
-          .filter(a => a.AdvertisedTimeAtLocation)
-          .map(a => new Date(a.AdvertisedTimeAtLocation).toISOString().split('T')[0])
-        )].sort();
-
-        return {
-          success: false,
-          error: `Tåg ${otn} går inte ${targetDateStr}. Går: ${availableDates.join(', ')}`
-        };
+        return { success: false, error: `Tåg ${otn} hittades inte för ${targetDateStr}` };
       }
 
       const timetable = {};
@@ -3296,7 +3296,8 @@
       arrivalSource: stop.arrivalSource || '',
       departSource: stop.departSource || '',
       shouldStop: stop.shouldStop!=null ? !!stop.shouldStop : !stop.skipNoStop,
-      excludeInboundRun: !!(stop.excludeInboundRun || stop.exclude)
+      excludeInboundRun: !!(stop.excludeInboundRun || stop.exclude),
+      notes: stop.notes || ''
     }));
     const rawId = entry.id || entry.measurementId || entry.measurementID || `${entry.trainNumber||''}|${startStation||''}|${startedAt||''}`;
     return {

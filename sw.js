@@ -39,12 +39,12 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
   event.respondWith(
     caches.match(request).then(cached => {
-      if (cached) return cached;
-      return fetch(request).then(resp => {
+      const fetchPromise = fetch(request).then(resp => {
         const copy = resp.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
         return resp;
-      }).catch(() => cached);
+      });
+      return cached || fetchPromise.catch(() => caches.match(request));
     })
   );
 });
