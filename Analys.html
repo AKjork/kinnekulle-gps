@@ -181,6 +181,22 @@
     select,input{width:100%}
     .stats-row{grid-template-columns:repeat(2,1fr)}
   }
+
+  .timetable-setup{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;align-items:flex-end}
+  .station-list{display:flex;flex-direction:column;gap:.25rem;margin-bottom:1rem}
+  .station-item{display:flex;align-items:center;gap:.5rem;padding:.4rem .6rem;border-radius:6px;background:var(--bg);border:1px solid var(--b);font-size:.85rem}
+  .station-item.endpoint{background:var(--pri-glow);border-color:var(--pri)}
+  .station-item label{display:flex;align-items:center;gap:.5rem;flex:1;cursor:pointer}
+  .station-item .station-name{flex:1}
+  .station-item .station-data{color:var(--mut);font-size:.75rem}
+  .timetable-result table{width:100%}
+  .timetable-result .pass{color:var(--mut);font-style:italic}
+  .timetable-result .stop-row td{background:var(--bg)}
+  .timetable-result .endpoint-row td{background:var(--pri-glow)}
+  .tt-note{font-size:.85rem;color:var(--ink);margin-top:.75rem}
+  @media (max-width:640px){
+    .timetable-setup{flex-direction:column}
+  }
 </style>
 </head>
 <body>
@@ -275,6 +291,7 @@
     <button class="tab" data-tab="table">Tabell</button>
     <button class="tab" data-tab="outliers">Avvikare</button>
     <button class="tab" data-tab="details">Detaljer</button>
+    <button class="tab" data-tab="timetable">Tidtabell</button>
   </div>
 
   <div id="tabChart" class="tab-content active">
@@ -312,18 +329,18 @@
   </div>
 
   <div id="tabOutliers" class="tab-content">
-    <p class="meta">Tågnummer med gångtider som avviker mer än 2 standardavvikelser från snittet.</p>
+    <p class="meta">Visar tågnummer som är ovanligt snabba eller långsamma jämfört med alla andra tåg på samma sträcka. <span style="color:var(--err)">Rött</span> = långsammare än normalt, <span style="color:var(--pri)">grönt</span> = snabbare än normalt.</p>
     <div class="table-wrap">
       <table id="outliersTable">
         <thead>
           <tr>
             <th>Sträcka</th>
-            <th>Tåg</th>
+            <th>Tågnr</th>
             <th>Fordon</th>
-            <th>Antal</th>
-            <th>Tåg-snitt</th>
-            <th>Glob. snitt</th>
-            <th>z-score</th>
+            <th>Körningar</th>
+            <th title="Medeltid för just detta tågnummer på sträckan">Tågets snitt (min)</th>
+            <th title="Medeltid för alla tåg på sträckan">Alla tågs snitt (min)</th>
+            <th title="Hur mycket tåget avviker från normalt. Högre = mer ovanligt">Avvikelse</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -348,6 +365,29 @@
       </table>
     </div>
   </div>
+
+  <div id="tabTimetable" class="tab-content">
+    <p class="meta" id="ttHint">Välj två stationer i filtren ovan (Station 1 och Station 2) för att föreslå en tidtabell baserad på mätdata.</p>
+    <div id="ttSetup" style="display:none">
+      <div class="timetable-setup">
+        <div class="filter-group">
+          <label>Starttid (valfritt)</label>
+          <input type="time" id="ttStartTime">
+        </div>
+        <div class="filter-group">
+          <label>Tidsbas</label>
+          <select id="ttTimeBasis">
+            <option value="median">Median (realistisk)</option>
+            <option value="p90">P90 (med marginal)</option>
+            <option value="mean">Medelvärde</option>
+          </select>
+        </div>
+      </div>
+      <h3>Mellanstationer – kryssa i för stopp</h3>
+      <div id="ttStationList" class="station-list"></div>
+      <div id="ttResult" class="timetable-result"></div>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -359,6 +399,9 @@
   let segments = [];
   let currentMode = 'running'; // 'running' or 'dwell'
   let validStations = new Set();
+  let ttRoute = [];
+  let ttRunningStats = {};
+  let ttDwellStats = {};
 
   // Elements
   const els = {
@@ -396,6 +439,8 @@
   els.filterTo.addEventListener('input', runAnalysis);
   els.filterDateFrom.addEventListener('change', runAnalysis);
   els.filterDateTo.addEventListener('change', runAnalysis);
+  document.getElementById('ttStartTime').addEventListener('input', generateTimetable);
+  document.getElementById('ttTimeBasis').addEventListener('change', generateTimetable);
 
   // Mode tabs (Gångtider / Uppehållstider)
   document.querySelectorAll('.mode-tab').forEach(tab => {
@@ -605,6 +650,7 @@
     renderSummaryTable(segments);
     renderOutliersTable(segments);
     renderDetailsTable(segments);
+    updateTimetable();
   }
 
   function buildSegmentsBetweenStations(logs, station1, station2, mergeDir){
@@ -908,7 +954,7 @@
         <td>${o.n}</td>
         <td>${o.trainMean.toFixed(2)}</td>
         <td>${o.globalMean.toFixed(2)}</td>
-        <td><span class="badge ${o.z > 0 ? 'bad' : 'good'}">${o.z.toFixed(2)}</span></td>
+        <td><span class="badge ${o.z > 0 ? 'bad' : 'good'}">${o.z > 0 ? '↑ Långsammare' : '↓ Snabbare'}</span></td>
       </tr>
     `).join('');
   }
@@ -1095,6 +1141,212 @@
     const hi = Math.ceil(pos);
     if(lo === hi) return sorted[lo];
     return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+  }
+
+  // ── Timetable proposal ──
+
+  function updateTimetable(){
+    const stationA = validStations.has(els.filterFrom.value) ? els.filterFrom.value : '';
+    const stationB = validStations.has(els.filterTo.value) ? els.filterTo.value : '';
+    const setup = document.getElementById('ttSetup');
+    const hint = document.getElementById('ttHint');
+    if(!stationA || !stationB || stationA === stationB){
+      setup.style.display = 'none';
+      hint.style.display = 'block';
+      return;
+    }
+    setup.style.display = 'block';
+    hint.style.display = 'none';
+
+    ttRoute = buildRouteStations(stationA, stationB);
+    if(ttRoute.length < 2){
+      document.getElementById('ttResult').innerHTML = '<p class="empty">Ingen rutt hittades mellan dessa stationer i mätdata.</p>';
+      document.getElementById('ttStationList').innerHTML = '';
+      return;
+    }
+
+    const fv = els.filterVehicle.value;
+    const ft = els.filterTrain.value;
+    const fd1 = els.filterDateFrom.value;
+    const fd2 = els.filterDateTo.value;
+    const filtered = allLogs.filter(log => {
+      if(log.aborted) return false;
+      if(fv && log.vehicleType !== fv) return false;
+      if(ft && log.trainNumber !== ft) return false;
+      if(fd1 || fd2){
+        const d = log.startedAt ? new Date(log.startedAt).toISOString().slice(0,10) : null;
+        if(!d) return false;
+        if(fd1 && d < fd1) return false;
+        if(fd2 && d > fd2) return false;
+      }
+      return true;
+    });
+
+    const runSegs = buildRunningSegments(filtered, false);
+    ttRunningStats = {};
+    for(let i = 0; i < ttRoute.length - 1; i++){
+      const a = ttRoute[i], b = ttRoute[i+1];
+      const times = runSegs
+        .filter(s => (s.from === a && s.to === b) || (s.from === b && s.to === a))
+        .map(s => s.minutes);
+      if(times.length){
+        ttRunningStats[a+' \u2192 '+b] = {
+          median: median(times), p90: quantile(times, 0.9),
+          mean: mean(times), n: times.length
+        };
+      }
+    }
+
+    const dwSegs = buildDwellSegments(filtered);
+    ttDwellStats = {};
+    for(const st of ttRoute){
+      const times = dwSegs.filter(s => s.station === st).map(s => s.minutes);
+      if(times.length){
+        ttDwellStats[st] = {
+          median: median(times), p90: quantile(times, 0.9),
+          mean: mean(times), n: times.length
+        };
+      }
+    }
+
+    renderTTStationList();
+    generateTimetable();
+  }
+
+  function buildRouteStations(stA, stB){
+    let best = [];
+    for(const log of allLogs){
+      const stops = log.stops || [];
+      const iA = stops.findIndex(s => s.name === stA);
+      const iB = stops.findIndex(s => s.name === stB);
+      if(iA === -1 || iB === -1) continue;
+      const lo = Math.min(iA, iB), hi = Math.max(iA, iB);
+      const route = [];
+      for(let i = lo; i <= hi; i++) route.push(stops[i].name);
+      if(iA > iB) route.reverse();
+      if(route.length > best.length) best = route;
+    }
+    return best;
+  }
+
+  function renderTTStationList(){
+    const el = document.getElementById('ttStationList');
+    el.innerHTML = ttRoute.map((st, i) => {
+      const isEnd = i === 0 || i === ttRoute.length - 1;
+      const dw = ttDwellStats[st];
+      const dwInfo = dw ? 'uppeh\u00e5ll snitt: '+dw.median.toFixed(1)+' min (n='+dw.n+')' : 'inga uppeh\u00e5llsdata';
+      if(isEnd){
+        return '<div class="station-item endpoint">'+
+          '<span class="station-name"><strong>'+escapeHtml(st)+'</strong></span>'+
+          '<span class="station-data">'+(i === 0 ? 'Startstation' : 'Slutstation')+'</span>'+
+        '</div>';
+      }
+      return '<div class="station-item">'+
+        '<label>'+
+          '<input type="checkbox" class="tt-stop-check" data-idx="'+i+'" checked>'+
+          '<span class="station-name">'+escapeHtml(st)+'</span>'+
+        '</label>'+
+        '<span class="station-data">'+dwInfo+'</span>'+
+      '</div>';
+    }).join('');
+    el.querySelectorAll('.tt-stop-check').forEach(function(cb){
+      cb.addEventListener('change', generateTimetable);
+    });
+  }
+
+  function generateTimetable(){
+    if(ttRoute.length < 2) return;
+    const basis = document.getElementById('ttTimeBasis').value;
+    const startStr = document.getElementById('ttStartTime').value;
+    const stopFlags = ttRoute.map(function(_, i){
+      if(i === 0 || i === ttRoute.length - 1) return true;
+      const cb = document.querySelector('.tt-stop-check[data-idx="'+i+'"]');
+      return cb ? cb.checked : false;
+    });
+
+    let cum = 0;
+    const rows = [];
+    for(let i = 0; i < ttRoute.length; i++){
+      const st = ttRoute[i];
+      const isStop = stopFlags[i];
+      const isFirst = i === 0, isLast = i === ttRoute.length - 1;
+
+      let runTime = null, runN = 0;
+      if(i > 0){
+        const stats = ttRunningStats[ttRoute[i-1]+' \u2192 '+ttRoute[i]];
+        if(stats){ runTime = stats[basis]; runN = stats.n; }
+      }
+
+      let dwTime = null, dwN = 0;
+      if(isStop && !isFirst && !isLast){
+        const stats = ttDwellStats[st];
+        if(stats){ dwTime = stats[basis]; dwN = stats.n; }
+        else dwTime = 1;
+      }
+
+      let arrMin = null;
+      if(!isFirst && runTime !== null){ cum += runTime; arrMin = cum; }
+
+      let depMin = null;
+      if(isFirst) depMin = 0;
+      else if(isStop && !isLast){ cum += (dwTime || 0); depMin = cum; }
+
+      rows.push({ station:st, isStop:isStop, isFirst:isFirst, isLast:isLast,
+        arrMin:arrMin, depMin:depMin, runTime:runTime, runN:runN, dwTime:dwTime, dwN:dwN });
+    }
+    renderTTResult(rows, startStr);
+  }
+
+  function renderTTResult(rows, startStr){
+    const el = document.getElementById('ttResult');
+    let startDate = null;
+    if(startStr){
+      const parts = startStr.split(':').map(Number);
+      startDate = new Date(2000, 0, 1, parts[0], parts[1], 0);
+    }
+    function fmtTime(min){
+      if(min === null) return '-';
+      if(startDate){
+        const d = new Date(startDate.getTime() + min * 60000);
+        return d.toLocaleTimeString('sv-SE', { hour:'2-digit', minute:'2-digit' });
+      }
+      const m = Math.floor(min), s = Math.round((min - m) * 60);
+      return '+'+m+':'+s.toString().padStart(2,'0');
+    }
+    function fmtMin(v){ return v !== null ? v.toFixed(1) : '-'; }
+
+    const totalTime = rows.length ? rows[rows.length - 1].arrMin : null;
+
+    let html = '<table><thead><tr>'+
+      '<th>Station</th><th>Ank</th><th>Avg</th>'+
+      '<th>G\u00e5ngtid (min)</th><th>Uppeh\u00e5ll (min)</th><th>M\u00e4tpunkter</th>'+
+    '</tr></thead><tbody>';
+
+    for(let r = 0; r < rows.length; r++){
+      const row = rows[r];
+      const cls = row.isFirst || row.isLast ? 'endpoint-row' : row.isStop ? 'stop-row' : '';
+      const pass = !row.isStop && !row.isFirst && !row.isLast;
+      html += '<tr class="'+cls+'">'+
+        '<td'+(pass ? ' class="pass"' : '')+'>'+escapeHtml(row.station)+(pass ? ' <em>(passerar)</em>' : '')+'</td>'+
+        '<td>'+(row.isFirst ? '-' : fmtTime(row.arrMin))+'</td>'+
+        '<td>'+(row.isLast ? '-' : (row.isStop || row.isFirst ? fmtTime(row.depMin) : '<span class="pass">\u2193</span>'))+'</td>'+
+        '<td>'+fmtMin(row.runTime)+'</td>'+
+        '<td>'+(row.isStop && !row.isFirst && !row.isLast ? fmtMin(row.dwTime) : '-')+'</td>'+
+        '<td style="font-size:.75rem;color:var(--mut)">'+(row.runN ? 'g\u00e5ng:'+row.runN : '')+(row.dwN ? ' uppeh:'+row.dwN : '')+'</td>'+
+      '</tr>';
+    }
+    html += '</tbody></table>';
+
+    if(totalTime !== null){
+      html += '<p class="tt-note"><strong>Total restid: '+totalTime.toFixed(1)+' min</strong>';
+      if(startDate){
+        const end = new Date(startDate.getTime() + totalTime * 60000);
+        html += ' ('+startDate.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'})+
+          ' \u2192 '+end.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'})+')';
+      }
+      html += '</p>';
+    }
+    el.innerHTML = html;
   }
 
   // Initialize
