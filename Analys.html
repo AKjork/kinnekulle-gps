@@ -194,6 +194,12 @@
   .timetable-result .stop-row td{background:var(--bg)}
   .timetable-result .endpoint-row td{background:var(--pri-glow)}
   .tt-note{font-size:.85rem;color:var(--ink);margin-top:.75rem}
+  .compare-log{margin-bottom:1.5rem}
+  .compare-log h3{margin:.5rem 0}
+  .compare-log .delay-early{color:var(--pri)}
+  .compare-log .delay-late{color:var(--err)}
+  .compare-log .delay-ok{color:var(--ink-dim)}
+  .compare-log .no-data{color:var(--mut);font-style:italic}
   @media (max-width:640px){
     .timetable-setup{flex-direction:column}
   }
@@ -231,7 +237,8 @@
       </div>
       <div class="filter-group">
         <label>Tågnummer</label>
-        <select id="filterTrain"><option value="">Alla</option></select>
+        <input type="text" id="filterTrain" list="trainList" placeholder="Sök tågnr...">
+        <datalist id="trainList"></datalist>
       </div>
       <div class="filter-group">
         <label>Station 1</label>
@@ -292,6 +299,7 @@
     <button class="tab" data-tab="outliers">Avvikare</button>
     <button class="tab" data-tab="details">Detaljer</button>
     <button class="tab" data-tab="timetable">Tidtabell</button>
+    <button class="tab" data-tab="compare">Jämför</button>
   </div>
 
   <div id="tabChart" class="tab-content active">
@@ -388,6 +396,11 @@
       <div id="ttResult" class="timetable-result"></div>
     </div>
   </div>
+
+  <div id="tabCompare" class="tab-content">
+    <p class="meta" id="compareHint">Visar tidtabell vs verklighet per körning. Välj tågnummer i filtret ovan för att se körningar med tidtabellsdata.</p>
+    <div id="compareContent"></div>
+  </div>
 </main>
 
 <script>
@@ -398,6 +411,7 @@
   let allLogs = [];
   let segments = [];
   let currentMode = 'running'; // 'running' or 'dwell'
+  let validTrains = new Set();
   let validStations = new Set();
   let ttRoute = [];
   let ttRunningStats = {};
@@ -434,7 +448,7 @@
   els.btnClearFilters.addEventListener('click', clearFilters);
   els.chkMergeDir.addEventListener('change', runAnalysis);
   els.filterVehicle.addEventListener('change', runAnalysis);
-  els.filterTrain.addEventListener('change', runAnalysis);
+  els.filterTrain.addEventListener('input', runAnalysis);
   els.filterFrom.addEventListener('input', runAnalysis);
   els.filterTo.addEventListener('input', runAnalysis);
   els.filterDateFrom.addEventListener('change', runAnalysis);
@@ -554,10 +568,11 @@
     });
 
     fillSelect(els.filterVehicle, Array.from(vehicles).sort(), 'Alla fordon');
-    fillSelect(els.filterTrain, Array.from(trains).sort(), 'Alla tåg');
 
-    // Fill datalists for station search
+    // Fill datalists for train number and station search
+    validTrains = trains;
     validStations = stations;
+    fillDatalist('trainList', Array.from(trains).sort());
     const sortedStations = Array.from(stations).sort();
     fillDatalist('stationList1', sortedStations);
     fillDatalist('stationList2', sortedStations);
@@ -596,7 +611,7 @@
 
     const mergeDir = els.chkMergeDir.checked;
     const filterVehicle = els.filterVehicle.value;
-    const filterTrain = els.filterTrain.value;
+    const filterTrain = validTrains.has(els.filterTrain.value) ? els.filterTrain.value : '';
     // Only use station filter if it's a valid station name
     const filterFrom = validStations.has(els.filterFrom.value) ? els.filterFrom.value : '';
     const filterTo = validStations.has(els.filterTo.value) ? els.filterTo.value : '';
@@ -653,6 +668,7 @@
     renderOutliersTable(segments);
     renderDetailsTable(segments);
     updateTimetable();
+    renderCompare(filteredLogs);
   }
 
   function buildSegmentsBetweenStations(logs, station1, station2, mergeDir){
@@ -1136,6 +1152,92 @@
     return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
   }
 
+  // ── Compare: timetable vs reality ──
+
+  function renderCompare(logs){
+    const el = document.getElementById('compareContent');
+    const hint = document.getElementById('compareHint');
+
+    // Filter logs that have scheduled data
+    const withSchedule = logs.filter(log => {
+      if(log.aborted) return false;
+      const stops = log.stops || [];
+      return stops.some(s => s.scheduledArrival || s.scheduledDeparture);
+    });
+
+    if(!withSchedule.length){
+      el.innerHTML = '';
+      hint.style.display = 'block';
+      hint.textContent = 'Inga körningar med tidtabellsdata hittades med aktuellt filter.';
+      return;
+    }
+    hint.style.display = 'none';
+
+    // Sort by date descending
+    withSchedule.sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
+
+    // Limit to 20 most recent
+    const limited = withSchedule.slice(0, 20);
+
+    el.innerHTML = limited.map(log => {
+      const stops = log.stops || [];
+      const logDate = log.startedAt ? new Date(log.startedAt).toLocaleDateString('sv-SE') : '?';
+      const trainNr = log.trainNumber || '?';
+
+      let html = '<div class="compare-log card">'+
+        '<h3>T\u00e5g '+escapeHtml(trainNr)+' \u2013 '+escapeHtml(logDate)+
+        ' \u2013 '+escapeHtml(log.startStation||'')+' \u2192 '+escapeHtml(log.endStation||'')+'</h3>'+
+        '<div class="table-wrap"><table><thead><tr>'+
+        '<th>Station</th><th>Tidtabell ank</th><th>Verklig ank</th><th>Avvikelse ank</th>'+
+        '<th>Tidtabell avg</th><th>Verklig avg</th><th>Avvikelse avg</th>'+
+        '</tr></thead><tbody>';
+
+      for(const stop of stops){
+        const schArr = stop.scheduledArrival ? new Date(stop.scheduledArrival) : null;
+        const actArr = stop.actualArrival ? new Date(stop.actualArrival) : null;
+        const schDep = stop.scheduledDeparture ? new Date(stop.scheduledDeparture) : null;
+        const actDep = stop.actualDeparture ? new Date(stop.actualDeparture) : null;
+
+        const fmtClock = function(d){ return d ? d.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '-'; };
+
+        let arrDelay = '';
+        let arrClass = 'no-data';
+        if(schArr && actArr){
+          const diffMin = Math.round((actArr - schArr) / 60000);
+          if(diffMin > 1){ arrDelay = '+'+diffMin+' min'; arrClass = 'delay-late'; }
+          else if(diffMin < -1){ arrDelay = diffMin+' min'; arrClass = 'delay-early'; }
+          else { arrDelay = 'I tid'; arrClass = 'delay-ok'; }
+        }
+
+        let depDelay = '';
+        let depClass = 'no-data';
+        if(schDep && actDep){
+          const diffMin = Math.round((actDep - schDep) / 60000);
+          if(diffMin > 1){ depDelay = '+'+diffMin+' min'; depClass = 'delay-late'; }
+          else if(diffMin < -1){ depDelay = diffMin+' min'; depClass = 'delay-early'; }
+          else { depDelay = 'I tid'; depClass = 'delay-ok'; }
+        }
+
+        html += '<tr>'+
+          '<td>'+escapeHtml(stop.name)+'</td>'+
+          '<td>'+fmtClock(schArr)+'</td>'+
+          '<td>'+fmtClock(actArr)+'</td>'+
+          '<td class="'+arrClass+'">'+arrDelay+'</td>'+
+          '<td>'+fmtClock(schDep)+'</td>'+
+          '<td>'+fmtClock(actDep)+'</td>'+
+          '<td class="'+depClass+'">'+depDelay+'</td>'+
+        '</tr>';
+      }
+
+      html += '</tbody></table></div></div>';
+      return html;
+    }).join('');
+
+    if(withSchedule.length > 20){
+      el.innerHTML += '<p class="meta">Visar 20 av '+withSchedule.length+' k\u00f6rningar</p>';
+    }
+  }
+
   // ── Timetable proposal ──
 
   function updateTimetable(){
@@ -1151,15 +1253,8 @@
     setup.style.display = 'block';
     hint.style.display = 'none';
 
-    ttRoute = buildRouteStations(stationA, stationB);
-    if(ttRoute.length < 2){
-      document.getElementById('ttResult').innerHTML = '<p class="empty">Ingen rutt hittades mellan dessa stationer i mätdata.</p>';
-      document.getElementById('ttStationList').innerHTML = '';
-      return;
-    }
-
     const fv = els.filterVehicle.value;
-    const ft = els.filterTrain.value;
+    const ft = validTrains.has(els.filterTrain.value) ? els.filterTrain.value : '';
     const fd1 = els.filterDateFrom.value;
     const fd2 = els.filterDateTo.value;
     const filtered = allLogs.filter(log => {
@@ -1174,6 +1269,13 @@
       }
       return true;
     });
+
+    ttRoute = buildRouteStations(filtered, stationA, stationB);
+    if(ttRoute.length < 2){
+      document.getElementById('ttResult').innerHTML = '<p class="empty">Ingen rutt hittades mellan dessa stationer i mätdata.</p>';
+      document.getElementById('ttStationList').innerHTML = '';
+      return;
+    }
 
     const runSegs = buildRunningSegments(filtered, false);
     ttRunningStats = {};
@@ -1206,9 +1308,9 @@
     generateTimetable();
   }
 
-  function buildRouteStations(stA, stB){
+  function buildRouteStations(logs, stA, stB){
     let best = [];
-    for(const log of allLogs){
+    for(const log of logs){
       const stops = log.stops || [];
       const iA = stops.findIndex(s => s.name === stA);
       const iB = stops.findIndex(s => s.name === stB);
