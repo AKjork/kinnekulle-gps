@@ -50,6 +50,10 @@ Underlaget är alla mätta gångtider på sträckan A → B med samma **verkliga
 
 Ett tåg jämförs med gruppen vars mönster är tågets **planerade** mönster. En tidtabell med stopp måste räcka när tåget stannar. Därför räknas inte körningar som passerade ett planerat stopp.
 
+**Reserv:** har gruppen färre än 3 mätningar används alla mätningar på sträckan, med mönstret `*` och etiketten *Stopp och passage*, om de är fler. Det behövs vid behovsstopp som ett tåg nästan alltid passerar.
+
+Tåg 3344 stannar till exempel aldrig mellan Blomberg och Råbäck, så den gruppen saknar mätningar. Stopp och passage skiljer oftast mindre än 0,3 min, enligt avsnitt 2.
+
 ### 4.3 Marginal
 **Marginal** = tågets planerade gångtid − vad sträckan tar (median).
 
@@ -85,7 +89,7 @@ Nya och ändrade exporter:
 | `PATTERN_LABELS` | etiketterna för SS, SP, PS och PP |
 | `clockMinutes(v, base)` | minuter efter midnatt den dag `base` (körningens start) har, enligt 4.5 |
 | `segmentObservations` | befintliga fält plus `plannedPattern`, `actualPattern` och `order` (planerad avgång från A som klockslag, annars `null`) |
-| `segmentNeeds(obs)` | en rad per sträcka och verkligt mönster: `{ key: 'A → B\|SS', segment, from, to, pattern, n, median, p90, mean }` |
+| `segmentNeeds(obs)` | en rad per sträcka och verkligt mönster, plus en rad med mönstret `*` för alla mätningar: `{ key: 'A → B\|SS', segment, from, to, pattern, n, median, p90, mean }`. Uppslag med reserven i 4.2. |
 | `stationTimes(runs)` | en rad per körning och station enligt 4.4: `{ runId, train, date, weekday, start, station, type, plannedClock, arrivalDev, departureDev, lost, dwell, plannedDwell }` |
 | `summarizeTrains(runs, needs, opts)` | `{ rows, withoutTimetable: { trains, runs } }`, se 5.1 |
 | `segmentPlans(obs, needs, opts)` | Sträckor, se 5.2 |
@@ -218,9 +222,9 @@ Sammanfattningen visar:
 - **Tabell:** Sträcka, Stopp, Sträckan tar, P90, Underlag, Planerad tid per tåg och Bedömning.
   - *Planerad tid per tåg* har en rad per planerad tid: "6 min (+2,0): 3344".
 - **Klick på en rad** visar mätningarna i gruppen, nyast först.
-  - Kolumnerna är Datum, Tåg, Planerad, Verklig och Stannade.
-  - Stannade är "ja" eller "passerade".
-  - En markering visar om mätningen räknas i *Sträckan tar*.
+  - Kolumnerna är Datum, Tåg, Planerad, Verklig, Stannade och Räknas i Sträckan tar.
+  - Stannade är "som planerat" eller det verkliga mönstret, till exempel *Stopp–passage*.
+  - Räknas i Sträckan tar är "ja" eller "nej".
 
 ### 6.3 Tidtabell
 - **Val:** Tåg (lista med tågnummer, sträcka och antal körningar) och Tidsbas (Median, P90 eller Medelvärde).
