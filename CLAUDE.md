@@ -477,4 +477,12 @@ Spec: `docs/superpowers/specs/2026-10-15-analys-mot-tidtabell-design.md` · Plan
 - **Export**: *Exportera till Excel* (CSV som appens: BOM, semikolon, citattecken, decimalkomma, informationsblock med urval, period och antal) och *Skriv ut / PDF* (utskriftsmall som bara visar rapporten med rubrik och urval).
 - **Nya filter**: tid på dygnet (morgon 05–09, dag 09–15, eftermiddag 15–18, kväll 18–05), vardag eller helg, tolerans (±0,5 / ±1 / ±2 min) och stationstyp (stopp eller passage). Tid och datum avgörs av körningens start i lokal tid.
 - **Stationsnamn** slås ihop vid inläsning: Herrljunga → Herrljunga C, Hallsberg personbangård → Hallsberg, Framnäs City → Framnäs city (verifierat mot Trafikverkets TrainStation-API), och namn som bara skiljer sig i stor och liten bokstav.
-- Beräkningarna finns i `railtimer-analys.js` och testas med `node --test "tests/*.test.js"`; flikarna med `node tests/run-browser-tests.mjs analys`.
+- Beräkningarna finns i `railtimer-analys.js` och testas med `node --test "tests/*.test.js"`; flikarna med `node tests/run-browser-tests.mjs analys`, och bilder i datorstorlek tas med `--shot=mot-tidtabell|tidtabell|mot-tidtabell-utskrift`.
+
+### Rättat efter slutgranskningen
+- **Väntan** räknas bara när tåget kom tidigt och stod kvar till planerad ankomst. Väntan är då tiden fram till planerad ankomst. Åkte tåget före planerad ankomst, vanligt vid planerat uppehåll 0, är väntan 0. Tidigare räknades vanliga uppehåll som väntan, i 11 av 59 fall.
+- **Tidig – väntan** kräver minst ett väntetillfälle. Annars blir bedömningen *Tidig*, till exempel vid passage.
+- **Ändring i förslaget** visas bara för sträckor som bedöms som Snål eller Generös. Lagom och För få mätningar visar planerad tid. Tidigare kunde Lagom visa "(−1)".
+- **Uppehåll i Tidtabell** räknas från planerad ankomst när tåget väntade, och i sin helhet när tåget åkte före planerad ankomst. De föll tidigare bort.
+- **Utskriftshuvudet** fylls vid varje utskrift (`beforeprint`), även med Ctrl+P. Tidigare kunde en PDF få ett gammalt "Bygger på".
+- Har appen öppnats i samma webbläsare styr dess service worker även `Analys.html`, eftersom omfånget är `/kinnekulle-gps/`. Den visar först den sparade kopian och hämtar den nya i bakgrunden. Första laddningen efter en publicering kan alltså visa den gamla versionen. Ladda om en gång till.
