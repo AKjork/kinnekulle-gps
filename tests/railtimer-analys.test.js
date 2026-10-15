@@ -137,12 +137,24 @@ test('stationObservations: avvikelser, väntan vid tidig ankomst och riktning', 
   assert.equal(b.arrivalCategory, 'tidig');
   close(b.dwell, 3 + 10 / 60, 'uppehåll');
   assert.equal(b.plannedDwell, 1);
-  close(b.wait, 2 + 10 / 60, 'väntan');
+  assert.equal(b.wait, 2, 'väntan = tiden fram till planerad ankomst (den sena avgången räknas inte som väntan)');
   close(b.departureDev, 10 / 60, 'avgång');
   assert.equal(b.departureCategory, 'itid');
   const c = obs.find(o => o.station === 'C');
   assert.deepEqual([c.key, c.towards, c.from, c.arrivalCategory, c.wait], ['C|från|B', null, 'B', 'itid', null]);
   assert.equal(obs.find(o => o.station === 'A').key, 'A|mot|B');
+});
+
+test('stationObservations: ingen väntan när tåget åkte före planerad ankomst', () => {
+  // Planerat uppehåll 0 (07:05/07:05): tåget kommer 1,5 min tidigt, står 70 s för resandeutbyte och åker
+  const r = run('x', [
+    stop('A', { dep: [7, 0], sDep: [7, 0] }),
+    stop('B', { arr: [7, 3, 30], dep: [7, 4, 40], sArr: [7, 5], sDep: [7, 5] }),
+    stop('C', { arr: [7, 9], sArr: [7, 9] })
+  ]);
+  const b = AN.stationObservations([r], { tolerance: 1 }).find(o => o.station === 'B');
+  assert.equal(b.arrivalCategory, 'tidig');
+  assert.equal(b.wait, 0, 'tåget väntade inte på tidtabellen');
 });
 
 test('stationObservations: ingen väntan i tid, och filter på stationstyp', () => {

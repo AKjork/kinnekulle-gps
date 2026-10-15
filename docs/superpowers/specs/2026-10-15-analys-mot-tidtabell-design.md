@@ -79,7 +79,7 @@ För varje station i en körning med verklig ankomst eller avgång:
 - **typ:** stopp eller passage, enligt §4.
 - **ankomstavvikelse** = verklig − planerad ankomst. Avgångsavvikelsen beräknas på samma sätt. Båda får kategori enligt toleransen.
 - **uppehåll** = verklig avgång − verklig ankomst, bara vid stopp. Det planerade uppehållet räknas på samma sätt ur tidtabellen.
-- **väntan:** när ankomsten var tidig (< −tol) och både planerat och verkligt uppehåll finns, är väntan = max(0, uppehåll − planerat uppehåll). Det är tiden tåget stod längre än planerat för att det kom för tidigt.
+- **väntan:** när ankomsten var tidig (< −tol) vid ett stopp och tåget stod kvar till planerad ankomst, är väntan = planerad ankomst − verklig ankomst. Det är tiden tåget stod för att det kom för tidigt. Åkte tåget före planerad ankomst väntade det inte på tidtabellen, och väntan är då 0. Ändrad 2026-10-15 efter slutgranskningen: den tidigare formeln, uppehåll − planerat uppehåll, räknade vanliga uppehåll vid planerat uppehåll 0 som väntan, i 11 av 59 fall i riktig data.
 
 ### 5.3 Sammanställning per sträcka (A → B)
 Följande räknas fram per sträcka:

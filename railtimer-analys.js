@@ -212,8 +212,10 @@
         const dwell = type === 'stopp' && aArr && aDep && aDep >= aArr ? minutes(aArr, aDep) : null;
         const plannedDwell = pArr && pDep && pDep >= pArr ? minutes(pArr, pDep) : null;
         const arrivalCategory = classify(arrivalDev, tol);
-        // Väntan: tåget kom för tidigt och stod längre än planerat
-        const wait = arrivalCategory === 'tidig' && dwell != null && plannedDwell != null ? Math.max(0, dwell - plannedDwell) : null;
+        // Väntan: tåget kom för tidigt och stod kvar till planerad ankomst – väntan är tiden fram till den.
+        // Åkte tåget före planerad ankomst väntade det inte på tidtabellen (vanligt vid planerat uppehåll 0).
+        let wait = null;
+        if (type === 'stopp' && arrivalCategory === 'tidig' && aDep && pArr) wait = aDep >= pArr ? minutes(aArr, pArr) : 0;
         out.push(Object.assign({
           key: towards ? `${s.name}|mot|${towards}` : `${s.name}|från|${from || ''}`,
           station: s.name, towards, from, type,
