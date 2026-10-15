@@ -62,7 +62,8 @@ test('sökvägar: tecken rensas, tomt tågnummer blir utan-tag och id kortas til
   assert.equal(GH.trackPath(log), `gps-spar/2026/${GH.localDate(log.startedAt)}_23301A_x-y-z.json`);
   const long = makeLog(2, { trainNumber: '', id: 'a'.repeat(60) });
   assert.match(GH.runPath(long), /_utan-tag_a{40}\.json$/);
-  assert.match(GH.importPath(Date.UTC(2026, 9, 15, 8, 48, 0), 2), /^import\/\d{4}-\d{2}-\d{2}T\d{4}_befintliga-2\.json$/);
+  // Sekunder i tidsstämpeln: ett nytt försök samma minut får aldrig samma filnamn som ett tidigare pass
+  assert.match(GH.importPath(Date.UTC(2026, 9, 15, 8, 48, 7), 2), /^import\/\d{4}-\d{2}-\d{2}T\d{4}07_befintliga-2\.json$/);
 });
 
 test('commit-meddelanden följer specen', () => {
@@ -101,6 +102,41 @@ test('450 befintliga körningar blir tre importfiler (200, 200, 50) och därefte
   assert.equal(r.state.backlogDone, true);
   assert.equal(r.state.uploadedIds.length, 450);
   assert.ok(env.sleeps.every(ms => ms <= GH.MIN_WRITE_INTERVAL_MS), 'väntan mellan skrivningar högst 1 s');
+});
+
+// Alla körnings-id som finns i importfilerna i det simulerade repot
+function idsInImports(gh) {
+  const ids = new Set();
+  for (const [p, f] of gh.files) if (p.startsWith('import/')) JSON.parse(f.text).forEach(r => ids.add(r.id));
+  return ids;
+}
+
+test('nytt försök samma minut efter en avbruten import tappar inga körningar', async () => {
+  const env = setup();
+  const logs = Array.from({ length: 450 }, (_, i) => makeLog(i));
+  env.gh.override({ method: 'PUT', path: /befintliga-2\.json$/, networkError: true });
+  const first = await pass(env, logs, null);
+  assert.equal(first.error.kind, 'network');
+  env.advance(20000); // t.ex. när nätet kommer tillbaka – fortfarande samma minut
+  const second = await pass(env, logs, first.state);
+  assert.equal(second.error, null);
+  const inRepo = idsInImports(env.gh);
+  assert.equal(inRepo.size, 450, 'alla körningar ska finnas i repot');
+  assert.deepEqual(second.state.uploadedIds.filter(id => !inRepo.has(id)), [], 'inget id får räknas som uppladdat utan att finnas i repot');
+});
+
+test('en importfil som redan finns med andra körningar räknas inte som uppladdad', async () => {
+  const env = setup();
+  const logs = [makeLog(1), makeLog(2)];
+  env.gh.putFileDirect(GH.importPath(env.now(), 1), JSON.stringify([makeLog(99)]));
+  const first = await pass(env, logs, null);
+  assert.ok(first.error, 'kön ska stanna i stället för att räkna körningarna som uppladdade');
+  assert.deepEqual(first.state.uploadedIds, []);
+  env.advance(1000);
+  const second = await pass(env, logs, first.state);
+  assert.equal(second.error, null);
+  const inRepo = idsInImports(env.gh);
+  assert.ok(logs.every(l => inRepo.has(l.id)), 'båda körningarna ska finnas i repot');
 });
 
 test('utan befintliga körningar blir backlogDone direkt', async () => {

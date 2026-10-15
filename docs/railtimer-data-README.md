@@ -8,7 +8,7 @@ Privat repo med mätningar från [RailTimer](https://akjork.github.io/kinnekulle
 |---|---|
 | `korningar/ÅÅÅÅ/<datum>_<tåg>_<id>.json` | En körning (format 2) |
 | `gps-spar/ÅÅÅÅ/<datum>_<tåg>_<id>.json` | GPS-spåret för körningen (format 1) |
-| `import/<ÅÅÅÅ-MM-DDTHHMM>_befintliga-<n>.json` | Mätningar som fanns på telefonen före den första uppladdningen (lista, högst 200 per fil) |
+| `import/<ÅÅÅÅ-MM-DDTHHMMSS>_befintliga-<n>.json` | Mätningar som fanns på telefonen före den första uppladdningen (lista, högst 200 per fil). Samma körning kan finnas i två importfiler om ett försök avbröts – id:t avgör. |
 | `.railtimer/anslutning.json` | Senaste anslutningstest från appen |
 
 ## Körning, format 2

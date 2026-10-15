@@ -68,9 +68,10 @@
     return `gps-spar/${f.year}/${f.name}`;
   }
 
+  // Sekunder i namnet: ett nytt försök efter ett avbrutet pass skriver aldrig till samma fil
   function importPath(when, part) {
     const d = when instanceof Date ? when : new Date(when);
-    return `import/${localDate(d)}T${pad(d.getHours())}${pad(d.getMinutes())}_befintliga-${part}.json`;
+    return `import/${localDate(d)}T${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}_befintliga-${part}.json`;
   }
 
   function groupDigits(n) {
@@ -320,7 +321,10 @@
           result.uploadedTracks += 1;
         } else if (task.type === 'import') {
           await pace();
-          await withConflictRetry(() => opts.client.putFile(task.path, JSON.stringify(task.runs, null, 1), task.message));
+          const outcome = await withConflictRetry(() => opts.client.putFile(task.path, JSON.stringify(task.runs, null, 1), task.message));
+          // En befintlig importfil kan innehålla andra körningar – räkna aldrig dem som uppladdade.
+          // Nästa försök får ett nytt filnamn.
+          if (outcome === 'exists') throw new GitHubError('conflict', 'Importfilen fanns redan i repot – försöker igen med nytt filnamn');
           task.runs.forEach(r => uploaded.add(String(r.id)));
           result.importedRuns += task.runs.length;
         } else {
