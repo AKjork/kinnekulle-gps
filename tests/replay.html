@@ -805,6 +805,12 @@ test('analys: knappen i tågkortet öppnar tidtabellsförslaget, och Mot tidtabe
     ['Per tåg', 'Sträckor', 'Tidtabell', 'Diagram', 'Tabell', 'Avvikare', 'Detaljer'], 'flikarnas ordning');
 });
 
+test('analys: hjälptexten för Stationstyp beskriver de nya flikarna', async () => {
+  const w = await loadAnalys();
+  const title = w.document.getElementById('filterStationType').title;
+  assert(!title.includes('Mot tidtabell') && title.includes('Per tåg') && title.includes('Sträckor'), 'titel: ' + title);
+});
+
 // ── Körning ──
 
 // Bilder i telefonstorlek för granskning (node tests/run-browser-tests.mjs --shot=<namn>)
