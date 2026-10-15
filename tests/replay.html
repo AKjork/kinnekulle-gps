@@ -690,6 +690,20 @@ window.prepareShot = async function (name) {
   } else if (name === 'rapport') {
     const fixes = buildJourney();
     await runJourney(fixes, { drop: twoStationCall(fixes).drop });
+  } else if (name === 'mot-tidtabell' || name === 'mot-tidtabell-utskrift') {
+    const frame = document.getElementById('app');
+    frame.style.width = '1200px';   // analysverktyget används främst på dator
+    frame.style.height = '2200px';
+    const w = await loadAnalysWith(againstRuns());
+    w.__analys.showTab('against');
+    if (name.endsWith('-utskrift')) w.__analys.prepareAgainstPrint();
+  } else if (name === 'tidtabell') {
+    const frame = document.getElementById('app');
+    frame.style.width = '1200px';
+    frame.style.height = '1700px';
+    const w = await loadAnalysWith(againstRuns());
+    w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Blomberg' });
+    w.__analys.showTab('timetable');
   } else {
     throw new Error('Okänd bild: ' + name);
   }

@@ -4,6 +4,8 @@
 //   node tests/run-browser-tests.mjs --golden   sparar facit för en vanlig resa i tests/golden-normal-run.json
 //   node tests/run-browser-tests.mjs --shot=installningar   sparar en bild i telefonstorlek i tests/screenshots/
 //                                                          (även --shot=avbrott och --shot=rapport)
+//   node tests/run-browser-tests.mjs --shot=mot-tidtabell    analysverktyget i datorstorlek (även --shot=tidtabell);
+//                                                          --shot=mot-tidtabell-utskrift visar utskriften (PDF)
 // Kräver Node 22+ (inbyggd WebSocket och fetch) och Chrome. Annan Chrome-sökväg: CHROME_PATH=...
 import http from 'node:http';
 import fs from 'node:fs';
@@ -71,6 +73,8 @@ try {
   if (res.result && res.result.exceptionDetails) {
     console.error('Fel i testsidan:', res.result.exceptionDetails.exception && res.result.exceptionDetails.exception.description);
   } else if (SHOT) {
+    // Bilder vars namn slutar på -utskrift tas som om sidan skrevs ut (utskriftsmallen, @media print)
+    if (SHOT.endsWith('-utskrift')) await send('Emulation.setEmulatedMedia', { media: 'print' });
     const clip = Object.assign({ scale: 1 }, res.result.result.value);
     const shot = await send('Page.captureScreenshot', { format: 'png', clip, captureBeyondViewport: true });
     const dir = path.join(ROOT, 'tests', 'screenshots');
