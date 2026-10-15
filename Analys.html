@@ -1845,6 +1845,21 @@
     if(lastTimetable) printReport('ttReport', timetableTitle(lastTimetable), ttMeta(lastTimetable));
   }
 
+  // Utskrift med Ctrl+P (eller knappen): utskriftshuvudet fylls alltid med det aktuella urvalet,
+  // så att en PDF aldrig får ett gammalt eller tomt "Bygger på"
+  function fillActivePrintHeader(){
+    const active = document.querySelector('.tab-content.active');
+    if(!active) return;
+    if(active.id === 'tabAgainst'){
+      if(againstState && againstState.timetableRuns) preparePrint('againstReport', AGAINST_TITLE, againstMeta(againstState));
+      else preparePrint('againstReport', AGAINST_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga körningar med tidtabellstider i urvalet.']]);
+    }else if(active.id === 'tabTimetable'){
+      if(lastTimetable) preparePrint('ttReport', timetableTitle(lastTimetable), ttMeta(lastTimetable));
+      else document.querySelector('#ttReport .print-header').innerHTML = '';
+    }
+  }
+  window.addEventListener('beforeprint', fillActivePrintHeader);
+
   // Bara i testläge: tests/replay.html styr verktyget genom de här funktionerna
   if(TEST_MODE){
     window.__analys = {

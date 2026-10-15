@@ -632,6 +632,22 @@ test('analys: utskriften får rubrik med urval och antal mätningar', async () =
   assert(header.includes('Bygger på: 4 körningar med tidtabell (av 6 i urvalet)'), 'antal: ' + header);
 });
 
+test('analys: utskriftshuvudet följer urvalet även vid utskrift med Ctrl+P', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  w.__analys.showTab('against');
+  const header = () => w.document.querySelector('#againstReport .print-header').textContent;
+  w.dispatchEvent(new w.Event('beforeprint'));   // Ctrl+P utan att knappen tryckts
+  assert(header().includes('Bygger på: 4 körningar med tidtabell (av 6 i urvalet)'), 'utan knappen: ' + header());
+  w.__analys.setFilters({ filterTimeOfDay: 'morgon' });
+  w.dispatchEvent(new w.Event('beforeprint'));
+  assert(header().includes('Bygger på: 3 körningar med tidtabell (av 3 i urvalet)'), 'efter filterbyte: ' + header());
+  w.__analys.setFilters({ filterTimeOfDay: '', filterFrom: 'Lidköping', filterTo: 'Blomberg' });
+  w.__analys.showTab('timetable');
+  w.dispatchEvent(new w.Event('beforeprint'));
+  const tt = w.document.querySelector('#ttReport .print-header').textContent;
+  assert(tt.includes('Bygger på: 4 körningar'), 'tidtabell: ' + tt);
+});
+
 test('analys: med två stationer valda visar Mot tidtabell bara sträckan mellan dem i den riktningen', async () => {
   const w = await loadAnalysWith(againstRuns());
   w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Källby' });
