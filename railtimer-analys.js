@@ -261,9 +261,10 @@
     return { list, route };
   }
 
-  // Körningarna avskurna till sträckan from → to (bara den riktningen)
+  // Körningarna avskurna till sträckan from → to (bara den riktningen). cutStart: körningen började före `from`,
+  // så första stationen har en mätt ankomst och är en mellanstation (inte körningens start).
   function sliceRuns(runs, from, to) {
-    return directedRuns(runs, from, to).list.map(({ run, i, j }) => Object.assign({}, run, { stops: run.stops.slice(i, j + 1) }));
+    return directedRuns(runs, from, to).list.map(({ run, i, j }) => Object.assign({}, run, { stops: run.stops.slice(i, j + 1), cutStart: i > 0 }));
   }
 
   // ── Analys per tåg ──
@@ -316,7 +317,8 @@
 
   /* Tid som tåget tappade vid varje station: avgångsavvikelse − max(ankomstavvikelse, 0).
      Kom tåget tidigt och åkte enligt tidtabellen tappade det ingen tid (väntan enligt tidtabellen).
-     Första stationen saknar mätt ankomst: där är tappad tid avgångsavvikelsen (typ 'start').
+     Första stationen saknar mätt ankomst: där är tappad tid avgångsavvikelsen (typ 'start'). En körning som skurits
+     av vid Station 1 (cutStart) har mätt ankomst där, så första stationen räknas då som mellanstation.
      Mellanstationer utan mätt ankomst (t.ex. avbrott) och sista stationen räknas inte. */
   function stationTimes(runs) {
     const out = [];
@@ -333,7 +335,7 @@
         let arrivalDev = null;
         let dwell = null;
         let lost = departureDev;
-        if (k > 0) {
+        if (k > 0 || run.cutStart) {
           const aArr = toDate(s.actualArrival);
           const pArr = plannedArrival(s);
           if (!aArr || !pArr) continue;
@@ -463,7 +465,7 @@
     return {
       train, runCount, timetableRuns: tRuns.length, period: period(tRuns),
       route, routeLabel: route.length ? `${route[0]} → ${route[route.length - 1]}` : '',
-      startDelay: stats(times.filter(t => t.type === 'start').map(t => t.departureDev)),
+      startDelay: stats(times.filter(t => t.index === 0).map(t => t.departureDev)),
       endDelay, segments, margin, dwells, events,
       eventCount: events.length,
       lostMax: events.length ? Math.max(...events.map(e => e.lost)) : null

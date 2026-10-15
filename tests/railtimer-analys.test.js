@@ -327,3 +327,17 @@ test('proposeTrainTimetable: väntan räknas inte, partiella körningar slås ih
   assert.deepEqual(gap.rows.map(r => r.propArr), [null, 423, null, null]);
   assert.equal(gap.totalProposed, null);
 });
+
+test('stationTimes: avskuren körning (Station 1 mitt på linjen) räknar första stationen som mellanstation', () => {
+  // Tåget kommer 10 min sent till B och står 0,5 min längre än planerat: det tappar 0,5 min där, inte 10,5
+  const r = run('k', [
+    stop('A', { dep: [7, 0], sDep: [7, 0] }),
+    stop('B', { arr: [7, 15], dep: [7, 16, 30], sArr: [7, 5], sDep: [7, 6] }),
+    stop('C', { arr: [7, 20], sArr: [7, 10] })
+  ]);
+  const sliced = AN.sliceRuns([r], 'B', 'C');
+  const [b] = AN.stationTimes(sliced);
+  assert.deepEqual([b.station, b.type, b.arrivalDev, b.lost], ['B', 'stopp', 10, 0.5]);
+  const row = AN.summarizeTrains(sliced, AN.segmentNeeds(AN.segmentObservations(sliced, {})), { tolerance: 1 }).rows[0];
+  assert.deepEqual([row.eventCount, row.startDelay.median], [0, 10.5], 'inget tillfälle; Avgång start är avgångsavvikelsen');
+});

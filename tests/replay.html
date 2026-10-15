@@ -674,6 +674,14 @@ test('analys: Per tåg med två valda stationer och med tomt urval', async () =>
   assertEqual(w.document.getElementById('trainsContent').style.display, 'none', 'tabellen döljs');
 });
 
+test('analys: med en mellanstation som Station 1 räknas förseningen tåget har med sig inte som tappad tid', async () => {
+  // 3346 kommer 2 min sent till Källby och åker 2 min sent (tappar 0); 3344 tappar 2,5 min där den 15:e
+  const w = await loadAnalysWith(trainRuns());
+  w.__analys.setFilters({ filterFrom: 'Källby', filterTo: 'Blomberg' });
+  assertEqual(tableRows(w, 'trainsTable').map(r => [r[0], r[1], r[3], r[6], r[7]]),
+    [['3344', 'Källby → Blomberg', '0,0', '1', '2,5'], ['3346', 'Källby → Blomberg', '+2,0', '0', '–']], 'tillfällen i Källby');
+});
+
 test('analys: export och utskrift av Per tåg, även med Ctrl+P', async () => {
   const w = await loadAnalysWith(trainRuns());
   let text = w.__analys.exportTrainsCsv();
