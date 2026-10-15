@@ -38,7 +38,8 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   const { request } = event;
-  if (request.method !== 'GET') return;
+  // Bara appens egna filer. Anrop till GitHub (privata mätdata, token i huvudet) och andra domäner går förbi cachen.
+  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
   event.respondWith(
     caches.match(request).then(cached => {
       const fetchPromise = fetch(request).then(resp => {

@@ -463,7 +463,7 @@ Varje position under resan sparas i IndexedDB (`railtimer`/`tracks`) var 30:e se
 - Vanlig körning är oförändrad – säkras av regressionsfacit `tests/golden-normal-run.json`.
 
 ### Tester
-- `node --test "tests/*.test.js"` – modulerna (utan beroenden).
+- `node --test "tests/*.test.js"` – modulerna och service workern (utan beroenden). Service workern hanterar bara appens egna filer; anrop till GitHub går förbi cachen.
 - `node tests/run-browser-tests.mjs [filter]` – uppspelade resor i Chrome utan fönster (`index.html?test=1`).
 - `node tests/run-browser-tests.mjs --golden` – tar fram facit (bara när logiken avsiktligt ändras).
 - `node tests/run-browser-tests.mjs --shot=installningar|avbrott|rapport` – bilder i telefonstorlek (`tests/screenshots/`).
