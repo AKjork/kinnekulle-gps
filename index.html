@@ -383,6 +383,15 @@
   .toast.ok{border-color:var(--pri);color:var(--pri)}
   .toast.err{border-color:var(--err);color:var(--err)}
 
+  /* Uppladdning */
+  .settings-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin:.75rem 0}
+  .settings-actions button{flex:1;min-height:2.75rem;font-size:.95rem}
+  .upload-status{border:1px solid var(--b);border-radius:8px;padding:.75rem;background:var(--card-bg);font-size:.85rem;color:var(--ink-dim);line-height:1.6;font-variant-numeric:tabular-nums}
+  .upload-status strong{color:var(--ink)}
+  #ghTestResult.ok{color:var(--pri)}
+  #ghTestResult.err{color:var(--err)}
+  .hint a{color:var(--pri)}
+
   /* Rapport */
   .report-summary{border:1px solid var(--b);border-radius:10px;padding:.9rem;background:var(--card-bg);margin-bottom:.75rem}
   .rs-title{font-size:1.2rem;font-weight:700}
@@ -561,6 +570,7 @@
         <button id="btnTextSize" class="menu-toggle" aria-pressed="false">Stor text <span class="toggle-state">Av</span></button>
         <hr>
         <button id="btnStatistics">Statistik</button>
+        <button id="btnUploadSettings">Uppladdning</button>
         <button id="btnExportCSV">Exportera CSV (Excel)</button>
         <button id="btnExport">Exportera JSON</button>
         <button id="btnSaveFile">Spara till fil</button>
@@ -708,6 +718,30 @@
     <div id="statsContent"></div>
   </section>
 
+  <section id="settings" style="display:none">
+    <h2>Uppladdning till GitHub</h2>
+    <p class="hint">Varje resa laddas upp automatiskt till ditt privata repo när den är klar. Token sparas bara på den här enheten.</p>
+    <div class="form-group">
+      <label for="ghRepo">Repo</label>
+      <input id="ghRepo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AKjork/railtimer-data">
+    </div>
+    <div class="form-group">
+      <label for="ghToken">Token</label>
+      <input id="ghToken" type="password" autocomplete="off" placeholder="github_pat_…">
+    </div>
+    <p class="hint"><a id="ghTokenLink" target="_blank" rel="noopener">Skapa token hos GitHub</a> – välj repot under "Only select repositories".</p>
+    <div class="settings-actions">
+      <button id="btnGhSave" class="primary">Spara och testa</button>
+      <button id="btnGhUploadNow" class="ghost">Ladda upp nu</button>
+    </div>
+    <p id="ghTestResult" class="meta" role="status" aria-live="polite"></p>
+    <div id="uploadStatus" class="upload-status"></div>
+    <div class="settings-actions">
+      <button id="btnGhRemove" class="danger">Ta bort token</button>
+      <button id="btnCloseSettings" class="ghost">Stäng</button>
+    </div>
+  </section>
+
 </main>
 
 <footer>
@@ -737,6 +771,9 @@
   const STORAGE_KEY_SAVE_FILE = 'kmon_gps_file_handle_v1';
   const STORAGE_KEY_ROUTE_HISTORY = 'kmon_gps_route_history_v1';
   const STORAGE_KEY_ACTIVE_JOURNEY = 'railtimer_active_journey_v1';
+  const STORAGE_KEY_GITHUB = 'railtimer_github_v1';   // { repo, token, branch } – bara på den här enheten
+  const STORAGE_KEY_UPLOAD = 'railtimer_upload_v1';   // uppladdningsköns tillstånd
+  const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new?name=RailTimer&description=Uppladdning+till+railtimer-data&target_name=AKjork&expires_in=none&contents=write';
   const STORAGE_KEY_ALL_STATIONS = 'kmon_all_stations_v1';
   const STORAGE_KEY_RECENT_STATIONS = 'kmon_recent_stations_v1';
   const STORAGE_KEY_SOUND_ENABLED = 'railtimer_sound_v1';
@@ -821,7 +858,10 @@
   let expandedCards = new Set(); // Track which cards are expanded
   let renderedRouteKey = ''; // Vilken rutt stationskorten senast byggdes för
   let wakeLockByJourney = false; // Skärmlåset slogs på av resan (inte manuellt)
-  let statsReturnView = null; // Vilka vyer som var synliga innan Statistik öppnades
+  let overlayReturnView = null; // Vyn som var öppen innan Statistik eller Uppladdning öppnades
+  let uploadPromise = null;     // pågående körning av uppladdningskön
+  let afterJourneyPromise = null; // sparning av spåret och uppladdning efter senaste resan
+  let testFetch = null;         // simulerat GitHub i testerna
 
   // Settings
   let soundEnabled = localStorage.getItem(STORAGE_KEY_SOUND_ENABLED) === 'true';
@@ -845,6 +885,7 @@
     await loadAllStations();
     getUserLocation();
     checkForInterruptedJourney();
+    scheduleUpload();
   }
 
   // Bara i testläge: tests/replay.html spelar upp resor genom de här funktionerna
@@ -852,7 +893,9 @@
     window.__railtimer = {
       state, makeRouteStation, initJourneyState, handlePosition, stopJourney,
       loadLogs, loadActiveJourney, resumeJourney, showView, renderRouteCards, onAppHidden,
-      getTrack: runId => TrackStore.get(runId)
+      getTrack: runId => TrackStore.get(runId),
+      setFetchForTest: fn => { testFetch = fn; },
+      scheduleUpload, whenUploadIdle, showUploadSettings, saveAndTestGithub
     };
   }
 
@@ -1357,6 +1400,17 @@
       showStatistics();
     });
     document.getElementById('btnCloseStats').addEventListener('click', hideStatistics);
+
+    // Uppladdning
+    document.getElementById('btnUploadSettings').addEventListener('click', () => {
+      closeAllMenus();
+      showUploadSettings();
+    });
+    document.getElementById('btnGhSave').addEventListener('click', saveAndTestGithub);
+    document.getElementById('btnGhUploadNow').addEventListener('click', uploadNow);
+    document.getElementById('btnGhRemove').addEventListener('click', removeGithubToken);
+    document.getElementById('btnCloseSettings').addEventListener('click', closeOverlay);
+    window.addEventListener('online', () => { scheduleUpload(); });
     document.getElementById('statsVehicleFilter').addEventListener('change', renderStatistics);
     document.getElementById('statsRouteFilter').addEventListener('change', renderStatistics);
 
@@ -2494,7 +2548,8 @@
     renderReport(logEntry);
     // Rapporten visas ensam överst; startformuläret kommer först via "Starta ny mätning"
     showView('report');
-    flushTrack();
+    // Spåret sparas klart innan uppladdningen läser det
+    afterJourneyPromise=flushTrack().then(afterJourneyUpload);
   }
 
   let currentView='setup';
@@ -2504,6 +2559,7 @@
     els.journey.style.display = view==='journey' ? 'block' : 'none';
     els.report.style.display = view==='report' ? 'block' : 'none';
     document.getElementById('statistics').style.display = view==='statistics' ? 'block' : 'none';
+    document.getElementById('settings').style.display = view==='settings' ? 'block' : 'none';
     window.scrollTo(0,0);
   }
 
@@ -2598,21 +2654,187 @@
 
   // === Statistics ===
   function showStatistics(){
-    if(currentView!=='statistics') statsReturnView=currentView;
+    rememberOverlayReturn();
     showView('statistics');
     populateStatsFilters();
     renderStatistics();
   }
 
+  function rememberOverlayReturn(){
+    if(currentView!=='statistics' && currentView!=='settings') overlayReturnView=currentView;
+  }
+
   // Tillbaka till vyn som var öppen – en pågående resa ska alltid gå att komma tillbaka till
-  function hideStatistics(){
-    const target = state.running ? 'journey' : (statsReturnView || 'setup');
-    statsReturnView=null;
+  function closeOverlay(){
+    const target = state.running ? 'journey' : (overlayReturnView || 'setup');
+    overlayReturnView=null;
     showView(target);
     if(target==='journey'){
       renderRouteCards();
       renderRouteMap();
     }
+  }
+
+  function hideStatistics(){
+    closeOverlay();
+  }
+
+  // === Uppladdning till GitHub ===
+
+  function loadGithubSettings(){
+    try{
+      const s=JSON.parse(localStorage.getItem(STORAGE_KEY_GITHUB)||'null');
+      return s && s.repo && s.token ? s : null;
+    }catch(e){ return null; }
+  }
+
+  function loadUploadState(){
+    try{ return JSON.parse(localStorage.getItem(STORAGE_KEY_UPLOAD)||'null'); }catch(e){ return null; }
+  }
+
+  function saveUploadState(s){
+    try{ localStorage.setItem(STORAGE_KEY_UPLOAD, JSON.stringify(s)); }catch(e){}
+  }
+
+  function githubClient(settings){
+    const repo=GH && GH.parseRepo(settings.repo);
+    if(!repo) return null;
+    return GH.createClient({ owner:repo.owner, repo:repo.repo, token:settings.token, branch:settings.branch||'main', fetch:testFetch||undefined });
+  }
+
+  // Kör uppladdningskön en gång. Körs aldrig medan en resa pågår, för att inte störa mätningen.
+  function scheduleUpload(){
+    if(uploadPromise) return uploadPromise;
+    const settings=loadGithubSettings();
+    if(!GH || !settings || state.running) return Promise.resolve(null);
+    const client=githubClient(settings);
+    if(!client) return Promise.resolve(null);
+    uploadPromise=GH.runUploadPass({
+      client,
+      repo:`${client.owner}/${client.repo}`,
+      logs:loadLogs(),
+      state:loadUploadState(),
+      trackStore:TrackStore,
+      onProgress:saveUploadState
+    }).then(result=>{
+      saveUploadState(result.state);
+      renderUploadStatus();
+      return result;
+    }).catch(err=>{
+      console.warn('Uppladdningen misslyckades', err);
+      return null;
+    }).finally(()=>{ uploadPromise=null; });
+    return uploadPromise;
+  }
+
+  // Väntar tills uppladdningen efter en resa (och en pågående körning av kön) är klar
+  function whenUploadIdle(){
+    return Promise.resolve(afterJourneyPromise).then(()=>uploadPromise).then(()=>null);
+  }
+
+  // Efter en avslutad resa: ladda upp och berätta hur det gick
+  function afterJourneyUpload(){
+    if(!loadGithubSettings()) return null;
+    return scheduleUpload().then(result=>{
+      if(result && !result.error && result.uploadedRuns+result.importedRuns>0){
+        showHeaderStatus('Resan uppladdad', false);
+      }else if(result && result.error && result.error.kind!=='network'){
+        showHeaderStatus(result.error.message, true);
+      }else{
+        showHeaderStatus('Väntar på uppladdning', false);
+      }
+      return result;
+    });
+  }
+
+  function showUploadSettings(){
+    rememberOverlayReturn();
+    const s=loadGithubSettings();
+    document.getElementById('ghRepo').value = s ? s.repo : (GH ? GH.DEFAULT_REPO : '');
+    const tokenInput=document.getElementById('ghToken');
+    tokenInput.value='';
+    tokenInput.placeholder = s ? '•••• sparad – lämna tomt för att behålla' : 'github_pat_…';
+    document.getElementById('ghTokenLink').href=TOKEN_URL;
+    setGhResult('', false);
+    renderUploadStatus();
+    showView('settings');
+  }
+
+  function setGhResult(text, isError){
+    const el=document.getElementById('ghTestResult');
+    el.textContent=text;
+    el.className='meta'+(text ? (isError ? ' err' : ' ok') : '');
+  }
+
+  function deviceLabel(){
+    const ua=navigator.userAgent||'';
+    const kind=/iPhone|iPad/.test(ua) ? 'iPhone/iPad' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'Mac' : 'okänd enhet';
+    return `${kind} · RailTimer ${APP_VERSION}`;
+  }
+
+  async function saveAndTestGithub(){
+    if(!GH){ setGhResult('Uppladdningsmodulen kunde inte laddas – ladda om sidan.', true); return; }
+    const repo=GH.parseRepo(document.getElementById('ghRepo').value || GH.DEFAULT_REPO);
+    if(!repo){ setGhResult('Ange repot som ägare/namn, t.ex. AKjork/railtimer-data.', true); return; }
+    const existing=loadGithubSettings();
+    const token=document.getElementById('ghToken').value.trim() || (existing && existing.token) || '';
+    if(!token){ setGhResult('Klistra in din token.', true); return; }
+    const settings={ repo:`${repo.owner}/${repo.repo}`, token, branch:'main' };
+    setGhResult('Testar anslutningen…', false);
+    try{
+      const info=await GH.testAccess(githubClient(settings), deviceLabel());
+      localStorage.setItem(STORAGE_KEY_GITHUB, JSON.stringify(settings));
+      document.getElementById('ghToken').value='';
+      document.getElementById('ghToken').placeholder='•••• sparad – lämna tomt för att behålla';
+      if(info.private) setGhResult('Ansluten – repot är privat och token kan skriva.', false);
+      else setGhResult('Ansluten, men repot är PUBLIKT – dina mätningar blir synliga för alla.', true);
+      renderUploadStatus();
+      scheduleUpload();
+    }catch(err){
+      setGhResult(err && err.message ? err.message : 'Kunde inte ansluta.', true);
+    }
+  }
+
+  async function uploadNow(){
+    if(!loadGithubSettings()){ setGhResult('Spara repo och token först.', true); return; }
+    if(state.running){ setGhResult('Uppladdningen körs när resan är avslutad.', false); return; }
+    setGhResult('Laddar upp…', false);
+    const result=await scheduleUpload();
+    if(!result) setGhResult('Inget att ladda upp just nu.', false);
+    else if(result.error) setGhResult(result.error.message, result.error.kind!=='network');
+    else if(result.skippedUntil) setGhResult(`GitHub begränsar – nästa försök ${formatClock(result.skippedUntil)}.`, false);
+    else setGhResult(`Klart: ${result.importedRuns+result.uploadedRuns} körningar och ${result.uploadedTracks} spår uppladdade.`, false);
+  }
+
+  function removeGithubToken(){
+    if(!confirm('Ta bort token från den här enheten? Mätningarna i repot påverkas inte.')) return;
+    localStorage.removeItem(STORAGE_KEY_GITHUB);
+    showUploadSettings();
+    setGhResult('Token borttagen från enheten.', false);
+  }
+
+  async function renderUploadStatus(){
+    const el=document.getElementById('uploadStatus');
+    if(!el) return;
+    const settings=loadGithubSettings();
+    if(!settings){ el.textContent='Uppladdning är inte inställd.'; return; }
+    if(!GH){ el.textContent='Uppladdningsmodulen saknas – ladda om sidan.'; return; }
+    const st=GH.normalizeState(loadUploadState(), settings.repo);
+    const uploaded=new Set(st.uploadedIds);
+    const waitingRuns=loadLogs().filter(l=>!uploaded.has(String(l.id))).length;
+    let waitingTracks=0;
+    try{
+      waitingTracks=(await TrackStore.list()).filter(id=>!(state.running && id===state.journeyId)).length;
+    }catch(e){}
+    const lines=[`<strong>Uppladdat:</strong> ${uploaded.size} körningar, ${st.uploadedTrackCount} spår`];
+    if(waitingRuns || waitingTracks) lines.push(`<strong>Väntar:</strong> ${waitingRuns} körningar, ${waitingTracks} spår`);
+    if(st.retryNotBefore && st.retryNotBefore>Date.now()) lines.push(`GitHub begränsar – nästa försök ${formatClock(st.retryNotBefore)}`);
+    if(st.lastError){
+      lines.push(st.lastError.kind==='network' ? 'Väntar (ingen täckning)' : `<strong>Senaste fel:</strong> ${escapeHtml(st.lastError.message)} (${formatClock(st.lastError.at)})`);
+    }else if(st.lastSuccessAt){
+      lines.push(`Senast uppladdat ${new Date(st.lastSuccessAt).toLocaleString('sv-SE')}`);
+    }
+    el.innerHTML=lines.join('<br>');
   }
 
   function populateStatsFilters(){
@@ -3784,6 +4006,7 @@
         requestWakeLock();
       }
       // Ett avbrott upptäcks och meddelas vid nästa GPS-position (checkForInterruption)
+      scheduleUpload();
     }else if(document.visibilityState==='hidden'){
       onAppHidden();
     }

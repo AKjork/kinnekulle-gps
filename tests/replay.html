@@ -298,6 +298,111 @@ test('GPS-spår: fortsätter efter omladdning och Återuppta resa', async () => 
   assertEqual(track.points.length, r.fed.length, 'antal punkter efter omladdning');
 });
 
+// ── Task 7: uppladdning i appen ──
+
+// Ett minimalt simulerat GitHub i webbläsaren (samma svar som tests/fake-github.js)
+function browserFakeGitHub(w, opts) {
+  const o = opts || {};
+  const files = new Map();
+  const calls = [];
+  let n = 0;
+  const GH = w.RailTimerGitHub;
+  const resp = (status, body) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) });
+  async function fetch(url, init) {
+    const method = ((init && init.method) || 'GET').toUpperCase();
+    const p = new URL(url).pathname;
+    calls.push({ method, path: p });
+    if (o.offline) throw new TypeError('Failed to fetch');
+    let m;
+    if (method === 'GET' && /^\/repos\/[^/]+\/[^/]+$/.test(p)) return resp(200, { private: true, default_branch: 'main', full_name: 'AKjork/railtimer-data' });
+    if ((m = p.match(/\/contents\/(.+)$/))) {
+      const path = decodeURIComponent(m[1]);
+      if (method === 'GET') { const f = files.get(path); return f ? resp(200, { sha: f.sha, content: GH.encodeBase64(f.text) }) : resp(404, { message: 'Not Found' }); }
+      const body = JSON.parse(init.body);
+      const f = files.get(path);
+      if (f && body.sha !== f.sha) return resp(422, { message: 'sha' });
+      const sha = 'sha' + (++n);
+      files.set(path, { sha, text: GH.decodeBase64(body.content), message: body.message });
+      return resp(f ? 200 : 201, { content: { sha } });
+    }
+    if (method === 'GET' && /\/git\/trees\//.test(p)) {
+      return resp(200, { truncated: false, tree: Array.from(files, ([path, f]) => ({ path, sha: f.sha, type: 'blob', size: f.text.length })) });
+    }
+    if (method === 'GET' && (m = p.match(/\/git\/blobs\/(.+)$/))) {
+      const f = Array.from(files.values()).find(x => x.sha === m[1]);
+      return f ? resp(200, { content: GH.encodeBase64(f.text), encoding: 'base64' }) : resp(404, { message: 'Not Found' });
+    }
+    return resp(500, { message: 'okänt anrop' });
+  }
+  function put(path, text) { files.set(path, { sha: 'sha' + (++n), text }); }
+  return { fetch, files, calls, put };
+}
+
+function configureUpload(w, fake) {
+  w.__railtimer.setFetchForTest(fake.fetch);
+  w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'test-token', branch: 'main' }));
+  w.localStorage.setItem('railtimer_upload_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', uploadedIds: [], backlogDone: true }));
+}
+
+test('uppladdning: resan och spåret laddas upp när resan är klar', async () => {
+  let fake;
+  const r = await runJourney(buildJourney(), { beforeStart: async w => { fake = browserFakeGitHub(w); configureUpload(w, fake); } });
+  await r.rt.whenUploadIdle();
+  const GH = r.w.RailTimerGitHub;
+  const run = fake.files.get(GH.runPath(r.log));
+  assert(run, 'körningen saknas i repot');
+  assertEqual(JSON.parse(run.text).id, r.log.id, 'körningens id');
+  const track = fake.files.get(GH.trackPath(r.log));
+  assert(track, 'spåret saknas i repot');
+  assertEqual(JSON.parse(track.text).points.length, r.fed.length, 'spårets punkter');
+  assertEqual(await r.rt.getTrack(r.log.id), undefined, 'spåret ska tas bort från telefonen');
+  const state = JSON.parse(r.w.localStorage.getItem('railtimer_upload_v1'));
+  assertEqual(state.uploadedIds, [r.log.id], 'uppladdade id');
+  assertEqual(state.uploadedTrackCount, 1, 'antal spår');
+});
+
+test('uppladdning: utan täckning väntar resan och laddas upp nästa gång', async () => {
+  const r = await runJourney(buildJourney(), { beforeStart: async w => configureUpload(w, browserFakeGitHub(w, { offline: true })) });
+  await r.rt.whenUploadIdle();
+  let state = JSON.parse(r.w.localStorage.getItem('railtimer_upload_v1'));
+  assertEqual(state.uploadedIds, [], 'inget uppladdat utan täckning');
+  assertEqual(state.lastError && state.lastError.kind, 'network', 'felet');
+  r.rt.setFetchForTest(browserFakeGitHub(r.w).fetch);
+  await r.rt.scheduleUpload();
+  state = JSON.parse(r.w.localStorage.getItem('railtimer_upload_v1'));
+  assertEqual(state.uploadedIds, [r.log.id], 'uppladdad när nätet kom tillbaka');
+});
+
+test('uppladdning: avbruten resa laddas också upp, med flaggan aborted', async () => {
+  let fake;
+  const fixes = buildJourney();
+  const stopAt = fixes.find(f => f.leg === 2 && f.frac >= 0.5).t;
+  const r = await runJourney(fixes, { drop: f => f.t > stopAt, beforeStart: async w => { fake = browserFakeGitHub(w); configureUpload(w, fake); } });
+  r.rt.stopJourney(true, 'Resan avbröts manuellt');
+  await r.rt.whenUploadIdle();
+  const logs = r.rt.loadLogs();
+  const log = logs[logs.length - 1];
+  const file = fake.files.get(r.w.RailTimerGitHub.runPath(log));
+  assert(file, 'den avbrutna resan saknas i repot');
+  assertEqual(JSON.parse(file.text).aborted, true, 'aborted');
+});
+
+test('uppladdning: inställningsvyn testar anslutningen och sparar repo och token', async () => {
+  const w = await loadApp();
+  await clearAppStorage(w);
+  const fake = browserFakeGitHub(w);
+  w.__railtimer.setFetchForTest(fake.fetch);
+  w.__railtimer.showUploadSettings();
+  const d = w.document;
+  assertEqual(d.getElementById('ghRepo').value, 'AKjork/railtimer-data', 'förifyllt repo');
+  d.getElementById('ghToken').value = '  github_pat_test\n'; // inklistrad med mellanslag och radbrytning
+  await w.__railtimer.saveAndTestGithub();
+  assertEqual(d.getElementById('ghTestResult').textContent, 'Ansluten – repot är privat och token kan skriva.', 'resultat');
+  assertEqual(JSON.parse(w.localStorage.getItem('railtimer_github_v1')), { repo: 'AKjork/railtimer-data', token: 'github_pat_test', branch: 'main' }, 'sparade inställningar');
+  assertEqual(d.getElementById('ghToken').value, '', 'tokenfältet töms');
+  assert(fake.files.has('.railtimer/anslutning.json'), 'anslutningsfilen skrevs');
+});
+
 // ── Körning ──
 
 window.captureGolden = async function () {
