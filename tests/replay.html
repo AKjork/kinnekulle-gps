@@ -261,6 +261,43 @@ test('avbrott: sidan laddas om under samtalet och resan återupptas', async () =
   assertTwoStationCall(r, control);
 });
 
+// ── Task 6: GPS-spår ──
+
+test('GPS-spår: varje position sparas och kopplas till körningen', async () => {
+  const fixes = buildJourney();
+  const r = await runJourney(fixes);
+  const track = await r.rt.getTrack(r.log.id);
+  assert(track, 'spåret saknas');
+  assertEqual(track.points.length, r.fed.length, 'antal punkter');
+  assertEqual(track.fields, ['t_ms', 'lat', 'lon', 'acc_m', 'speed_ms', 'heading_deg', 'fixAge_ms'], 'fält');
+  const round6 = v => Math.round(v * 1e6) / 1e6;
+  assertEqual(track.points[0], [0, round6(STATIONS[0][1]), round6(STATIONS[0][2]), 5, 0, null, 0], 'första punkten');
+  assertEqual(r.log.trackPath, r.w.RailTimerGitHub.trackPath(r.log), 'trackPath');
+});
+
+test('GPS-spår: resa som avslutas innan någon position kommit får inget spår', async () => {
+  const w = await loadApp();
+  await clearAppStorage(w);
+  installClock(w, START);
+  const rt = w.__railtimer;
+  const route = STATIONS.map((s, i) => rt.makeRouteStation({ name: s[0], lat: s[1], lon: s[2], sig: s[3], radius: 200 }, i));
+  rt.initJourneyState(route, { trainNumber: 'TEST', vehicleType: 'Y31', notes: '' });
+  rt.stopJourney(false, 'Avslutad manuellt');
+  await realSleep(150);
+  const logs = rt.loadLogs();
+  const log = logs[logs.length - 1];
+  assertEqual(log.trackPath, undefined, 'trackPath');
+  assertEqual(await rt.getTrack(log.id), undefined, 'spår');
+});
+
+test('GPS-spår: fortsätter efter omladdning och Återuppta resa', async () => {
+  const fixes = buildJourney();
+  const call = twoStationCall(fixes);
+  const r = await runJourney(fixes, { drop: call.drop, reloadBefore: call.resume });
+  const track = await r.rt.getTrack(r.log.id);
+  assertEqual(track.points.length, r.fed.length, 'antal punkter efter omladdning');
+});
+
 // ── Körning ──
 
 window.captureGolden = async function () {

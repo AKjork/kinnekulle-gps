@@ -715,12 +715,14 @@
 </footer>
 
 <script src="railtimer-avbrott.js"></script>
+<script src="railtimer-github.js"></script>
 <script>
 (function(){
   'use strict';
 
   const APP_VERSION = '2026-10-15';
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
+  const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const DEFAULT_RADIUS = 200;
   const EXTRA_MARGIN = 150;
   const SPEED_THRESHOLD_KMH = 2; // Sänkt från 5 - endast riktigt stopp räknas
@@ -849,7 +851,8 @@
   function exposeTestHooks(){
     window.__railtimer = {
       state, makeRouteStation, initJourneyState, handlePosition, stopJourney,
-      loadLogs, loadActiveJourney, resumeJourney, showView, renderRouteCards
+      loadLogs, loadActiveJourney, resumeJourney, showView, renderRouteCards, onAppHidden,
+      getTrack: runId => TrackStore.get(runId)
     };
   }
 
@@ -1531,6 +1534,117 @@
     state.interruptions=[];
     state.lastFix=null;
     state.interruptionTipShown=false;
+    startTrack(state.journeyId);
+  }
+
+  // ── GPS-spår ──
+  // Varje position under en resa sparas i IndexedDB (databas railtimer, lager tracks).
+  // Saknas IndexedDB hålls spåret i minnet tills det är uppladdat.
+  const TRACK_FIELDS=['t_ms','lat','lon','acc_m','speed_ms','heading_deg','fixAge_ms'];
+  const TRACK_FLUSH_MS=30000;
+  const track={ runId:null, t0:null, points:[], dirty:false, lastFlush:0 };
+
+  const TrackStore=(function(){
+    const memory=new Map();
+    let dbPromise=null;
+    function open(){
+      if(!dbPromise){
+        dbPromise=new Promise((resolve, reject)=>{
+          if(!window.indexedDB){ reject(new Error('IndexedDB saknas')); return; }
+          const req=indexedDB.open('railtimer', 1);
+          req.onupgradeneeded=()=>{ req.result.createObjectStore('tracks', { keyPath:'runId' }); };
+          req.onsuccess=()=>resolve(req.result);
+          req.onerror=()=>reject(req.error);
+        });
+        dbPromise.catch(()=>{});
+      }
+      return dbPromise;
+    }
+    // Returnerar { value } från IndexedDB, eller null om IndexedDB inte går att använda
+    async function withStore(mode, fn){
+      let db;
+      try{ db=await open(); }catch(e){ return null; }
+      return new Promise((resolve, reject)=>{
+        const tx=db.transaction('tracks', mode);
+        const req=fn(tx.objectStore('tracks'));
+        tx.oncomplete=()=>resolve({ value:req?req.result:undefined });
+        tx.onerror=()=>reject(tx.error);
+        tx.onabort=()=>reject(tx.error);
+      });
+    }
+    return {
+      async put(t){ const r=await withStore('readwrite', s=>s.put(t)); if(!r) memory.set(t.runId, t); },
+      async get(runId){ const r=await withStore('readonly', s=>s.get(runId)); return r ? r.value : memory.get(runId); },
+      async remove(runId){ memory.delete(runId); await withStore('readwrite', s=>s.delete(runId)); },
+      async list(){ const r=await withStore('readonly', s=>s.getAllKeys()); return r ? r.value.map(String) : Array.from(memory.keys()); }
+    };
+  })();
+
+  function startTrack(runId){
+    track.runId=runId;
+    track.t0=null;
+    track.points=[];
+    track.dirty=false;
+    track.lastFlush=Date.now();
+  }
+
+  function roundTo(v, decimals){
+    if(v==null || isNaN(v)) return null;
+    const f=10**decimals;
+    return Math.round(v*f)/f;
+  }
+
+  function appendTrackPoint(pos, nowMs){
+    if(!track.runId) return;
+    if(track.t0==null) track.t0=nowMs;
+    const c=pos.coords;
+    track.points.push([
+      nowMs-track.t0,
+      roundTo(c.latitude, 6),
+      roundTo(c.longitude, 6),
+      c.accuracy==null ? null : Math.round(c.accuracy),
+      roundTo(c.speed, 2),
+      c.heading==null || isNaN(c.heading) ? null : Math.round(c.heading),
+      pos.timestamp ? Math.round(nowMs-pos.timestamp) : null
+    ]);
+    track.dirty=true;
+    if(nowMs-track.lastFlush>=TRACK_FLUSH_MS) flushTrack();
+  }
+
+  function trackObject(){
+    return { format:1, runId:track.runId, trainNumber:state.trainNumber||'', t0:new Date(track.t0).toISOString(), fields:TRACK_FIELDS, points:track.points };
+  }
+
+  function flushTrack(){
+    if(!track.runId || !track.dirty || track.t0==null) return Promise.resolve();
+    track.dirty=false;
+    track.lastFlush=Date.now();
+    return TrackStore.put(trackObject()).catch(e=>{
+      track.dirty=true;
+      console.warn('Kunde inte spara GPS-spåret', e);
+    });
+  }
+
+  // Appen går till bakgrunden (t.ex. vid samtal): spara resan och spåret direkt,
+  // ifall webbläsaren stänger sidan medan den ligger i bakgrunden
+  function onAppHidden(){
+    if(!state.running) return Promise.resolve();
+    saveActiveJourney();
+    return flushTrack();
+  }
+
+  // "Återuppta resa": fortsätt fylla på det sparade spåret
+  async function restoreTrack(runId){
+    startTrack(runId);
+    try{
+      const saved=await TrackStore.get(runId);
+      if(saved && Array.isArray(saved.points)){
+        track.points=saved.points;
+        track.t0=Date.parse(saved.t0);
+      }
+    }catch(e){
+      console.warn('Kunde inte läsa GPS-spåret', e);
+    }
   }
 
   function buildRouteFromTimetable(timetableResult, startSig, endSig){
@@ -1635,6 +1749,7 @@
     state.lastFixTime=Date.now();
     updateGpsStatus(pos);
     if(!state.running) return;
+    appendTrackPoint(pos, state.lastFixTime);
     const lat=pos.coords.latitude;
     const lon=pos.coords.longitude;
     const acc=pos.coords.accuracy;
@@ -2379,6 +2494,7 @@
     renderReport(logEntry);
     // Rapporten visas ensam överst; startformuläret kommer först via "Starta ny mätning"
     showView('report');
+    flushTrack();
   }
 
   let currentView='setup';
@@ -2815,6 +2931,7 @@
     };
     // Tider som registrerades under ett avbrott sparas aldrig som riktiga tider
     if(AV) entry.stops=AV.applyInterruptionWindows(entry.stops, entry.interruptions);
+    if(GH && track.runId===entry.id && track.points.length) entry.trackPath=GH.trackPath(entry);
     logs.push(entry);
     try{
       localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(logs));
@@ -3668,10 +3785,7 @@
       }
       // Ett avbrott upptäcks och meddelas vid nästa GPS-position (checkForInterruption)
     }else if(document.visibilityState==='hidden'){
-      // Save journey when going to background
-      if(state.running){
-        saveActiveJourney();
-      }
+      onAppHidden();
     }
   }
 
@@ -3765,7 +3879,7 @@
     });
   }
 
-  function resumeJourney(saved){
+  async function resumeJourney(saved){
     // Restore state
     state.running = true;
     state.route = saved.route;
@@ -3793,6 +3907,7 @@
     renderedRouteKey='';
     renderRouteCards();
     renderRouteMap();
+    await restoreTrack(state.journeyId); // innan GPS:en startar, så att inga punkter skrivs över
     requestGpsWatch();
     enableWakeLockForJourney();
 
