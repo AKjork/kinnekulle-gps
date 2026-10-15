@@ -579,6 +579,74 @@ test('analys: samma station med två namn slås ihop vid inläsning', async () =
   assert(!options.includes('Herrljunga'), 'det gamla namnet ska inte finnas i stationslistan');
 });
 
+// ── Analys mot tidtabell: fliken Mot tidtabell ──
+
+test('analys: Mot tidtabell visar snål sträcka, generös sträcka och väntan', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  w.__analys.showTab('against');
+  const summary = w.document.getElementById('againstSummary').textContent;
+  assert(summary.includes('Bygger på 4 körningar med tidtabell av 6 i urvalet'), 'sammanfattning: ' + summary);
+  const seg = tableRows(w, 'againstSegments');
+  assertEqual(seg.slice(0, 3).map(r => [r[0], r[10]]),
+    [['Filsbäck → Källby', 'Generös'], ['Lidköping → Filsbäck', 'Snål'], ['Källby → Blomberg', 'Lagom']], 'sträckor och bedömning');
+  const kallby = tableRows(w, 'againstStations').find(r => r[0] === 'Källby (mot Blomberg)');
+  assertEqual([kallby[6], kallby[11]], ['3', 'Tidig – väntan'], 'väntan i Källby');
+});
+
+test('analys: Visa-väljaren visar bara sträckor där tidtabellen är snål', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  const show = w.document.getElementById('againstShow');
+  show.value = 'snal';
+  show.dispatchEvent(new w.Event('change'));
+  assertEqual(tableRows(w, 'againstSegments').map(r => r[0]), ['Lidköping → Filsbäck'], 'sträckor');
+  assertEqual(w.document.getElementById('againstStationsBlock').style.display, 'none', 'stationerna döljs');
+  show.value = 'vantan';
+  show.dispatchEvent(new w.Event('change'));
+  assertEqual(tableRows(w, 'againstStations').map(r => r[0]), ['Källby (mot Blomberg)'], 'stationer med väntan');
+});
+
+test('analys: klick på en sträcka visar de enskilda mätningarna', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  const row = Array.from(w.document.querySelectorAll('#againstSegments tbody tr')).find(tr => tr.cells[0].textContent === 'Lidköping → Filsbäck');
+  row.click();
+  const detail = w.document.getElementById('againstDetail');
+  assertEqual(detail.querySelector('h3').textContent, 'Lidköping → Filsbäck – 4 mätningar', 'rubrik');
+  assertEqual(detail.querySelectorAll('tbody tr').length, 4, 'antal rader');
+});
+
+test('analys: export av avvikelser innehåller urval, antal mätningar och sträckorna', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  const text = w.__analys.exportAgainstCsv();
+  assert(text.charCodeAt(0) === 0xFEFF, 'BOM saknas');
+  for (const part of ['"Bygger på";"4 körningar med tidtabell (av 6 i urvalet)"', '"Tolerans";"±1 min"',
+    '"Lidköping → Filsbäck";"4";"4";"3";"3";"3";"5,3"', '"Källby";"mot Blomberg";"Stopp";"4"']) {
+    assert(text.includes(part), 'saknas i CSV: ' + part);
+  }
+  assert(/^avvikelser_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn');
+});
+
+test('analys: utskriften får rubrik med urval och antal mätningar', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  const header = w.__analys.prepareAgainstPrint();
+  assert(header.includes('RailTimer – Avvikelser mot tidtabell'), 'rubrik');
+  assert(header.includes('Bygger på: 4 körningar med tidtabell (av 6 i urvalet)'), 'antal: ' + header);
+});
+
+test('analys: med två stationer valda visar Mot tidtabell bara sträckan mellan dem i den riktningen', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Källby' });
+  const summary = w.document.getElementById('againstSummary').textContent;
+  assert(summary.includes('av 4 i urvalet') && summary.includes('· sträcka Lidköping → Källby'), 'sammanfattning: ' + summary);
+  assertEqual(tableRows(w, 'againstSegments').map(r => r[0]).sort(), ['Filsbäck → Källby', 'Lidköping → Filsbäck'], 'sträckor');
+});
+
+test('analys: urval utan körningar med tidtabell ger ett meddelande', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  w.__analys.setFilters({ filterDayType: 'helg' });
+  assertEqual(w.document.getElementById('againstSummary').textContent, 'Inga körningar med tidtabellstider i urvalet.', 'meddelande');
+  assertEqual(w.document.getElementById('againstContent').style.display, 'none', 'tabellerna döljs');
+});
+
 // ── Körning ──
 
 // Bilder i telefonstorlek för granskning (node tests/run-browser-tests.mjs --shot=<namn>)

@@ -194,12 +194,34 @@
   .timetable-result .stop-row td{background:var(--bg)}
   .timetable-result .endpoint-row td{background:var(--pri-glow)}
   .tt-note{font-size:.85rem;color:var(--ink);margin-top:.75rem}
-  .compare-log{margin-bottom:1.5rem}
-  .compare-log h3{margin:.5rem 0}
-  .compare-log .delay-early{color:var(--pri)}
-  .compare-log .delay-late{color:var(--err)}
-  .compare-log .delay-ok{color:var(--ink-dim)}
-  .compare-log .no-data{color:var(--mut);font-style:italic}
+  .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .assess{display:inline-block;padding:.1rem .4rem;border-radius:4px;font-size:.7rem;font-weight:600;white-space:nowrap}
+  .assess.snal,.assess.sen-ankomst,.assess.sen-avgang{background:rgba(239,68,68,0.15);color:var(--err)}
+  .assess.generos,.assess.vantan{background:rgba(59,130,246,0.15);color:var(--blue)}
+  .assess.lagom,.assess.itid{background:rgba(34,197,94,0.15);color:var(--pri)}
+  .assess.fa{background:var(--bg);color:var(--mut)}
+  .clickable tbody tr[data-key]{cursor:pointer}
+  .clickable tbody tr.selected td{background:var(--pri-glow)}
+  .report-actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end;margin:.5rem 0 1rem}
+  .few{color:var(--warn);font-size:.7rem;white-space:nowrap}
+  .change-up{color:var(--err)}
+  .change-down{color:var(--blue)}
+  .print-header{display:none}
+  @media print{
+    @page{margin:12mm}
+    body{background:#fff;color:#000}
+    header,.card,#modeDescription,.stats-row,.tabs,.no-print,.tab-content:not(.active),#ttHint,#againstSummary,#ttSummary{display:none !important}
+    main{max-width:none;padding:0}
+    .print-header{display:block;margin-bottom:.5rem}
+    .print-header h2{margin:0 0 .25rem;color:#000;font-size:1.1rem}
+    .print-header p{margin:.1rem 0;font-size:.75rem;color:#000}
+    h3,.meta,.tt-note{color:#000}
+    .table-wrap{border:none;overflow:visible}
+    table{background:#fff;font-size:.7rem}
+    th,td{border:1px solid #888;color:#000 !important;background:#fff !important;padding:.15rem .3rem}
+    .assess,.few{background:none !important;color:#000 !important;padding:0}
+    .timetable-result .pass{color:#444}
+  }
   @media (max-width:640px){
     .timetable-setup{flex-direction:column}
   }
@@ -356,7 +378,7 @@
     <button class="tab" data-tab="outliers">Avvikare</button>
     <button class="tab" data-tab="details">Detaljer</button>
     <button class="tab" data-tab="timetable">Tidtabell</button>
-    <button class="tab" data-tab="compare">Jämför</button>
+    <button class="tab" data-tab="against">Mot tidtabell</button>
   </div>
 
   <div id="tabChart" class="tab-content active">
@@ -454,9 +476,74 @@
     </div>
   </div>
 
-  <div id="tabCompare" class="tab-content">
-    <p class="meta" id="compareHint">Visar tidtabell vs verklighet per körning. Välj tågnummer i filtret ovan för att se körningar med tidtabellsdata.</p>
-    <div id="compareContent"></div>
+  <div id="tabAgainst" class="tab-content">
+    <div class="report" id="againstReport">
+      <div class="print-header"></div>
+      <p class="meta" id="againstSummary">Ladda data för att se analys.</p>
+      <div id="againstContent" style="display:none">
+        <div class="report-actions no-print">
+          <div class="filter-group">
+            <label for="againstShow">Visa</label>
+            <select id="againstShow">
+              <option value="alla">Alla sträckor och stationer</option>
+              <option value="snal">Sträckor där tidtabellen är snål</option>
+              <option value="generos">Sträckor där tidtabellen är generös</option>
+              <option value="vantan">Stationer med väntan</option>
+              <option value="sen-ankomst">Stationer med sen ankomst</option>
+              <option value="sen-avgang">Stationer med sen avgång</option>
+            </select>
+          </div>
+          <button id="btnAgainstCsv" class="ghost">Exportera till Excel</button>
+          <button id="btnAgainstPrint" class="ghost">Skriv ut / PDF</button>
+        </div>
+        <div id="againstSegmentsBlock">
+          <h3>Sträckor – gångtid mot tidtabell</h3>
+          <div class="table-wrap">
+            <table id="againstSegments" class="clickable">
+              <thead><tr>
+                <th>Sträcka</th>
+                <th class="num" title="Antal mätta gångtider">Körningar</th>
+                <th class="num" title="Mätningar där tidtabellstider finns">Med tidtabell</th>
+                <th class="num" title="Vanligaste planerade gångtiden (min). Inom parentes: intervallet när den varierar mellan tåg">Planerad</th>
+                <th class="num" title="Verklig gångtid, median (min)">Median</th>
+                <th class="num" title="Verklig gångtid, 90:e percentilen (min)">P90</th>
+                <th class="num" title="Verklig − planerad gångtid, median (min)">Avvikelse</th>
+                <th class="num" title="Gångtiden var längre än planerat, mer än toleransen">För lite tid</th>
+                <th class="num">I tid</th>
+                <th class="num" title="Gångtiden var kortare än planerat, mer än toleransen – tåget får vänta">För mycket tid</th>
+                <th>Bedömning</th>
+                <th class="num" title="Verklig median avrundad till hela minuter. Inom parentes: ändring mot planerad">Förslag</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="againstStationsBlock">
+          <h3>Stationer – ankomst, väntan och avgång mot tidtabell</h3>
+          <div class="table-wrap">
+            <table id="againstStations" class="clickable">
+              <thead><tr>
+                <th>Station</th>
+                <th>Typ</th>
+                <th class="num">Körningar</th>
+                <th class="num" title="Ankomst senare än planerat">Ank. sen</th>
+                <th class="num">Ank. i tid</th>
+                <th class="num" title="Ankomst tidigare än planerat">Ank. tidig</th>
+                <th class="num" title="Gånger tåget kom tidigt och stod längre än planerat">Väntan</th>
+                <th class="num" title="Väntan, median (min)">Väntan (min)</th>
+                <th class="num" title="Vanligaste planerade uppehållet (min)">Planerat uppehåll</th>
+                <th class="num" title="Verkligt uppehåll, median (min)">Verkligt uppehåll</th>
+                <th class="num" title="Avgång senare än planerat">Avg. sen</th>
+                <th>Bedömning</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="againstDetail"></div>
+        <p class="meta no-print">Klicka på en rad för att se de enskilda mätningarna. Avvikelse = verkligt − planerat i minuter; inom toleransen räknas som i tid. <strong>Snål</strong>: tåget behöver mer tid än tidtabellen ger. <strong>Generös</strong>: tåget kommer fram tidigt och får vänta. Bedömningen kräver minst 3 mätningar med tidtabell.</p>
+      </div>
+    </div>
   </div>
 </main>
 
@@ -534,6 +621,15 @@
   els.filterStationType.addEventListener('change', runAnalysis);
   document.getElementById('ttStartTime').addEventListener('input', generateTimetable);
   document.getElementById('ttTimeBasis').addEventListener('change', generateTimetable);
+  document.getElementById('againstShow').addEventListener('change', () => renderAgainst(currentRuns));
+  document.getElementById('btnAgainstCsv').addEventListener('click', exportAgainstCsv);
+  document.getElementById('btnAgainstPrint').addEventListener('click', printAgainst);
+  ['againstSegments', 'againstStations'].forEach(id => {
+    document.getElementById(id).addEventListener('click', e => {
+      const tr = e.target.closest('tr[data-key]');
+      if(tr) renderAgainstDetail(tr.dataset.kind, tr.dataset.key);
+    });
+  });
 
   // Mode tabs (Gångtider / Uppehållstider)
   document.querySelectorAll('.mode-tab').forEach(tab => {
@@ -837,8 +933,8 @@
     renderSummaryTable(segments);
     renderOutliersTable(segments);
     renderDetailsTable(segments);
-    updateTimetable();
-    renderCompare(filteredLogs);
+    updateTimetable(filteredLogs);
+    renderAgainst(filteredLogs);
   }
 
   function buildSegmentsBetweenStations(logs, station1, station2, mergeDir){
@@ -1023,6 +1119,10 @@
     els.outliersTable.innerHTML = '<tr><td colspan="7" class="empty">Ladda data för att se analys</td></tr>';
     els.detailsTable.innerHTML = '<tr><td colspan="5" class="empty">Ladda data för att se analys</td></tr>';
     drawEmptyChart();
+    againstState = null;
+    lastTimetable = null;
+    document.getElementById('againstSummary').textContent = 'Ladda data för att se analys.';
+    document.getElementById('againstContent').style.display = 'none';
   }
 
   function renderSummaryTable(segs){
@@ -1323,90 +1423,259 @@
     return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
   }
 
-  // ── Compare: timetable vs reality ──
+  // ── Gemensamt för Mot tidtabell och Tidtabell ──
 
-  function renderCompare(logs){
-    const el = document.getElementById('compareContent');
-    const hint = document.getElementById('compareHint');
+  const ASSESSMENT_LABELS = {
+    snal: 'Snål', generos: 'Generös', lagom: 'Lagom', fa: 'För få mätningar',
+    vantan: 'Tidig – väntan', 'sen-ankomst': 'Sen ankomst', 'sen-avgang': 'Sen avgång', itid: 'I tid'
+  };
+  const TIME_OF_DAY_LABELS = { morgon: 'Morgon 05–09', dag: 'Dag 09–15', eftermiddag: 'Eftermiddag 15–18', kvall: 'Kväll 18–05' };
+  const DAY_LABELS = { vardag: 'Vardag', helg: 'Helg' };
+  const TYPE_LABELS = { stopp: 'Stopp', passage: 'Passage' };
+  const BASIS_LABELS = { median: 'Median', p90: 'P90', mean: 'Medelvärde' };
+  const AGAINST_TITLE = 'RailTimer – Avvikelser mot tidtabell';
+  const TIMETABLE_TITLE = 'RailTimer – Tidtabellsförslag';
 
-    // Filter logs that have scheduled data
-    const withSchedule = logs.filter(log => {
-      if(log.aborted) return false;
-      const stops = log.stops || [];
-      return stops.some(s => s.scheduledArrival || s.scheduledDeparture);
-    });
+  function esc(v){ return escapeHtml(v == null ? '' : String(v)); }
+  function toleranceValue(){ return Number(els.filterTolerance.value) || AN.DEFAULT_TOLERANCE; }
+  function fmtMin(v, decimals){ return v == null ? '–' : AN.formatMinutes(v, decimals); }
+  // Med tecken: +2,5 / −1,5 (typografiskt minus) / 0,0
+  function fmtSigned(v, decimals){
+    if(v == null) return '–';
+    const s = AN.formatMinutes(v, decimals);
+    if(s.startsWith('-')) return '−' + s.slice(1);
+    return v > 0 && s !== AN.formatMinutes(0, decimals) ? '+' + s : s;
+  }
+  function fmtTol(t){ return '±' + AN.formatMinutes(t, t % 1 ? 1 : 0) + ' min'; }
+  function plannedText(p, min, max){
+    if(p == null) return '–';
+    return min != null && max != null && min !== max ? `${fmtMin(p, 0)} (${fmtMin(min, 0)}–${fmtMin(max, 0)})` : fmtMin(p, 0);
+  }
+  function periodText(p){ return p ? (p.from === p.to ? p.from : p.from + ' – ' + p.to) : '–'; }
+  function nowText(){ return new Date().toLocaleString('sv-SE', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }); }
+  function safeFilePart(s){ return String(s || '').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, '_'); }
 
-    if(!withSchedule.length){
-      el.innerHTML = '';
-      hint.style.display = 'block';
-      hint.textContent = 'Inga körningar med tidtabellsdata hittades med aktuellt filter.';
+  // Urvalet i klartext för export och utskrift
+  function describeFilter(extra){
+    const f = currentFilter();
+    const parts = [
+      'Tåg: ' + (f.train || 'alla'),
+      'Fordon: ' + (f.vehicle || 'alla'),
+      'Tid på dygnet: ' + (TIME_OF_DAY_LABELS[f.timeOfDay] || 'alla'),
+      'Dag: ' + (DAY_LABELS[f.dayType] || 'alla'),
+      'Stationstyp: ' + (TYPE_LABELS[els.filterStationType.value] || 'alla')
+    ];
+    if(f.dateFrom || f.dateTo) parts.push('Datum: ' + (f.dateFrom || '…') + ' – ' + (f.dateTo || '…'));
+    if(extra) parts.push(extra);
+    return parts.join(' · ');
+  }
+
+  // CSV laddas ner som fil (i testläge sparas den bara för testerna)
+  function downloadText(filename, text){
+    lastDownload = { filename, text };
+    if(TEST_MODE) return;
+    const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // Utskrift/PDF: rubrik och urval fylls i rapportens utskriftshuvud, sedan skrivs den aktiva fliken ut
+  function preparePrint(reportId, title, meta){
+    const header = document.querySelector('#' + reportId + ' .print-header');
+    header.innerHTML = '<h2>' + esc(title) + '</h2>' +
+      meta.map(([k, v]) => '<p><strong>' + esc(k) + ':</strong> ' + esc(v) + '</p>').join('');
+    return header.textContent;
+  }
+  function printReport(reportId, title, meta){
+    preparePrint(reportId, title, meta);
+    if(!TEST_MODE) window.print();
+  }
+
+  // ── Mot tidtabell: gångtid per sträcka och klockslag per station ──
+
+  function againstData(runs){
+    const tol = toleranceValue();
+    const from = validStations.has(els.filterFrom.value) ? els.filterFrom.value : '';
+    const to = validStations.has(els.filterTo.value) ? els.filterTo.value : '';
+    const onRoute = from && to && from !== to;
+    // Med två stationer valda: bara körningar i den riktningen, avskurna till sträckan mellan dem
+    const base = onRoute ? AN.sliceRuns(runs, from, to) : runs;
+    const withTimetable = base.filter(r => (r.stops || []).some(s => s.scheduledArrival || s.scheduledDeparture));
+    const segObs = AN.segmentObservations(base, { tolerance: tol });
+    const staObs = AN.stationObservations(base, { tolerance: tol, stationType: els.filterStationType.value });
+    return {
+      tol, route: onRoute ? from + ' → ' + to : '',
+      runCount: base.length, timetableRuns: withTimetable.length,
+      period: AN.period(withTimetable),
+      segObs, staObs,
+      segments: AN.summarizeSegments(segObs, { tolerance: tol }),
+      stations: AN.summarizeStations(staObs, { tolerance: tol })
+    };
+  }
+
+  function isStationView(show){ return show === 'vantan' || show === 'sen-ankomst' || show === 'sen-avgang'; }
+  function isSegmentView(show){ return show === 'snal' || show === 'generos'; }
+
+  function visibleRows(d, show){
+    if(isSegmentView(show)) return { segments: d.segments.filter(r => r.assessment === show), stations: [] };
+    if(show === 'vantan') return { segments: [], stations: d.stations.filter(r => r.wait.n > 0) };
+    if(isStationView(show)) return { segments: [], stations: d.stations.filter(r => r.assessment === show) };
+    return { segments: d.segments, stations: d.stations };
+  }
+
+  function renderAgainst(runs){
+    const summary = document.getElementById('againstSummary');
+    const content = document.getElementById('againstContent');
+    document.getElementById('againstDetail').innerHTML = '';
+    againstState = againstData(runs);
+    const d = againstState;
+    if(!d.timetableRuns){
+      summary.textContent = 'Inga körningar med tidtabellstider i urvalet.';
+      content.style.display = 'none';
       return;
     }
-    hint.style.display = 'none';
+    content.style.display = '';
+    summary.textContent = `Bygger på ${d.timetableRuns} körningar med tidtabell av ${d.runCount} i urvalet · period ${periodText(d.period)} · tolerans ${fmtTol(d.tol)}` +
+      (d.route ? ` · sträcka ${d.route}` : '');
+    const show = document.getElementById('againstShow').value;
+    const v = visibleRows(d, show);
+    document.getElementById('againstSegmentsBlock').style.display = isStationView(show) ? 'none' : '';
+    document.getElementById('againstStationsBlock').style.display = isSegmentView(show) ? 'none' : '';
+    renderAgainstSegments(v.segments);
+    renderAgainstStations(v.stations);
+  }
 
-    // Sort by date descending
-    withSchedule.sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
-
-    // Limit to 20 most recent
-    const limited = withSchedule.slice(0, 20);
-
-    el.innerHTML = limited.map(log => {
-      const stops = log.stops || [];
-      const logDate = log.startedAt ? new Date(log.startedAt).toLocaleDateString('sv-SE') : '?';
-      const trainNr = log.trainNumber || '?';
-
-      let html = '<div class="compare-log card">'+
-        '<h3>T\u00e5g '+escapeHtml(trainNr)+' \u2013 '+escapeHtml(logDate)+
-        ' \u2013 '+escapeHtml(log.startStation||'')+' \u2192 '+escapeHtml(log.endStation||'')+'</h3>'+
-        '<div class="table-wrap"><table><thead><tr>'+
-        '<th>Station</th><th>Tidtabell ank</th><th>Verklig ank</th><th>Avvikelse ank</th>'+
-        '<th>Tidtabell avg</th><th>Verklig avg</th><th>Avvikelse avg</th>'+
-        '</tr></thead><tbody>';
-
-      for(const stop of stops){
-        const schArr = stop.scheduledArrival ? new Date(stop.scheduledArrival) : null;
-        const actArr = stop.actualArrival ? new Date(stop.actualArrival) : null;
-        const schDep = stop.scheduledDeparture ? new Date(stop.scheduledDeparture) : null;
-        const actDep = stop.actualDeparture ? new Date(stop.actualDeparture) : null;
-
-        const fmtClock = function(d){ return d ? d.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '-'; };
-
-        let arrDelay = '';
-        let arrClass = 'no-data';
-        if(schArr && actArr){
-          const diffMin = Math.round((actArr - schArr) / 60000);
-          if(diffMin > 1){ arrDelay = '+'+diffMin+' min'; arrClass = 'delay-late'; }
-          else if(diffMin < -1){ arrDelay = diffMin+' min'; arrClass = 'delay-early'; }
-          else { arrDelay = 'I tid'; arrClass = 'delay-ok'; }
-        }
-
-        let depDelay = '';
-        let depClass = 'no-data';
-        if(schDep && actDep){
-          const diffMin = Math.round((actDep - schDep) / 60000);
-          if(diffMin > 1){ depDelay = '+'+diffMin+' min'; depClass = 'delay-late'; }
-          else if(diffMin < -1){ depDelay = diffMin+' min'; depClass = 'delay-early'; }
-          else { depDelay = 'I tid'; depClass = 'delay-ok'; }
-        }
-
-        html += '<tr>'+
-          '<td>'+escapeHtml(stop.name)+'</td>'+
-          '<td>'+fmtClock(schArr)+'</td>'+
-          '<td>'+fmtClock(actArr)+'</td>'+
-          '<td class="'+arrClass+'">'+arrDelay+'</td>'+
-          '<td>'+fmtClock(schDep)+'</td>'+
-          '<td>'+fmtClock(actDep)+'</td>'+
-          '<td class="'+depClass+'">'+depDelay+'</td>'+
-        '</tr>';
-      }
-
-      html += '</tbody></table></div></div>';
-      return html;
-    }).join('');
-
-    if(withSchedule.length > 20){
-      el.innerHTML += '<p class="meta">Visar 20 av '+withSchedule.length+' k\u00f6rningar</p>';
+  function renderAgainstSegments(rows){
+    const tbody = document.querySelector('#againstSegments tbody');
+    if(!rows.length){
+      tbody.innerHTML = '<tr><td colspan="12" class="empty">Inga sträckor med aktuellt urval</td></tr>';
+      return;
     }
+    tbody.innerHTML = rows.map(r => `<tr data-kind="segment" data-key="${esc(r.key)}">
+      <td>${esc(r.key)}</td>
+      <td class="num">${r.n}</td>
+      <td class="num">${r.nPlanned}</td>
+      <td class="num">${plannedText(r.planned, r.plannedMin, r.plannedMax)}</td>
+      <td class="num">${fmtMin(r.actual.median)}</td>
+      <td class="num">${fmtMin(r.actual.p90)}</td>
+      <td class="num">${fmtSigned(r.deviation.median)}</td>
+      <td class="num">${r.counts.sen}</td>
+      <td class="num">${r.counts.itid}</td>
+      <td class="num">${r.counts.tidig}</td>
+      <td><span class="assess ${r.assessment}">${ASSESSMENT_LABELS[r.assessment]}</span></td>
+      <td class="num">${r.suggestion == null ? '–' : r.suggestion + (r.change ? ' (' + fmtSigned(r.change, 0) + ')' : '')}</td>
+    </tr>`).join('');
+  }
+
+  function renderAgainstStations(rows){
+    const tbody = document.querySelector('#againstStations tbody');
+    if(!rows.length){
+      tbody.innerHTML = '<tr><td colspan="12" class="empty">Inga stationer med aktuellt urval</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `<tr data-kind="station" data-key="${esc(r.key)}">
+      <td>${esc(r.label)}</td>
+      <td>${TYPE_LABELS[r.type]}</td>
+      <td class="num">${r.n}</td>
+      <td class="num">${r.arrivalCounts.sen}</td>
+      <td class="num">${r.arrivalCounts.itid}</td>
+      <td class="num">${r.arrivalCounts.tidig}</td>
+      <td class="num">${r.wait.n}</td>
+      <td class="num">${fmtMin(r.wait.median)}</td>
+      <td class="num">${fmtMin(r.plannedDwell, 0)}</td>
+      <td class="num">${fmtMin(r.dwell.median)}</td>
+      <td class="num">${r.departureCounts.sen}</td>
+      <td><span class="assess ${r.assessment}">${ASSESSMENT_LABELS[r.assessment]}</span></td>
+    </tr>`).join('');
+  }
+
+  const SEGMENT_CATEGORY = { sen: 'För lite tid', itid: 'I tid', tidig: 'För mycket tid' };
+  const STATION_CATEGORY = { sen: 'Sen', itid: 'I tid', tidig: 'Tidig' };
+
+  // De enskilda mätningarna bakom en rad, nyast först
+  function renderAgainstDetail(kind, key){
+    const el = document.getElementById('againstDetail');
+    const d = againstState;
+    if(!d){ el.innerHTML = ''; return; }
+    document.querySelectorAll('#againstSegments tbody tr, #againstStations tbody tr').forEach(tr => {
+      tr.classList.toggle('selected', tr.dataset.kind === kind && tr.dataset.key === key);
+    });
+    const newestFirst = (a, b) => String(b.start || '').localeCompare(String(a.start || ''));
+    if(kind === 'segment'){
+      const list = d.segObs.filter(o => o.key === key).sort(newestFirst);
+      el.innerHTML = `<h3>${esc(key)} – ${list.length} mätningar</h3><div class="table-wrap"><table><thead><tr>
+        <th>Datum</th><th>Tåg</th><th class="num">Planerad (min)</th><th class="num">Verklig (min)</th><th class="num">Avvikelse</th><th>Kategori</th>
+        </tr></thead><tbody>` + list.map(o => `<tr>
+        <td>${esc(o.date)}</td><td>${esc(o.trainNumber)}</td>
+        <td class="num">${fmtMin(o.planned, 0)}</td><td class="num">${fmtMin(o.actual)}</td>
+        <td class="num">${fmtSigned(o.deviation)}</td><td>${o.category ? SEGMENT_CATEGORY[o.category] : '–'}</td>
+        </tr>`).join('') + '</tbody></table></div>';
+    }else{
+      const list = d.staObs.filter(o => o.key === key).sort(newestFirst);
+      const label = list.length ? AN.stationLabel(list[0]) : key;
+      el.innerHTML = `<h3>${esc(label)} – ${list.length} mätningar</h3><div class="table-wrap"><table><thead><tr>
+        <th>Datum</th><th>Tåg</th><th>Typ</th><th class="num">Ankomst</th><th class="num">Väntan (min)</th><th class="num">Uppehåll (min)</th><th class="num">Avgång</th>
+        </tr></thead><tbody>` + list.map(o => `<tr>
+        <td>${esc(o.date)}</td><td>${esc(o.trainNumber)}</td><td>${TYPE_LABELS[o.type]}</td>
+        <td class="num">${fmtSigned(o.arrivalDev)}${o.arrivalCategory ? ' ' + STATION_CATEGORY[o.arrivalCategory].toLowerCase() : ''}</td>
+        <td class="num">${o.wait ? fmtMin(o.wait) : '–'}</td>
+        <td class="num">${fmtMin(o.dwell)}</td>
+        <td class="num">${fmtSigned(o.departureDev)}${o.departureCategory ? ' ' + STATION_CATEGORY[o.departureCategory].toLowerCase() : ''}</td>
+        </tr>`).join('') + '</tbody></table></div>';
+    }
+  }
+
+  function againstMeta(d){
+    const show = document.getElementById('againstShow');
+    const meta = [
+      ['Bygger på', `${d.timetableRuns} körningar med tidtabell (av ${d.runCount} i urvalet)`],
+      ['Period', periodText(d.period)],
+      ['Urval', describeFilter(d.route ? 'Sträcka: ' + d.route : '')],
+      ['Tolerans', fmtTol(d.tol)]
+    ];
+    if(show.value !== 'alla') meta.push(['Visar', show.options[show.selectedIndex].text]);
+    meta.push(['Skapad', nowText()]);
+    return meta;
+  }
+
+  function exportAgainstCsv(){
+    const d = againstState;
+    if(!d || !d.timetableRuns) return null;
+    const v = visibleRows(d, document.getElementById('againstShow').value);
+    const sections = [];
+    if(v.segments.length) sections.push({
+      title: 'Sträckor – gångtid mot tidtabell',
+      header: ['Sträcka', 'Körningar', 'Med tidtabell', 'Planerad gångtid (min)', 'Planerad min', 'Planerad max',
+        'Verklig median (min)', 'Verklig P90 (min)', 'Avvikelse median (min)', 'För lite tid', 'I tid', 'För mycket tid',
+        'Bedömning', 'Förslag (hela min)', 'Ändring (min)'],
+      rows: v.segments.map(r => [r.key, r.n, r.nPlanned, r.planned, r.plannedMin, r.plannedMax,
+        r.actual.median, r.actual.p90, r.deviation.median, r.counts.sen, r.counts.itid, r.counts.tidig,
+        ASSESSMENT_LABELS[r.assessment], r.suggestion, r.change])
+    });
+    if(v.stations.length) sections.push({
+      title: 'Stationer – ankomst, väntan och avgång mot tidtabell',
+      header: ['Station', 'Riktning', 'Typ', 'Körningar', 'Med tidtabell', 'Ankomst sen', 'Ankomst i tid', 'Ankomst tidig',
+        'Ankomst avvikelse median (min)', 'Väntan antal', 'Väntan median (min)', 'Planerat uppehåll (min)',
+        'Verkligt uppehåll median (min)', 'Avgång sen', 'Avgång i tid', 'Avgång tidig', 'Avgång avvikelse median (min)', 'Bedömning'],
+      rows: v.stations.map(r => [r.station, r.towards ? 'mot ' + r.towards : 'från ' + (r.from || ''), TYPE_LABELS[r.type],
+        r.n, r.nPlanned, r.arrivalCounts.sen, r.arrivalCounts.itid, r.arrivalCounts.tidig, r.arrivalDev.median,
+        r.wait.n, r.wait.median, r.plannedDwell, r.dwell.median,
+        r.departureCounts.sen, r.departureCounts.itid, r.departureCounts.tidig, r.departureDev.median,
+        ASSESSMENT_LABELS[r.assessment]])
+    });
+    const text = AN.csvDocument(AGAINST_TITLE, againstMeta(d), sections);
+    downloadText('avvikelser_' + AN.localDate(new Date()) + '.csv', text);
+    return text;
+  }
+
+  function printAgainst(){
+    if(againstState && againstState.timetableRuns) printReport('againstReport', AGAINST_TITLE, againstMeta(againstState));
   }
 
   // ── Timetable proposal ──
@@ -1629,6 +1898,8 @@
         runAnalysis();
       },
       showTab(name){ document.querySelector('.tab[data-tab="' + name + '"]').click(); },
+      exportAgainstCsv,
+      prepareAgainstPrint: () => againstState && preparePrint('againstReport', AGAINST_TITLE, againstMeta(againstState)),
       getLastDownload: () => lastDownload
     };
   }
