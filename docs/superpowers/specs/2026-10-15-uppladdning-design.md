@@ -178,10 +178,10 @@ En tid som först registreras av positionen efter avbrottet, och sedan skrivs ö
 **Lagring på telefonen**
 
 - `railtimer_github_v1`: `{repo, token, branch}`.
-- `railtimer_upload_v1`: `{uploadedIds, backlogDone, lastError, lastSuccessAt, retryNotBefore}`.
+- `railtimer_upload_v1`: `{repo, uploadedIds, uploadedTrackCount, backlogDone, lastError, lastSuccessAt, retryNotBefore}`. Byts repot börjar kön om från början, och allt laddas upp till det nya repot.
 - Spåren ligger i IndexedDB tills de är uppladdade.
 
-**Utlösare.** Kön körs när en resa avslutas eller avbryts, när appen startar, vid händelsen `online`, när appen blir synlig igen och när man trycker "Ladda upp nu". Bara en körning av kön åt gången.
+**Utlösare.** Kön körs när en resa avslutas eller avbryts, när appen startar, vid händelsen `online`, när appen blir synlig igen och när man trycker "Ladda upp nu". Bara en körning av kön åt gången. Kön körs aldrig medan en resa pågår, så att mätningen inte störs. Den körs direkt när resan är avslutad.
 
 **Ordning i en körning av kön**
 
@@ -240,7 +240,14 @@ Fristående, utan beroenden. Fungerar som global i webbläsaren och som modul i 
 | Kö | `planUpload(...)` tar fram vad som ska skickas och i vilken ordning. `runUploadPass(...)` skickar, med injicerad väntefunktion och lagring så att den kan testas. |
 | Sammanslagning | `mergeRuns(importlistor, körningar)` för analysverktyget. |
 
-Logiken för avbrott ligger kvar i `index.html` eftersom den använder resans tillstånd.
+**Modulen `railtimer-avbrott.js`.** Avbrottslogiken är rena funktioner, så att den kan testas i Node:
+
+- `detectInterruption`: upptäcker avbrott.
+- `planCatchUp`: räknar ut ikappkörningen.
+- `applyInterruptionWindows`: ersätter tider inom avbrott med fönster.
+- `isWithinInterruption`, `markStationMissed` och `markDepartureUnknown`: hjälpfunktioner.
+
+`index.html` kopplar in funktionerna, eftersom resans tillstånd finns där.
 
 ## 10. Säkerhet
 
@@ -289,6 +296,21 @@ Logiken för avbrott ligger kvar i `index.html` eftersom den använder resans ti
 6. **Regression:** samma simulerade resa utan avbrott ger exakt samma tider i den gamla och den nya versionen.
 
 **Gränssnitt:** inställningsvyn kontrolleras i telefonstorlek (390 × 844).
+
+**Så körs testerna**
+
+- `node --test "tests/*.test.js"`: modulerna, utan beroenden.
+- `node tests/run-browser-tests.mjs`: de uppspelade resorna, i Chrome utan fönster via Node 22+.
+- Regressionsfacit för en vanlig resa sparas i `tests/golden-normal-run.json`. Det tas fram med dagens logik innan något ändras.
+- `node tests/run-browser-tests.mjs --shot=installningar|avbrott|rapport`: sparar bilder i telefonstorlek.
+
+**Fler fall som testas**
+
+- En token som klistras in med mellanslag eller radbrytning.
+- Ett samtal precis vid ankomsten till slutstationen.
+- En avbruten resa, som laddas upp med flaggan `aborted`.
+- En resa utan några GPS-positioner, som inte får något spår.
+- Byte till ett annat repo, där allt laddas upp igen.
 
 **Efter publicering:** André anger token på telefonen. Därefter kontrolleras i repot, med enbart läsning, att importfilerna och den första körningen har kommit fram.
 
