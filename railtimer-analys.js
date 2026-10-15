@@ -814,6 +814,125 @@
     return rows;
   }
 
+  /* Tidtabellsförslag för ett tåg: tågets egna stopp och nuvarande tider, sträckornas tid (alla tåg, samma
+     planerade mönster) och tågets egna uppehåll utan väntan. opts: { basis: 'median' | 'p90' | 'mean' }.
+     Klockslag är minuter efter midnatt; exakta tider läggs ihop och varje klockslag avrundas till hela minuter,
+     så att avrundningsfelen inte växer. Möten och anslutningar ingår inte. */
+  function proposeTrainTimetable(runs, needs, train, opts) {
+    const basis = (opts && opts.basis) || 'median';
+    const nr = String(train == null ? '' : train).trim();
+    const tRuns = (runs || []).filter(r => String(r.trainNumber || '').trim() === nr && hasTimetable(r));
+    const route = routeOf(tRuns);
+    if (!nr || !tRuns.length || route.length < 2) {
+      return { train: nr, basis, error: 'inga-korningar', route: [], rows: [], missing: [], runCount: tRuns.length };
+    }
+    const needsByKey = needMap(needs);
+    const startOf = r => { const d = runStart(r); return d ? d.getTime() : 0; };
+    const byLatest = tRuns.slice().sort((a, b) => startOf(b) - startOf(a));
+
+    // Nuvarande tider per station, från den senaste körning som har värdet; passagepunkter får sin passagetid
+    const current = new Map();
+    for (const run of byLatest) {
+      const base = runStart(run);
+      for (const s of run.stops || []) {
+        if (!current.has(s.name)) current.set(s.name, { arr: null, dep: null, type: plannedType(s) });
+        const c = current.get(s.name);
+        if (c.arr == null && s.scheduledArrival) c.arr = clockMinutes(s.scheduledArrival, base);
+        if (c.dep == null && s.scheduledDeparture) c.dep = clockMinutes(s.scheduledDeparture, base);
+      }
+    }
+    for (const c of current.values()) {
+      if (c.type === 'passage') {
+        const t = c.dep != null ? c.dep : c.arr;
+        c.arr = t;
+        c.dep = t;
+      }
+    }
+
+    // Tågets egna uppehåll vid planerade stopp: kom tåget tidigt och stod kvar efter planerad ankomst räknas
+    // uppehållet därifrån (väntan på tidtabellen räknas inte), annars från verklig ankomst
+    const dwells = new Map();
+    for (const run of tRuns) {
+      for (const s of (run.stops || []).slice(1, -1)) {
+        if (plannedType(s) !== 'stopp' || stopType(s) !== 'stopp') continue;
+        const a = toDate(s.actualArrival);
+        const d = toDate(s.actualDeparture);
+        const pa = toDate(s.scheduledArrival);
+        const from = a && d && pa && pa > a && pa < d ? pa : a;
+        if (!from || !d) continue;
+        const m = minutes(from, d);
+        if (m > 0.05 && m < 60) {
+          if (!dwells.has(s.name)) dwells.set(s.name, []);
+          dwells.get(s.name).push(m);
+        }
+      }
+    }
+
+    const anchor = current.get(route[0]).dep;
+    const missing = [];
+    let known = anchor != null;
+    if (!known) missing.push(`avgång från ${route[0]}`);
+    let cum = 0;
+    let prevDep = anchor;
+    const rows = route.map((name, i) => {
+      const c = current.get(name);
+      const isFirst = i === 0;
+      const isLast = i === route.length - 1;
+      const row = {
+        station: name, type: isFirst ? 'start' : isLast ? 'slut' : c.type,
+        currentArr: isFirst ? null : c.arr, currentDep: isLast ? null : c.dep,
+        propArr: null, propDep: null,
+        plannedLeg: null, need: null, legValue: null, legRounded: null, legDiff: null, few: false,
+        plannedDwell: null, dwellValue: null, dwellN: 0, dwellSource: null
+      };
+      if (isFirst) {
+        row.propDep = anchor;
+        return row;
+      }
+      const prevName = route[i - 1];
+      const prev = current.get(prevName);
+      const pattern = (prev.type === 'stopp' ? 'S' : 'P') + (c.type === 'stopp' ? 'S' : 'P');
+      row.need = needFor(needsByKey, `${prevName} → ${name}`, pattern);
+      row.plannedLeg = prev.dep != null && c.arr != null ? c.arr - prev.dep : null;
+      row.legValue = row.need && row.need.n ? row.need[basis] : null;
+      row.few = !!row.need && row.need.n < MIN_SAMPLES;
+      if (row.legValue == null) {
+        missing.push(`${prevName} → ${name}`);
+        known = false;
+      }
+      if (known) {
+        cum += row.legValue;
+        row.propArr = anchor + Math.round(cum);
+        row.legRounded = row.propArr - prevDep;
+        if (row.plannedLeg != null) row.legDiff = row.legRounded - row.plannedLeg;
+      }
+      if (!isLast) {
+        if (c.type === 'stopp') {
+          row.plannedDwell = c.arr != null && c.dep != null ? c.dep - c.arr : null;
+          const s = stats(dwells.get(name) || []);
+          row.dwellN = s.n;
+          if (s.n) { row.dwellValue = s[basis]; row.dwellSource = 'matt'; }
+          else if (row.plannedDwell != null) { row.dwellValue = row.plannedDwell; row.dwellSource = 'planerat'; }
+          else { missing.push(`uppehåll i ${name}`); known = false; }
+        }
+        if (known) {
+          cum += c.type === 'stopp' ? row.dwellValue : 0;
+          row.propDep = anchor + Math.round(cum);
+          prevDep = row.propDep;
+        }
+      }
+      return row;
+    });
+    const last = rows[rows.length - 1];
+    return {
+      train: nr, basis, route, rows, missing,
+      runCount: tRuns.length, period: period(tRuns),
+      totalCurrent: rows[0].currentDep != null && last.currentArr != null ? last.currentArr - rows[0].currentDep : null,
+      totalProposed: known ? last.propArr - anchor : null,
+      totalExact: known ? cum : null
+    };
+  }
+
   // ── Export ──
 
   // Minuter med decimalkomma, utan "-0,0"
@@ -849,7 +968,7 @@
     canonicalStation, normalizeRuns,
     localDate, clockMinutes, runStart, timeOfDay, dayType, runMatches, period,
     stopType, plannedType, PATTERN_LABELS, classify, segmentObservations, stationObservations, stationLabel,
-    segmentNeeds, stationTimes, summarizeTrains, segmentPlans,
+    segmentNeeds, stationTimes, summarizeTrains, segmentPlans, proposeTrainTimetable,
     stats, mode, summarizeSegments, summarizeStations,
     directedRuns, sliceRuns, proposeTimetable,
     formatMinutes, csvDocument
