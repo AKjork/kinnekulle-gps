@@ -219,6 +219,15 @@ test('summarizeSegments: för få mätningar, varierande planerad tid och sträc
   assert.deepEqual([rows[1].nPlanned, rows[1].assessment, rows[1].change], [0, 'fa', null]);
 });
 
+test('summarizeSegments: Lagom och För få mätningar ger inget ändringsförslag', () => {
+  // Planerat 4 min, verkligt 3 min 1 s: avvikelsen −0,98 ligger inom ±1 min → Lagom, och förslaget är planerad tid
+  const runs = [0, 1, 2].map(k => run('l' + k, [stop('A', { dep: [7, 0], sDep: [7, 0] }), stop('B', { arr: [7, 3, 1], sArr: [7, 4] })]));
+  const lagom = AN.summarizeSegments(AN.segmentObservations(runs, { tolerance: 1 }), { tolerance: 1 })[0];
+  assert.deepEqual([lagom.assessment, lagom.suggestion, lagom.change], ['lagom', 4, null]);
+  const few = AN.summarizeSegments(AN.segmentObservations(runs.slice(0, 2), { tolerance: 1 }), { tolerance: 1 })[0];
+  assert.deepEqual([few.assessment, few.suggestion, few.change], ['fa', 4, null]);
+});
+
 test('summarizeStations: väntan, sen ankomst och sen avgång', () => {
   const stationRows = AN.summarizeStations(AN.stationObservations(threeRuns(), { tolerance: 1 }), { tolerance: 1 });
   const c = stationRows.find(r => r.key === 'C|mot|D');

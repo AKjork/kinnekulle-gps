@@ -299,7 +299,11 @@
       else if (deviation.median > tol) assessment = 'snal';
       else if (deviation.median < -tol) assessment = 'generos';
       else assessment = 'lagom';
-      const suggestion = actual.median != null ? Math.round(actual.median) : null;
+      // Ändring föreslås bara där bedömningen säger att tidtabellen bör ändras (Snål eller Generös);
+      // annars föreslås planerad tid, eller verklig median i hela minuter när tidtabell saknas
+      const actionable = assessment === 'snal' || assessment === 'generos';
+      const rounded = actual.median != null ? Math.round(actual.median) : null;
+      const suggestion = actionable || planned == null ? rounded : planned;
       rows.push({
         key, from: list[0].from, to: list[0].to,
         n: list.length, nPlanned: withPlan.length,
@@ -309,7 +313,7 @@
         actual, deviation,
         counts: countCategories(withPlan, 'category'),
         assessment, suggestion,
-        change: suggestion != null && planned != null ? Math.round(suggestion - planned) : null
+        change: actionable && suggestion != null && planned != null ? Math.round(suggestion - planned) : null
       });
     }
     // Sträckor med tillräckligt underlag först, störst avvikelse först; sedan få mätningar, sist utan tidtabell

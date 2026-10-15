@@ -89,7 +89,10 @@ Följande räknas fram per sträcka:
 - Avvikelsens median.
 - Antal med för lite tid, i tid och för mycket tid.
 - **Bedömning:** *För få mätningar* om färre än 3 mätningar har tidtabellstider. Annars *Snål* om mediansavvikelsen > +tol, *Generös* om < −tol och i övrigt *Lagom*.
-- **Förslag:** verklig median avrundad till hela minuter, och ändringen jämfört med nuvarande planerade gångtid.
+- **Förslag:**
+  - Vid *Snål* och *Generös*: verklig median avrundad till hela minuter, och ändringen jämfört med nuvarande planerade gångtid.
+  - Vid *Lagom* och *För få mätningar*: planerad gångtid utan ändring. Saknas tidtabell används verklig median avrundad.
+  - Ändrat 2026-10-15 efter slutgranskningen: Lagom visade tidigare en ändring som (−1) när medianen avrundades över en halv minut, i 16 av 47 lagom-sträckor i riktig data.
 
 ### 5.4 Sammanställning per station (station + riktning)
 Följande räknas fram per station och riktning:
