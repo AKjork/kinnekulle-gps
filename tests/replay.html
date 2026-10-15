@@ -647,6 +647,32 @@ test('analys: urval utan körningar med tidtabell ger ett meddelande', async () 
   assertEqual(w.document.getElementById('againstContent').style.display, 'none', 'tabellerna döljs');
 });
 
+// ── Analys mot tidtabell: tidtabellsförslag ──
+
+test('analys: tidtabellsförslaget räknar bara vald riktning och visar antal körningar', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Blomberg' });
+  w.__analys.showTab('timetable');
+  const summary = () => w.document.getElementById('ttSummary').textContent;
+  assert(summary().startsWith('Förslag Lidköping → Blomberg · bygger på 4 körningar'), 'sammanfattning: ' + summary());
+  const text = w.__analys.exportTimetableCsv();
+  for (const part of ['"Sträcka";"Lidköping → Blomberg"', '"Bygger på";"4 körningar"', '"Tidsbas";"Median"', '"Blomberg";"Slut";"+11"']) {
+    assert(text.includes(part), 'saknas i CSV: ' + part);
+  }
+  w.__analys.setFilters({ filterFrom: 'Blomberg', filterTo: 'Lidköping' });
+  assert(summary().includes('bygger på 2 körningar'), 'motsatt riktning: ' + summary());
+  w.__analys.setFilters({ filterDayType: 'helg' });
+  assertEqual(summary(), 'Inga körningar går från Blomberg till Lidköping i urvalet.', 'tomt urval');
+});
+
+test('analys: utskriften av tidtabellsförslaget har rubrik och antal körningar', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Blomberg' });
+  const header = w.__analys.prepareTimetablePrint();
+  assert(header.includes('RailTimer – Tidtabellsförslag Lidköping → Blomberg'), 'rubrik: ' + header);
+  assert(header.includes('Bygger på: 4 körningar'), 'antal: ' + header);
+});
+
 // ── Körning ──
 
 // Bilder i telefonstorlek för granskning (node tests/run-browser-tests.mjs --shot=<namn>)
