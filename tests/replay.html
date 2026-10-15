@@ -826,6 +826,43 @@ test('analys: export och utskrift av Per tåg, även med Ctrl+P', async () => {
   assert(printed.includes('Bygger på: 3 körningar med tidtabell (av 5 i urvalet), 1 tåg'), 'Ctrl+P efter filterbyte: ' + printed);
 });
 
+test('analys: Sträckor visar vad sträckan tar och planerad tid per tåg', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  w.__analys.showTab('segments');
+  const summary = w.document.getElementById('segmentsSummary').textContent;
+  assert(summary.startsWith('3 sträckor med tidtabell, 1 med olika planerad tid för olika tåg · vad sträckan tar bygger på 8 körningar'), 'sammanfattning: ' + summary);
+  assertEqual(tableRows(w, 'segmentsTable').map(r => r.slice(0, 5).concat([r[6]])), [
+    ['Filsbäck → Källby', 'Stopp–stopp', '4,0', '4,0', '6', 'Snål och generös'],
+    ['Källby → Blomberg', 'Stopp–stopp', '3,0', '3,0', '6', 'Lagom'],
+    ['Lidköping → Filsbäck', 'Stopp–stopp', '3,0', '3,0', '6', 'Lagom']
+  ], 'sträckor');
+  const lines = Array.from(w.document.querySelectorAll('#segmentsTable tbody tr')[0].querySelectorAll('.plan-line')).map(l => l.textContent);
+  assertEqual(lines, ['2 min (−2,0): 3346', '6 min (+2,0): 3344'], 'planerad tid per tåg');
+  const show = w.document.getElementById('segmentsShow');
+  show.value = 'olika';
+  show.dispatchEvent(new w.Event('change'));
+  assertEqual(tableRows(w, 'segmentsTable').map(r => r[0]), ['Filsbäck → Källby'], 'olika planerad tid');
+  w.document.querySelector('#segmentsTable tbody tr').click();
+  const detail = w.document.getElementById('segmentDetail');
+  assertEqual(detail.querySelector('h3').textContent, 'Filsbäck → Källby (Stopp–stopp) – 6 mätningar med tidtabell', 'rubrik');
+  assertEqual(tableRows(w, 'segmentObs').length, 6, 'mätningar');
+  assertEqual(tableRows(w, 'segmentObs')[0].slice(4), ['som planerat', 'ja'], 'stannade och räknas');
+});
+
+test('analys: export och utskrift av Sträckor', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  const text = w.__analys.exportSegmentsCsv();
+  for (const part of ['"Filsbäck → Källby";"Stopp–stopp";"4";"4";"6";"Stopp–stopp";"2";"3346";"3";"4";"-2";"Snål";"Snål och generös"',
+    '"Filsbäck → Källby";"Stopp–stopp";"4";"4";"6";"Stopp–stopp";"6";"3344";"3";"4";"2";"Generös";"Snål och generös"']) {
+    assert(text.includes(part), 'saknas i CSV: ' + part);
+  }
+  assert(/^strackor_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn');
+  w.__analys.showTab('segments');
+  w.dispatchEvent(new w.Event('beforeprint'));
+  const printed = w.document.querySelector('#segmentsReport .print-header').textContent;
+  assert(printed.includes('RailTimer – Sträckor och planerad tid') && printed.includes('Bygger på: 3 sträckor med tidtabell; vad sträckan tar från 8 körningar (alla tåg i urvalet)'), 'utskrift: ' + printed);
+});
+
 // ── Körning ──
 
 // Bilder i telefonstorlek för granskning (node tests/run-browser-tests.mjs --shot=<namn>)
