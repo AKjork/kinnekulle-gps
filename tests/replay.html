@@ -648,6 +648,27 @@ test('analys: utskriftshuvudet följer urvalet även vid utskrift med Ctrl+P', a
   assert(tt.includes('Bygger på: 4 körningar'), 'tidtabell: ' + tt);
 });
 
+test('analys: tidig station utan väntan visas som Tidig och inte bland stationer med väntan', async () => {
+  // Planerat uppehåll 0 i Filsbäck: tåget kommer 1,5 min tidigt och åker före planerad ankomst – ingen väntan
+  const early = (id, s) => ({
+    id, trainNumber: '3344', vehicleType: 'Y31', startedAt: atMin(s), aborted: false, startStation: 'Lidköping', endStation: 'Källby',
+    stops: [
+      ttStop('Lidköping', { dep: s, sDep: s }),
+      ttStop('Filsbäck', { arr: s + 1.5, dep: s + 2.5, sArr: s + 3, sDep: s + 3 }),
+      ttStop('Källby', { arr: s + 8, sArr: s + 8 })
+    ]
+  });
+  const w = await loadAnalysWith([early('e1', 420), early('e2', 450), early('e3', 480)]);
+  w.__analys.showTab('against');
+  const row = tableRows(w, 'againstStations').find(r => r[0] === 'Filsbäck (mot Källby)');
+  assert(row, 'raden för Filsbäck saknas: ' + JSON.stringify(tableRows(w, 'againstStations')));
+  assertEqual(row[row.length - 1], 'Tidig', 'bedömning');
+  const show = w.document.getElementById('againstShow');
+  show.value = 'vantan';
+  show.dispatchEvent(new w.Event('change'));
+  assertEqual(tableRows(w, 'againstStations').filter(r => r[0] === 'Filsbäck (mot Källby)').length, 0, 'ingen väntan');
+});
+
 test('analys: med två stationer valda visar Mot tidtabell bara sträckan mellan dem i den riktningen', async () => {
   const w = await loadAnalysWith(againstRuns());
   w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Källby' });
