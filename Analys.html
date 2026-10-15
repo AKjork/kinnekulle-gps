@@ -285,6 +285,42 @@
       </div>
     </div>
     <div class="filters">
+      <div class="filter-group">
+        <label for="filterTimeOfDay">Tid på dygnet</label>
+        <select id="filterTimeOfDay">
+          <option value="">Alla</option>
+          <option value="morgon">Morgon 05–09</option>
+          <option value="dag">Dag 09–15</option>
+          <option value="eftermiddag">Eftermiddag 15–18</option>
+          <option value="kvall">Kväll 18–05</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="filterDayType">Dag</label>
+        <select id="filterDayType">
+          <option value="">Alla</option>
+          <option value="vardag">Vardag</option>
+          <option value="helg">Helg</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="filterTolerance">Tolerans</label>
+        <select id="filterTolerance" title="Avvikelser inom toleransen räknas som i tid">
+          <option value="0.5">±0,5 min</option>
+          <option value="1" selected>±1 min</option>
+          <option value="2">±2 min</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="filterStationType">Stationstyp</label>
+        <select id="filterStationType" title="Gäller stationer i Mot tidtabell och uppehållstider">
+          <option value="">Alla</option>
+          <option value="stopp">Stopp</option>
+          <option value="passage">Passage</option>
+        </select>
+      </div>
+    </div>
+    <div class="filters">
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.85rem;color:var(--ink-dim)">
         <input type="checkbox" id="chkMergeDir" checked> Slå ihop riktningar (A↔B)
       </label>
@@ -425,6 +461,7 @@
 </main>
 
 <script src="railtimer-github.js"></script>
+<script src="railtimer-analys.js"></script>
 <script>
 (function(){
   'use strict';
@@ -432,6 +469,7 @@
   const STORAGE_KEY = 'kmon_gps_logs_v1';
   const GH_KEY = 'railtimer_github_v1'; // { repo, token, branch } – samma format som i appen
   const TEST_MODE = new URLSearchParams(location.search).has('test');
+  const AN = window.RailTimerAnalys;    // analys mot tidtabell (railtimer-analys.js)
   let testFetch = null;                 // simulerat GitHub i testerna
   let allLogs = [];
   let segments = [];
@@ -441,6 +479,12 @@
   let ttRoute = [];
   let ttRunningStats = {};
   let ttDwellStats = {};
+  let currentRuns = [];          // körningarna i aktuellt urval
+  let ttChoices = {};            // valda stopp i tidtabellsförslaget: { station: true/false }
+  let ttRouteKey = '';
+  let lastTimetable = null;      // senaste tidtabellsförslaget
+  let againstState = null;       // senaste analysen i Mot tidtabell
+  let lastDownload = null;       // senaste exporten (läses av testerna)
 
   // Elements
   const els = {
@@ -453,6 +497,10 @@
     filterTo: document.getElementById('filterTo'),
     filterDateFrom: document.getElementById('filterDateFrom'),
     filterDateTo: document.getElementById('filterDateTo'),
+    filterTimeOfDay: document.getElementById('filterTimeOfDay'),
+    filterDayType: document.getElementById('filterDayType'),
+    filterTolerance: document.getElementById('filterTolerance'),
+    filterStationType: document.getElementById('filterStationType'),
     btnClearFilters: document.getElementById('btnClearFilters'),
     chkMergeDir: document.getElementById('chkMergeDir'),
     statTrips: document.getElementById('statTrips'),
@@ -480,6 +528,10 @@
   els.filterTo.addEventListener('input', runAnalysis);
   els.filterDateFrom.addEventListener('change', runAnalysis);
   els.filterDateTo.addEventListener('change', runAnalysis);
+  els.filterTimeOfDay.addEventListener('change', runAnalysis);
+  els.filterDayType.addEventListener('change', runAnalysis);
+  els.filterTolerance.addEventListener('change', runAnalysis);
+  els.filterStationType.addEventListener('change', runAnalysis);
   document.getElementById('ttStartTime').addEventListener('input', generateTimetable);
   document.getElementById('ttTimeBasis').addEventListener('change', generateTimetable);
 
@@ -493,6 +545,18 @@
       runAnalysis();
     });
   });
+
+  // Urval på körningsnivå från filterpanelen (samma i alla flikar)
+  function currentFilter(){
+    return {
+      vehicle: els.filterVehicle.value,
+      train: validTrains.has(els.filterTrain.value) ? els.filterTrain.value : '',
+      dateFrom: els.filterDateFrom.value,
+      dateTo: els.filterDateTo.value,
+      timeOfDay: els.filterTimeOfDay.value,
+      dayType: els.filterDayType.value
+    };
+  }
 
   function updateModeLabels(){
     const isRunning = currentMode === 'running';
@@ -596,7 +660,7 @@
     els.loadStatus.textContent = 'Hämtar från GitHub…';
     try{
       const r = await RailTimerGitHub.loadRunsFromRepo({ client, cache: BlobCache });
-      allLogs = r.runs;
+      allLogs = AN.normalizeRuns(r.runs);
       let text = `${r.runs.length} körningar från GitHub (${r.newFiles} nya filer).`;
       if(r.errors.length) text += ` ${r.errors.length} filer kunde inte läsas.`;
       els.loadStatus.textContent = text;
@@ -607,10 +671,6 @@
     }
   }
 
-  if(TEST_MODE){
-    window.__analys = { setFetchForTest: fn => { testFetch = fn; }, loadFromGithub, getLogs: () => allLogs };
-  }
-
   function loadFromLocalStorage(){
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -618,8 +678,8 @@
         els.loadStatus.textContent = 'Inga sparade körningar hittades i RailTimer.';
         return;
       }
-      allLogs = JSON.parse(raw);
-      if(!Array.isArray(allLogs)) allLogs = [];
+      const parsed = JSON.parse(raw);
+      allLogs = AN.normalizeRuns(Array.isArray(parsed) ? parsed : []);
       els.loadStatus.textContent = `Laddade ${allLogs.length} körningar från RailTimer.`;
       setupFilters();
       runAnalysis();
@@ -658,6 +718,7 @@
         seen.add(key);
         allLogs.push(log);
       }
+      allLogs = AN.normalizeRuns(allLogs);
 
       const fileWord = totalFiles === 1 ? 'fil' : 'filer';
       let statusText = `Laddade ${allLogs.length} körningar från ${totalFiles} ${fileWord}.`;
@@ -718,6 +779,10 @@
     els.filterTo.value = '';
     els.filterDateFrom.value = '';
     els.filterDateTo.value = '';
+    els.filterTimeOfDay.value = '';
+    els.filterDayType.value = '';
+    els.filterTolerance.value = '1';
+    els.filterStationType.value = '';
     runAnalysis();
   }
 
@@ -728,27 +793,14 @@
     }
 
     const mergeDir = els.chkMergeDir.checked;
-    const filterVehicle = els.filterVehicle.value;
-    const filterTrain = validTrains.has(els.filterTrain.value) ? els.filterTrain.value : '';
     // Only use station filter if it's a valid station name
     const filterFrom = validStations.has(els.filterFrom.value) ? els.filterFrom.value : '';
     const filterTo = validStations.has(els.filterTo.value) ? els.filterTo.value : '';
-    const filterDateFrom = els.filterDateFrom.value;
-    const filterDateTo = els.filterDateTo.value;
 
-    // Filter logs first
-    let filteredLogs = allLogs.filter(log => {
-      if(log.aborted) return false;
-      if(filterVehicle && log.vehicleType !== filterVehicle) return false;
-      if(filterTrain && log.trainNumber !== filterTrain) return false;
-      if(filterDateFrom || filterDateTo){
-        const logDate = log.startedAt ? new Date(log.startedAt).toISOString().slice(0,10) : null;
-        if(!logDate) return false;
-        if(filterDateFrom && logDate < filterDateFrom) return false;
-        if(filterDateTo && logDate > filterDateTo) return false;
-      }
-      return true;
-    });
+    // Filter logs first – samma urval i alla flikar (datum, tid på dygnet och dag i lokal tid)
+    const filter = currentFilter();
+    let filteredLogs = allLogs.filter(log => AN.runMatches(log, filter));
+    currentRuns = filteredLogs;
 
     // Build segments based on mode
     if(currentMode === 'running'){
@@ -765,7 +817,7 @@
         }
       }
     } else {
-      segments = buildDwellSegments(filteredLogs);
+      segments = buildDwellSegments(filteredLogs, els.filterStationType.value);
 
       // Filter by station if specified (OR logic)
       if(filterFrom || filterTo){
@@ -912,7 +964,7 @@
     return results;
   }
 
-  function buildDwellSegments(logs){
+  function buildDwellSegments(logs, stationType){
     const results = [];
 
     for(const log of logs){
@@ -920,6 +972,7 @@
       const logDate = log.startedAt ? new Date(log.startedAt).toISOString().slice(0,10) : '?';
 
       for(const stop of stops){
+        if(stationType && AN.stopType(stop) !== stationType) continue;
         const hasArrival = !!stop.actualArrival;
         const hasDeparture = !!stop.actualDeparture;
 
@@ -1563,6 +1616,21 @@
       html += '</p>';
     }
     el.innerHTML = html;
+  }
+
+  // Bara i testläge: tests/replay.html styr verktyget genom de här funktionerna
+  if(TEST_MODE){
+    window.__analys = {
+      setFetchForTest: fn => { testFetch = fn; },
+      loadFromGithub,
+      getLogs: () => allLogs,
+      setFilters(values){
+        for(const [id, value] of Object.entries(values)) document.getElementById(id).value = value;
+        runAnalysis();
+      },
+      showTab(name){ document.querySelector('.tab[data-tab="' + name + '"]').click(); },
+      getLastDownload: () => lastDownload
+    };
   }
 
   // Initialize

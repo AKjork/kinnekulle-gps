@@ -479,6 +479,106 @@ test('analys: utan inställningar öppnas GitHub-inställningarna', async () => 
   assertEqual(w.document.getElementById('ghRepo').value, 'AKjork/railtimer-data', 'förifyllt repo');
 });
 
+// ── Analys mot tidtabell: urval och stationsnamn ──
+
+// Minuter efter midnatt den 15 oktober 2026 (torsdag, lokal tid) som ISO-tid
+function atMin(min, day) { return new Date(new Date(2026, 9, day || 15).getTime() + Math.round(min * 60000)).toISOString(); }
+
+function ttStop(name, o) {
+  const t = v => (v == null ? null : atMin(v));
+  return {
+    name,
+    actualArrival: t(o.arr), actualDeparture: t(o.dep),
+    scheduledArrival: t(o.sArr), scheduledDeparture: t(o.sDep),
+    arrivalSource: o.arr != null ? 'gps' : '', departSource: o.dep != null ? 'gps' : '',
+    shouldStop: true
+  };
+}
+
+/* Lidköping → Blomberg med tidtabell 07:00, 07:03/07:04, 07:09/07:10, 07:13 (minuter efter start):
+   Lidköping → Filsbäck tar 2–3 min för lång tid (snål), Filsbäck → Källby 4 min för kort tid (generös,
+   väntan i Källby), Källby → Blomberg i tid. Tre morgonkörningar, en kvällskörning helt i tid och två
+   körningar mitt på dagen i motsatt riktning utan tidtabell. */
+function againstRuns() {
+  const forward = (id, s, ab) => {
+    const bArr = s + ab, bDep = bArr + 0.5, cArr = bDep + 1, cDep = s + 10, dArr = cDep + 3;
+    return {
+      id, trainNumber: '3344', vehicleType: 'Y31', startedAt: atMin(s), aborted: false, startStation: 'Lidköping', endStation: 'Blomberg',
+      stops: [
+        ttStop('Lidköping', { dep: s, sDep: s }),
+        ttStop('Filsbäck', { arr: bArr, dep: bDep, sArr: s + 3, sDep: s + 4 }),
+        ttStop('Källby', { arr: cArr, dep: cDep, sArr: s + 9, sDep: s + 10 }),
+        ttStop('Blomberg', { arr: dArr, sArr: s + 13 })
+      ]
+    };
+  };
+  const onTime = (id, s) => ({
+    id, trainNumber: '3344', vehicleType: 'Y31', startedAt: atMin(s), aborted: false, startStation: 'Lidköping', endStation: 'Blomberg',
+    stops: [
+      ttStop('Lidköping', { dep: s, sDep: s }),
+      ttStop('Filsbäck', { arr: s + 3, dep: s + 4, sArr: s + 3, sDep: s + 4 }),
+      ttStop('Källby', { arr: s + 9, dep: s + 10, sArr: s + 9, sDep: s + 10 }),
+      ttStop('Blomberg', { arr: s + 13, sArr: s + 13 })
+    ]
+  });
+  const reverse = (id, s) => ({
+    id, trainNumber: '3355', vehicleType: 'Y31', startedAt: atMin(s), aborted: false, startStation: 'Blomberg', endStation: 'Lidköping',
+    stops: [
+      ttStop('Blomberg', { dep: s }),
+      ttStop('Källby', { arr: s + 4, dep: s + 5 }),
+      ttStop('Filsbäck', { arr: s + 10, dep: s + 11 }),
+      ttStop('Lidköping', { arr: s + 16 })
+    ]
+  });
+  return [forward('f1', 420, 5), forward('f2', 450, 5.5), forward('f3', 480, 6), onTime('k1', 1140), reverse('r1', 720), reverse('r2', 750)];
+}
+
+// Laddar analysverktyget med körningarna som enskilda filer i ett simulerat repo
+async function loadAnalysWith(runs) {
+  const w = await loadAnalys();
+  w.localStorage.clear();
+  await new Promise(resolve => { const req = w.indexedDB.deleteDatabase('railtimer-analys'); req.onsuccess = req.onerror = req.onblocked = () => resolve(); });
+  w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'test-token', branch: 'main' }));
+  const fake = browserFakeGitHub(w);
+  runs.forEach(r => fake.put('korningar/2026/' + r.id + '.json', JSON.stringify(r)));
+  w.__analys.setFetchForTest(fake.fetch);
+  await w.__analys.loadFromGithub();
+  return w;
+}
+
+// Tabellens rader som listor med cellernas text
+function tableRows(w, id) {
+  return Array.from(w.document.querySelectorAll('#' + id + ' tbody tr')).map(tr => Array.from(tr.cells).map(td => td.textContent.trim()));
+}
+
+test('analys: tid på dygnet begränsar urvalet', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  const trips = () => w.document.getElementById('statTrips').textContent;
+  assertEqual(trips(), '6', 'alla körningar');
+  w.__analys.setFilters({ filterTimeOfDay: 'morgon' });
+  assertEqual(trips(), '3', 'morgon');
+  w.__analys.setFilters({ filterTimeOfDay: 'dag' });
+  assertEqual(trips(), '2', 'dag');
+  w.__analys.setFilters({ filterTimeOfDay: 'kvall' });
+  assertEqual(trips(), '1', 'kväll');
+  w.__analys.setFilters({ filterTimeOfDay: '', filterDayType: 'helg' });
+  assertEqual(trips(), '0', 'helg');
+  // Två valda stationer får inte få analysen att krascha
+  w.__analys.setFilters({ filterDayType: '', filterFrom: 'Lidköping', filterTo: 'Blomberg' });
+  assertEqual(trips(), '6', 'två stationer valda');
+});
+
+test('analys: samma station med två namn slås ihop vid inläsning', async () => {
+  const runs = againstRuns().slice(0, 2);
+  runs[0].stops[3].name = 'Herrljunga';
+  runs[1].stops[3].name = 'Herrljunga C';
+  const w = await loadAnalysWith(runs);
+  const names = new Set(w.__analys.getLogs().map(r => r.stops[3].name));
+  assertEqual(Array.from(names), ['Herrljunga C'], 'stationsnamn');
+  const options = Array.from(w.document.querySelectorAll('#stationList1 option')).map(o => o.value);
+  assert(!options.includes('Herrljunga'), 'det gamla namnet ska inte finnas i stationslistan');
+});
+
 // ── Körning ──
 
 // Bilder i telefonstorlek för granskning (node tests/run-browser-tests.mjs --shot=<namn>)
