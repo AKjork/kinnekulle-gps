@@ -507,6 +507,10 @@ André 2026-10-15: väntan vid en station är ointressant, eftersom den följer 
 - **Marginal** = planerad gångtid − vad sträckan tar.
 - **Tappad tid** vid en station = avgångsavvikelse − max(ankomstavvikelse, 0). Vid första stationen är tappad tid avgångsavvikelsen, typen *Avgång från start*.
 - **Klockslag** är minuter efter midnatt på körningens startdag. De räknas på klocka och kalenderdag (`clockMinutes`), så att bytet till vintertid inte flyttar tiderna.
+- **Tidtabeller per tågnummer** (`trainVariants`): skiljer de planerade tiderna vid samma station mer än 10 min blir körningarna egna tidtabeller, till exempel "13346 vardag" och "13346 söndag".
+- **Tid över** = planerad restid − sträckornas tid − tågets egna uppehåll utan väntan. Det är samma beräkning som i förslaget. *Marginal gångtid* per sträcka räknar inte med uppehållen.
+- **Station 1 mitt på linjen:** en avskuren körning har `cutStart` (`sliceRuns`), och då räknas första stationen som mellanstation.
+- **Tappat tid** i listan räknar inte avgång från start, eftersom orsaken där är okänd.
 
 ### Borttaget
 - Mot tidtabell och väntan per station.

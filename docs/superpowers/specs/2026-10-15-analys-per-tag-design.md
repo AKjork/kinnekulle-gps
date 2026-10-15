@@ -22,7 +22,7 @@ Verifierat den 15 oktober på datarepot: 147 körningar, varav 89 med tidtabell.
   - Hällekis → Forshem är planerad till 3, 4 eller 5 min, men tar 3,0–3,2 min.
   - Lugnås → Mariestad är planerad till 10–12 min, men tar ungefär 9,4 min.
   - Källby → Blomberg är planerad till 2 min för tåg 3332 och 3 min för övriga, men tar 3 min för alla.
-- Bara tåg 13346 har fått ändrad tidtabell mellan körningarna. Det gäller 8 sträckor.
+- Tåg 13346 kör en annan tidtabell på söndagar: från Vara 16:08 och från Lidköping 17:02. På vardagar går det från Lidköping 15:30, alltså 92 min tidigare. Det är rättat efter slutgranskningen, se 4.6. Inget annat tåg har olika tidtabeller i datan.
 - 28 gånger tappade ett tåg mer än 1 min vid en station, oftast i Lidköping och Vara.
 - Körningarna fördelas på 65 tågnummer. 15 av dem har minst 3 körningar med tidtabell, och inget har fler än 8.
 - Ett planerat stopp passerades 202 gånger av 896. Där både stopp och passage har mätts skiljer gångtiden oftast mindre än 0,3 min.
@@ -76,8 +76,25 @@ I Sträckor får en sträcka där olika tåg är både snåla och generösa bed�
 - Typen är *Uppehåll* vid planerat stopp och *Stopp vid passage* vid planerad passage. Det senare betyder att tåget stod där det skulle passera.
 - **Ett tillfälle** är tappad tid > tolerans.
 
+**Station 1 mitt på linjen:** har körningen skurits av vid Station 1 (`cutStart` från `sliceRuns`) har första stationen en mätt ankomst. Den räknas då som mellanstation och inte som *Avgång från start*. Rättat efter slutgranskningen: förut räknades förseningen tåget hade med sig som tappad tid.
+
+**Listan räknar inte avgång från start:** *Tappat tid* och *Mest tappat* räknar bara *Uppehåll* och *Stopp vid passage*. Vid avgång från start är orsaken okänd, till exempel ett sent inkommande tåg. Den syns i kolumnen Avgång start och i tågkortet.
+
 ### 4.5 Klockslag
 Planerade och föreslagna tider är minuter efter midnatt den dag körningen startade. De räknas från lokala klockslag och kalenderdagar, så att bytet mellan sommar- och vintertid inte flyttar tiderna.
+
+### 4.6 Flera tidtabeller för samma tågnummer
+`trainVariants` delar ett tågnummer i egna tidtabeller. Två körningar räknas som olika tidtabeller när deras planerade tider vid samma station skiljer mer än 10 min (`VARIANT_GAP`).
+- **Namn:** med en tidtabell är nyckel och namn tågnumret. Med flera får varje tidtabell namnet "<tåg> <dagar>", till exempel *13346 vardag* och *13346 söndag*. Har två tidtabeller samma dagar läggs klockslaget för första avgången till.
+- **Användning:** Per tåg, Sträckor och Tidtabell räknar med tidtabellen och inte med bara tågnumret.
+- Infört efter slutgranskningen.
+
+### 4.7 Tid över
+**Tid över** = planerad restid − vad tåget behöver. Vad tåget behöver är sträckornas tid plus tågets egna uppehåll utan väntan, räknat med median. Det är samma beräkning som tidtabellsförslaget.
+
+Marginalen per sträcka heter *Marginal gångtid*. Den räknar inte med uppehållen, som ofta ryms i den planerade gångtiden när ankomst och avgång har samma minut.
+
+Ändrat efter slutgranskningen: listan visade förut den summerade gångtidsmarginalen, som i median var 3,3 min för hög.
 
 ## 5. Beräkningar i `railtimer-analys.js`
 
@@ -199,7 +216,7 @@ Sammanfattningen visar:
 | Körningar | körningar med tidtabell |
 | Avgång start | median avvikelse vid avgång från första stationen |
 | Ankomst slut | median avvikelse vid ankomst till sista stationen |
-| Marginal | summerad marginal, med "x av y sträckor" när underlag saknas |
+| Tid över | planerad restid − vad tåget behöver, enligt 4.7 |
 | Tappat tid | antal tillfällen |
 | Mest tappat | största tappade tid |
 
