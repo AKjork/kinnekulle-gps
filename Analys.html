@@ -398,14 +398,14 @@
               <th class="num" title="Avvikelse vid avgång från första mätta station, median (min)">Avgång start</th>
               <th class="num" title="Avvikelse vid ankomst till sista mätta station, median (min)">Ankomst slut</th>
               <th class="num" title="Planerad restid − vad tåget behöver: sträckornas tid och tågets egna uppehåll utan väntan (min). Positivt = tid över, negativt = för lite tid">Tid över</th>
-              <th class="num" title="Gånger tåget tappade mer än toleransen vid en station">Tappat tid</th>
-              <th class="num" title="Mest tappad tid vid en station (min)">Mest tappat</th>
+              <th class="num" title="Gånger tåget tappade mer än toleransen vid uppehåll eller stopp vid passage. Sen avgång från första stationen räknas inte här (orsaken är okänd); se Avgång start">Tappat tid</th>
+              <th class="num" title="Mest tappad tid vid uppehåll eller stopp vid passage (min)">Mest tappat</th>
             </tr></thead>
             <tbody></tbody>
           </table>
         </div>
         <div id="trainDetail"></div>
-        <p class="meta no-print">Klicka på ett tåg för att se dess sträckor, uppehåll och gångerna det tappade tid. <strong>Sträckan tar</strong> = median av mätta gångtider för alla tåg som stannade och passerade som tidtabellen säger; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Tid över</strong> = planerad restid − vad tåget behöver (sträckornas tid och tågets egna uppehåll utan väntan). <strong>Marginal gångtid</strong> per sträcka = planerad gångtid − vad sträckan tar; den räknar inte med uppehållen, som ofta ryms i den planerade gångtiden när ankomst och avgång har samma minut. <strong>Tappad tid</strong> vid en station = avgångens avvikelse − ankomstens försening (tidig ankomst räknas som 0), alltså hur mycket längre tåget stod än tidtabellen gav utrymme för. Resandeantal finns inte i mätningarna; datum, veckodag och klockslag visas så att mönster syns.</p>
+        <p class="meta no-print">Klicka på ett tåg för att se dess sträckor, uppehåll och gångerna det tappade tid. <strong>Sträckan tar</strong> = median av mätta gångtider för alla tåg som stannade och passerade som tidtabellen säger; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Tid över</strong> = planerad restid − vad tåget behöver (sträckornas tid och tågets egna uppehåll utan väntan). <strong>Marginal gångtid</strong> per sträcka = planerad gångtid − vad sträckan tar; den räknar inte med uppehållen, som ofta ryms i den planerade gångtiden när ankomst och avgång har samma minut. <strong>Tappad tid</strong> vid en station = avgångens avvikelse − ankomstens försening (tidig ankomst räknas som 0), alltså hur mycket längre tåget stod än tidtabellen gav utrymme för. Vid första mätta stationen är orsaken okänd (till exempel ett sent inkommande tåg): den visas som Avgång från start i tågkortet men räknas inte i Tappat tid. Resandeantal finns inte i mätningarna; datum, veckodag och klockslag visas så att mönster syns.</p>
       </div>
     </div>
   </div>

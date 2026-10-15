@@ -547,6 +547,7 @@
     const allowed = EVENT_TYPES[stationType] || null;
     const events = times.filter(t => t.lost > tol && (!allowed || allowed.includes(t.type)))
       .sort((a, b) => b.lost - a.lost || latestFirst(a, b));
+    const stopEvents = events.filter(e => e.type !== 'start');
 
     const endDelay = stats(tRuns.map(run => {
       const last = run.stops[run.stops.length - 1];
@@ -569,8 +570,10 @@
       route, routeLabel: route.length ? `${route[0]} → ${route[route.length - 1]}` : '',
       startDelay: stats(times.filter(t => t.index === 0).map(t => t.departureDev)),
       endDelay, segments, margin, travel, dwells, events,
-      eventCount: events.length,
-      lostMax: events.length ? Math.max(...events.map(e => e.lost)) : null
+      // Listan räknar bara uppehåll och stopp vid passage: sen avgång från första stationen har okänd orsak
+      // (t.ex. sent inkommande tåg) och visas i Avgång start och i tågkortet
+      eventCount: stopEvents.length,
+      lostMax: stopEvents.length ? Math.max(...stopEvents.map(e => e.lost)) : null
     };
   }
 

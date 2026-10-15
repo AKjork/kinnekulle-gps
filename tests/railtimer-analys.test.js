@@ -374,3 +374,15 @@ test('summarizeTrains: Tid över räknar med tågets uppehåll, inte bara gångt
   assert.equal(row.margin.sum, 1, 'gångtidsmarginalen');
   assert.deepEqual([row.travel.planned, row.travel.needed, row.travel.spare], [9, 9, 0], 'ingen tid över när uppehållet räknas');
 });
+
+test('summarizeTrains: sen avgång från första stationen räknas inte bland tillfällena i listan', () => {
+  // Tåget går 3 min sent från A (orsaken är okänd, t.ex. sent inkommande tåg) och håller tiden därefter
+  const late = run('s1', [
+    stop('A', { dep: [8, 3], sDep: [8, 0] }),
+    stop('B', { arr: [8, 7], dep: [8, 8], sArr: [8, 4], sDep: [8, 5] }),
+    stop('C', { arr: [8, 12], sArr: [8, 9] })
+  ], { trainNumber: '3370' });
+  const row = AN.summarizeTrains([late], AN.segmentNeeds(AN.segmentObservations([late], {})), { tolerance: 1 }).rows[0];
+  assert.deepEqual(row.events.map(e => [e.station, e.type, e.lost]), [['A', 'start', 3]], 'tillfället syns i tågkortet');
+  assert.deepEqual([row.eventCount, row.lostMax, row.startDelay.median], [0, null, 3], 'men inte i listans Tappat tid; Avgång start visar det');
+});
