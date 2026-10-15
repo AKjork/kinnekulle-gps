@@ -714,11 +714,13 @@
   All data sparas endast lokalt i webbläsaren på den här enheten.
 </footer>
 
+<script src="railtimer-avbrott.js"></script>
 <script>
 (function(){
   'use strict';
 
   const APP_VERSION = '2026-10-15';
+  const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const DEFAULT_RADIUS = 200;
   const EXTRA_MARGIN = 150;
   const SPEED_THRESHOLD_KMH = 2; // Sänkt från 5 - endast riktigt stopp räknas
@@ -1526,6 +1528,9 @@
     state.autoReason='';
     state.aborted=false;
     state.journeyId=Date.now().toString(36); // blir körningens id när resan sparas
+    state.interruptions=[];
+    state.lastFix=null;
+    state.interruptionTipShown=false;
   }
 
   function buildRouteFromTimetable(timetableResult, startSig, endSig){
@@ -1633,6 +1638,7 @@
     const lat=pos.coords.latitude;
     const lon=pos.coords.longitude;
     const acc=pos.coords.accuracy;
+    checkForInterruption({ t:state.lastFixTime, lat, lon });
     const speed=pos.coords.speed!=null?pos.coords.speed:estimateSpeedFromHistory(pos);
     state.lastSpeed=speed;
     state.lastSpeedTime=pos.timestamp||Date.now();
@@ -1652,6 +1658,49 @@
     renderRouteMap();
     updateDelaySummary();
     saveActiveJourney(); // Auto-save journey state
+  }
+
+  // Avbrott: mer än 20 s sedan förra positionen och tåget har flyttat sig minst 150 m
+  // (samtal, appen i bakgrunden, GPS-glapp). Vanliga positioner påverkas inte.
+  function checkForInterruption(fix){
+    const prev=state.lastFix;
+    state.lastFix=fix;
+    if(!AV) return;
+    const intr=AV.detectInterruption(prev, fix);
+    if(intr) handleInterruption(intr, fix);
+  }
+
+  function handleInterruption(intr, fix){
+    const record={ from:new Date(intr.from).toISOString(), to:new Date(intr.to).toISOString(), distanceM:intr.distanceM };
+    state.interruptions.push(record);
+    // Ikappkörning: stationer som passerades under avbrottet markeras som missade
+    const plan=AV.planCatchUp(state.route, {
+      lastReachedIndex:state.lastReachedIndex,
+      nextIndex:state.nextIndex,
+      awaitingDepartureIndex:state.awaitingDepartureIndex
+    }, fix);
+    if(plan){
+      plan.passed.forEach(i=>AV.markStationMissed(state.route[i], record));
+      if(plan.departedDuringGap!=null) AV.markDepartureUnknown(state.route[plan.departedDuringGap], record);
+      state.lastReachedIndex=plan.lastReachedIndex;
+      state.nextIndex=plan.nextIndex;
+      if(state.awaitingDepartureIndex!=null && state.awaitingDepartureIndex<plan.nextIndex) state.awaitingDepartureIndex=null;
+      if(state.departureProvisionalIdx!=null && state.departureProvisionalIdx<plan.nextIndex) state.departureProvisionalIdx=null;
+    }
+    const secs=Math.round((intr.to-intr.from)/1000);
+    const length=secs<90?`${secs} s`:`${Math.round(secs/60)} min`;
+    showJourneyMessage(`Avbrott i mätningen (${length}) – tider under avbrottet sparas som saknade`, true);
+    clearTimeout(handleInterruption._timer);
+    handleInterruption._timer=setTimeout(()=>{ els.journeyMsg.style.display='none'; }, 8000);
+    if(!state.interruptionTipShown){
+      state.interruptionTipShown=true;
+      showHeaderStatus('Under samtal: gå tillbaka till RailTimer så fortsätter mätningen', false);
+    }
+  }
+
+  // Tid som registrerades under ett avbrott – visas som "avbrott" i stället för en klocktid
+  function isInterruptedTime(t){
+    return !!(AV && t && AV.isWithinInterruption(t, state.interruptions));
   }
 
   const speedHistory=[];
@@ -2113,8 +2162,11 @@
     return ` <span class="badge ${cls}">${text}</span>`;
   }
 
-  // Faktisk tid om den finns, annars tidtabellens tid nedtonad
-  function timeCell(cls, actual, scheduled){
+  // Faktisk tid om den finns, annars tidtabellens tid nedtonad. Tider under avbrott visas som "avbrott".
+  function timeCell(cls, actual, scheduled, timeWindow){
+    if((actual && isInterruptedTime(actual)) || (!actual && timeWindow)){
+      return `<span class="${cls} planned" title="Tiden saknas på grund av avbrott i mätningen">avbrott</span>`;
+    }
     if(actual) return `<span class="${cls}"><strong>${formatTime(actual)}</strong>${delayBadge(actual, scheduled)}</span>`;
     if(scheduled) return `<span class="${cls} planned" title="Enligt tidtabell">${formatClock(scheduled)}</span>`;
     return `<span class="${cls} planned">–</span>`;
@@ -2157,14 +2209,18 @@
     else if(state.nextIndex===idx) classes.push('active');
     if(expandedCards.has(idx)) classes.push('expanded');
     // Startstationen har ingen ankomst och slutstationen ingen avgång
-    const done = idx===0 ? !!station.actualDeparture : (isLast ? !!station.actualArrival : !!(station.actualArrival && station.actualDeparture));
+    const done = station.missedReason ? true : (idx===0 ? !!station.actualDeparture : (isLast ? !!station.actualArrival : !!(station.actualArrival && station.actualDeparture)));
     if(done) classes.push('done');
     card.className=classes.join(' ');
 
     const stopIcon = station.shouldStop ? '' : ' ⏩';
     const times=[];
-    if(idx>0 || station.actualArrival) times.push(timeCell('arr', station.actualArrival, station.scheduledArrival));
-    if(!isLast || station.actualDeparture) times.push(timeCell('dep', station.actualDeparture, station.scheduledDeparture));
+    if(station.missedReason){
+      times.push('<span class="planned">missad – avbrott</span>');
+    }else{
+      if(idx>0 || station.actualArrival) times.push(timeCell('arr', station.actualArrival, station.scheduledArrival, station.arrivalWindow));
+      if(!isLast || station.actualDeparture) times.push(timeCell('dep', station.actualDeparture, station.scheduledDeparture, station.departureWindow));
+    }
     const dist=station.lastSeenDistance!=null?formatDistance(station.lastSeenDistance):'';
     card.querySelector('.card-main').innerHTML=`
       <div class="card-title-row">
@@ -2380,11 +2436,16 @@
 
     const rows=stops.map((st,idx)=>{
       const parts=[];
-      if(idx>0 || st.actualArrival){
-        parts.push(`<span>↓ <strong>${st.actualArrival?formatTime(st.actualArrival):'–'}</strong>${st.scheduledArrival?` <small>(${formatClock(st.scheduledArrival)})</small>`:''}${delayBadge(st.actualArrival, st.scheduledArrival)}</span>`);
-      }
-      if(idx<stops.length-1 || st.actualDeparture){
-        parts.push(`<span>↑ <strong>${st.actualDeparture?formatTime(st.actualDeparture):'–'}</strong>${st.scheduledDeparture?` <small>(${formatClock(st.scheduledDeparture)})</small>`:''}${delayBadge(st.actualDeparture, st.scheduledDeparture)}</span>`);
+      const shown=(t, timeWindow)=>t?formatTime(t):(timeWindow?'avbrott':'–');
+      if(st.missedReason){
+        parts.push('<span>missad – avbrott</span>');
+      }else{
+        if(idx>0 || st.actualArrival){
+          parts.push(`<span>↓ <strong>${shown(st.actualArrival, st.arrivalWindow)}</strong>${st.scheduledArrival?` <small>(${formatClock(st.scheduledArrival)})</small>`:''}${delayBadge(st.actualArrival, st.scheduledArrival)}</span>`);
+        }
+        if(idx<stops.length-1 || st.actualDeparture){
+          parts.push(`<span>↑ <strong>${shown(st.actualDeparture, st.departureWindow)}</strong>${st.scheduledDeparture?` <small>(${formatClock(st.scheduledDeparture)})</small>`:''}${delayBadge(st.actualDeparture, st.scheduledDeparture)}</span>`);
+        }
       }
       if(st.actualArrival && st.actualDeparture && idx>0 && idx<stops.length-1){
         parts.push(`<span>uppehåll ${formatDuration((new Date(st.actualDeparture)-new Date(st.actualArrival))/1000)}</span>`);
@@ -2729,23 +2790,31 @@
       aborted:!!aborted,
       notes:state.notes,
       interruptions:(state.interruptions||[]).slice(),
-      stops:state.route.map(st=>({
-        name:st.name,
-        sig:st.sig||'',
-        lat:st.lat,
-        lon:st.lon,
-        radius:st.radius,
-        actualArrival:st.actualArrival,
-        actualDeparture:st.actualDeparture,
-        scheduledArrival:st.scheduledArrival,
-        scheduledDeparture:st.scheduledDeparture,
-        arrivalSource:st.arrivalSource,
-        departSource:st.departSource,
-        shouldStop:st.shouldStop,
-        excludeInboundRun:!!st.excludeInboundRun,
-        notes:st.notes||''
-      }))
+      stops:state.route.map(st=>{
+        const stop={
+          name:st.name,
+          sig:st.sig||'',
+          lat:st.lat,
+          lon:st.lon,
+          radius:st.radius,
+          actualArrival:st.actualArrival,
+          actualDeparture:st.actualDeparture,
+          scheduledArrival:st.scheduledArrival,
+          scheduledDeparture:st.scheduledDeparture,
+          arrivalSource:st.arrivalSource,
+          departSource:st.departSource,
+          shouldStop:st.shouldStop,
+          excludeInboundRun:!!st.excludeInboundRun,
+          notes:st.notes||''
+        };
+        if(st.arrivalWindow) stop.arrivalWindow=st.arrivalWindow;
+        if(st.departureWindow) stop.departureWindow=st.departureWindow;
+        if(st.missedReason) stop.missedReason=st.missedReason;
+        return stop;
+      })
     };
+    // Tider som registrerades under ett avbrott sparas aldrig som riktiga tider
+    if(AV) entry.stops=AV.applyInterruptionWindows(entry.stops, entry.interruptions);
     logs.push(entry);
     try{
       localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(logs));
@@ -3597,17 +3666,7 @@
       if(keepScreenAwake && !wakeLockSentinel){
         requestWakeLock();
       }
-      // Check if journey was interrupted while in background
-      if(state.running){
-        const saved = loadActiveJourney();
-        if(saved && saved.lastSaveTime){
-          const timeSinceLastSave = Date.now() - saved.lastSaveTime;
-          if(timeSinceLastSave > 60000){ // More than 1 minute
-            showJourneyMessage(`Appen var i bakgrunden i ${Math.round(timeSinceLastSave/60000)} min - GPS fortsätter`, false);
-            setTimeout(() => { els.journeyMsg.style.display='none'; }, 5000);
-          }
-        }
-      }
+      // Ett avbrott upptäcks och meddelas vid nästa GPS-position (checkForInterruption)
     }else if(document.visibilityState==='hidden'){
       // Save journey when going to background
       if(state.running){
@@ -3632,6 +3691,9 @@
         nextIndex: state.nextIndex,
         awaitingDepartureIndex: state.awaitingDepartureIndex,
         journeyId: state.journeyId,
+        interruptions: state.interruptions,
+        lastFix: state.lastFix,
+        interruptionTipShown: state.interruptionTipShown,
         lastSaveTime: Date.now()
       };
       localStorage.setItem(STORAGE_KEY_ACTIVE_JOURNEY, JSON.stringify(journeyState));
@@ -3716,6 +3778,9 @@
     state.awaitingDepartureIndex = saved.awaitingDepartureIndex;
     state.aborted = false;
     state.journeyId = saved.journeyId || Date.now().toString(36);
+    state.interruptions = Array.isArray(saved.interruptions) ? saved.interruptions : [];
+    state.lastFix = saved.lastFix || null; // så att ett avbrott upptäcks även efter omladdning
+    state.interruptionTipShown = !!saved.interruptionTipShown;
 
     // Update UI
     hideSetupError();

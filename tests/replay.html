@@ -181,6 +181,86 @@ test('format 2: id, format, appversion och stationsfält', async () => {
   assertEqual(log.interruptions, [], 'avbrott');
 });
 
+// ── Task 4: avbrott ──
+
+test('avbrott: samtal när tåget står i Källby', async () => {
+  const fixes = buildJourney();
+  const control = await runJourney(fixes);
+  const arrK = Date.parse(stopOf(control.log, 'Källby').actualArrival);
+  const tResume = fixes.find(f => f.leg === 2 && f.frac >= 0.66).t;
+  const r = await runJourney(fixes, { drop: f => f.t > arrK + 10000 && f.t < tResume });
+  const lastBefore = Math.max(...fixes.filter(f => f.t <= arrK + 10000).map(f => f.t));
+  const k = stopOf(r.log, 'Källby');
+  assertEqual(k.actualArrival, stopOf(control.log, 'Källby').actualArrival, 'ankomst Källby');
+  assertEqual(k.actualDeparture, null, 'avgång Källby');
+  assertEqual(k.departSource, 'avbrott', 'källa för avgång');
+  assertEqual(k.departureWindow, { from: iso(lastBefore), to: iso(tResume) }, 'fönster');
+  sameAsControl(r.log, control.log, ['Lidköping', 'Filsbäck', 'Blomberg', 'Råbäck', 'Hällekis']);
+  assertEqual(r.log.interruptions.length, 1, 'antal avbrott');
+});
+
+function twoStationCall(fixes) {
+  const from = fixes.find(f => f.leg === 1 && f.frac >= 0.5).t;     // mitt mellan Filsbäck och Källby
+  const resume = fixes.find(f => f.leg === 3 && f.frac >= 0.5).t;   // mitt mellan Blomberg och Råbäck
+  return { from, resume, drop: f => f.t >= from && f.t < resume };
+}
+
+function assertTwoStationCall(r, control) {
+  for (const name of ['Källby', 'Blomberg']) {
+    const s = stopOf(r.log, name);
+    assertEqual([s.missedReason, s.actualArrival, s.actualDeparture], ['avbrott', null, null], name);
+  }
+  sameAsControl(r.log, control.log, ['Lidköping', 'Filsbäck', 'Råbäck', 'Hällekis']);
+  assertEqual(r.log.interruptions.length, 1, 'antal avbrott');
+}
+
+test('avbrott: samtal medan två stationer passeras – appen kommer ikapp', async () => {
+  const fixes = buildJourney();
+  const control = await runJourney(fixes);
+  const call = twoStationCall(fixes);
+  const r = await runJourney(fixes, { drop: call.drop });
+  assertTwoStationCall(r, control);
+});
+
+test('avbrott: 60 s utan positioner medan tåget står still är inget avbrott', async () => {
+  const fixes = buildJourney({ 3: 100000 });
+  const control = await runJourney(fixes);
+  const dwellStart = fixes.find(f => f.dwellAt === 3).t;
+  const r = await runJourney(fixes, { drop: f => f.t > dwellStart + 20000 && f.t <= dwellStart + 80000 });
+  sameAsControl(r.log, control.log, STATIONS.map(s => s[0]));
+  assertEqual(r.log.interruptions.length, 0, 'antal avbrott');
+});
+
+test('avbrott: 30 s glapp mellan stationer tar inte bort några tider', async () => {
+  const fixes = buildJourney();
+  const control = await runJourney(fixes);
+  const from = fixes.find(f => f.leg === 3 && f.frac >= 0.3).t;
+  const r = await runJourney(fixes, { drop: f => f.t >= from && f.t < from + 30000 });
+  sameAsControl(r.log, control.log, STATIONS.map(s => s[0]));
+  assertEqual(r.log.interruptions.length, 1, 'antal avbrott');
+});
+
+test('avbrott: samtal när tåget kommer fram till slutstationen', async () => {
+  const fixes = buildJourney();
+  const control = await runJourney(fixes);
+  const from = fixes.find(f => f.leg === 4 && f.frac >= 0.8).t;   // sista biten mot Hällekis
+  const r = await runJourney(fixes, { drop: f => f.t >= from && f.dwellAt == null });
+  const h = stopOf(r.log, 'Hällekis');
+  assertEqual(h.actualArrival, null, 'ankomst Hällekis');
+  assertEqual(h.arrivalSource, 'avbrott', 'källa');
+  assert(h.arrivalWindow && h.arrivalWindow.to, 'fönster saknas');
+  assertEqual(r.rt.state.running, false, 'resan ska avslutas');
+  sameAsControl(r.log, control.log, ['Lidköping', 'Filsbäck', 'Källby', 'Blomberg', 'Råbäck']);
+});
+
+test('avbrott: sidan laddas om under samtalet och resan återupptas', async () => {
+  const fixes = buildJourney();
+  const control = await runJourney(fixes);
+  const call = twoStationCall(fixes);
+  const r = await runJourney(fixes, { drop: call.drop, reloadBefore: call.resume });
+  assertTwoStationCall(r, control);
+});
+
 // ── Körning ──
 
 window.captureGolden = async function () {
