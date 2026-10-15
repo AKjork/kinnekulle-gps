@@ -477,7 +477,7 @@ Spec: `docs/superpowers/specs/2026-10-15-analys-mot-tidtabell-design.md` · Plan
 - **Export**: *Exportera till Excel* (CSV som appens: BOM, semikolon, citattecken, decimalkomma, informationsblock med urval, period och antal) och *Skriv ut / PDF* (utskriftsmall som bara visar rapporten med rubrik och urval).
 - **Nya filter**: tid på dygnet (morgon 05–09, dag 09–15, eftermiddag 15–18, kväll 18–05), vardag eller helg, tolerans (±0,5 / ±1 / ±2 min) och stationstyp (stopp eller passage). Tid och datum avgörs av körningens start i lokal tid.
 - **Stationsnamn** slås ihop vid inläsning: Herrljunga → Herrljunga C, Hallsberg personbangård → Hallsberg, Framnäs City → Framnäs city (verifierat mot Trafikverkets TrainStation-API), och namn som bara skiljer sig i stor och liten bokstav.
-- Beräkningarna finns i `railtimer-analys.js` och testas med `node --test "tests/*.test.js"`; flikarna med `node tests/run-browser-tests.mjs analys`, och bilder i datorstorlek tas med `--shot=mot-tidtabell|tidtabell|mot-tidtabell-utskrift`.
+- Beräkningarna finns i `railtimer-analys.js` och testas med `node --test "tests/*.test.js"`; flikarna med `node tests/run-browser-tests.mjs analys`, och bilder i datorstorlek tas med `--shot=per-tag|stracker|tidtabell|per-tag-utskrift` (se 2026-10-15d).
 
 ### Rättat efter slutgranskningen
 - **Väntan** räknas bara när tåget kom tidigt och stod kvar till planerad ankomst. Väntan är då tiden fram till planerad ankomst. Åkte tåget före planerad ankomst, vanligt vid planerat uppehåll 0, är väntan 0. Tidigare räknades vanliga uppehåll som väntan, i 11 av 59 fall.
@@ -486,3 +486,33 @@ Spec: `docs/superpowers/specs/2026-10-15-analys-mot-tidtabell-design.md` · Plan
 - **Uppehåll i Tidtabell** räknas från planerad ankomst när tåget väntade, och i sin helhet när tåget åkte före planerad ankomst. De föll tidigare bort.
 - **Utskriftshuvudet** fylls vid varje utskrift (`beforeprint`), även med Ctrl+P. Tidigare kunde en PDF få ett gammalt "Bygger på".
 - Har appen öppnats i samma webbläsare styr dess service worker även `Analys.html`, eftersom omfånget är `/kinnekulle-gps/`. Den visar först den sparade kopian och hämtar den nya i bakgrunden. Första laddningen efter en publicering kan alltså visa den gamla versionen. Ladda om en gång till.
+
+## Uppdatering (2026-10-15d): analys per tåg (Analys.html)
+
+Spec: `docs/superpowers/specs/2026-10-15-analys-per-tag-design.md` · Plan: `docs/superpowers/plans/2026-10-15-analys-per-tag.md`
+
+André 2026-10-15: väntan vid en station är ointressant, eftersom den följer tidtabellen. Det intressanta är tågen. Varje tåg har sin egen tidtabell, och samma sträcka kan ha olika planerad gångtid för olika tåg.
+
+### Flikarna
+- **Per tåg** är förvald och ersätter Mot tidtabell. Varje tåg har en rad med körningar, avvikelse vid start och slut, summerad marginal och antal gånger tåget tappade tid.
+  - Tågkortet visar varje sträcka mot vad sträckan tar, uppehållen och gångerna tåget tappade tid, med datum, veckodag och klockslag.
+  - Resandeantal finns inte i mätningarna.
+- **Sträckor** visar vad varje sträcka tar och planerad tid per tåg, med marginal. *Snål och generös* betyder att olika tåg har för lite respektive för mycket tid på samma sträcka.
+- **Tidtabell** ger förslag per tåg i stället för per riktning. Förslaget bygger på tågets egen tidtabell, vad sträckorna tar och tågets egna uppehåll utan väntan. Möten och anslutningar ingår inte.
+
+### Begrepp
+- **Vad sträckan tar** (`segmentNeeds`, `needFor`) är medianen för alla tåg i urvalet som stannade och passerade som tidtabellen säger, även körningar utan tidtabell.
+  - Med färre än 3 sådana mätningar används alla mätningar på sträckan, mönstret `*`, som visas som "alla mätningar". Det behövs vid behovsstopp som tåget nästan alltid passerar.
+  - Tågnummerfiltret påverkar inte det underlaget.
+- **Marginal** = planerad gångtid − vad sträckan tar.
+- **Tappad tid** vid en station = avgångsavvikelse − max(ankomstavvikelse, 0). Vid första stationen är tappad tid avgångsavvikelsen, typen *Avgång från start*.
+- **Klockslag** är minuter efter midnatt på körningens startdag. De räknas på klocka och kalenderdag (`clockMinutes`), så att bytet till vintertid inte flyttar tiderna.
+
+### Borttaget
+- Mot tidtabell och väntan per station.
+- Bedömningarna Tidig – väntan, Tidig, Sen ankomst, Sen avgång och I tid.
+- Modulens `stationObservations`, `summarizeSegments`, `summarizeStations`, `proposeTimetable` och `mode`.
+
+### Tester
+- `node --test "tests/*.test.js"` och `node tests/run-browser-tests.mjs analys`.
+- Bilder tas med `--shot=per-tag|stracker|tidtabell|per-tag-utskrift`.

@@ -4,8 +4,8 @@
 //   node tests/run-browser-tests.mjs --golden   sparar facit för en vanlig resa i tests/golden-normal-run.json
 //   node tests/run-browser-tests.mjs --shot=installningar   sparar en bild i telefonstorlek i tests/screenshots/
 //                                                          (även --shot=avbrott och --shot=rapport)
-//   node tests/run-browser-tests.mjs --shot=mot-tidtabell    analysverktyget i datorstorlek (även --shot=tidtabell);
-//                                                          --shot=mot-tidtabell-utskrift visar utskriften (PDF)
+//   node tests/run-browser-tests.mjs --shot=per-tag          analysverktyget i datorstorlek (även --shot=stracker och
+//                                                          --shot=tidtabell); --shot=per-tag-utskrift visar utskriften (PDF)
 // Kräver Node 22+ (inbyggd WebSocket och fetch) och Chrome. Annan Chrome-sökväg: CHROME_PATH=...
 import http from 'node:http';
 import fs from 'node:fs';

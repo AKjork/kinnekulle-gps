@@ -789,19 +789,27 @@ window.prepareShot = async function (name) {
   } else if (name === 'rapport') {
     const fixes = buildJourney();
     await runJourney(fixes, { drop: twoStationCall(fixes).drop });
-  } else if (name === 'mot-tidtabell' || name === 'mot-tidtabell-utskrift') {
+  } else if (name === 'per-tag' || name === 'per-tag-utskrift') {
     const frame = document.getElementById('app');
     frame.style.width = '1200px';   // analysverktyget används främst på dator
     frame.style.height = '2200px';
-    const w = await loadAnalysWith(againstRuns());
-    w.__analys.showTab('against');
-    if (name.endsWith('-utskrift')) w.__analys.prepareAgainstPrint();
+    const w = await loadAnalysWith(trainRuns());
+    w.__analys.showTab('trains');
+    w.__analys.showTrain('3344');
+    if (name.endsWith('-utskrift')) w.__analys.prepareTrainsPrint();
+  } else if (name === 'stracker') {
+    const frame = document.getElementById('app');
+    frame.style.width = '1200px';
+    frame.style.height = '1500px';
+    const w = await loadAnalysWith(trainRuns());
+    w.__analys.showTab('segments');
+    w.document.querySelector('#segmentsTable tbody tr').click();
   } else if (name === 'tidtabell') {
     const frame = document.getElementById('app');
     frame.style.width = '1200px';
-    frame.style.height = '1700px';
-    const w = await loadAnalysWith(againstRuns());
-    w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Blomberg' });
+    frame.style.height = '1500px';
+    const w = await loadAnalysWith(trainRuns());
+    w.__analys.setTimetableTrain('3346');
     w.__analys.showTab('timetable');
   } else {
     throw new Error('Okänd bild: ' + name);
