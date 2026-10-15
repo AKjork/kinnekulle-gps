@@ -403,6 +403,43 @@ test('uppladdning: inställningsvyn testar anslutningen och sparar repo och toke
   assert(fake.files.has('.railtimer/anslutning.json'), 'anslutningsfilen skrevs');
 });
 
+// ── Task 8: analysverktyget hämtar från GitHub ──
+
+async function loadAnalys() {
+  const frame = document.getElementById('app');
+  await new Promise(resolve => { frame.onload = resolve; frame.src = '../Analys.html?test=1&n=' + Date.now(); });
+  const w = frame.contentWindow;
+  for (let i = 0; i < 100 && !w.__analys; i++) await realSleep(20);
+  if (!w.__analys) throw new Error('Analysverktyget startade inte i testläge');
+  return w;
+}
+
+test('analys: hämtar körningar från GitHub och bara nya filer andra gången', async () => {
+  const w = await loadAnalys();
+  w.localStorage.clear();
+  await new Promise(resolve => { const req = w.indexedDB.deleteDatabase('railtimer-analys'); req.onsuccess = req.onerror = req.onblocked = () => resolve(); });
+  w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'test-token', branch: 'main' }));
+  const fake = browserFakeGitHub(w);
+  const run = (id, train) => ({ id, trainNumber: train, vehicleType: 'Y31', startStation: 'Lidköping', endStation: 'Hällekis', startedAt: '2026-10-01T05:00:00.000Z', aborted: false, stops: [] });
+  fake.put('import/2026-10-15T0848_befintliga-1.json', JSON.stringify([run('a', '1'), run('b', '2')]));
+  fake.put('korningar/2026/2026-10-15_3_c.json', JSON.stringify(run('c', '3')));
+  fake.put('gps-spar/2026/2026-10-15_3_c.json', JSON.stringify({ format: 1, points: [] }));
+  w.__analys.setFetchForTest(fake.fetch);
+  await w.__analys.loadFromGithub();
+  assertEqual(w.__analys.getLogs().map(r => r.id).sort(), ['a', 'b', 'c'], 'körningar');
+  assertEqual(w.document.getElementById('loadStatus').textContent, '3 körningar från GitHub (2 nya filer).', 'status');
+  await w.__analys.loadFromGithub();
+  assertEqual(w.document.getElementById('loadStatus').textContent, '3 körningar från GitHub (0 nya filer).', 'status andra gången');
+});
+
+test('analys: utan inställningar öppnas GitHub-inställningarna', async () => {
+  const w = await loadAnalys();
+  w.localStorage.clear();
+  await w.__analys.loadFromGithub();
+  assert(w.document.getElementById('ghSettings').open, 'inställningarna ska vara öppna');
+  assertEqual(w.document.getElementById('ghRepo').value, 'AKjork/railtimer-data', 'förifyllt repo');
+});
+
 // ── Körning ──
 
 window.captureGolden = async function () {

@@ -76,7 +76,7 @@
     text-transform:uppercase;
     letter-spacing:.03em;
   }
-  select,input[type="date"],input[type="file"],input[type="text"]{
+  select,input[type="date"],input[type="file"],input[type="text"],input[type="password"]{
     padding:.4rem .6rem;
     border:1px solid var(--b);
     border-radius:6px;
@@ -203,6 +203,8 @@
   @media (max-width:640px){
     .timetable-setup{flex-direction:column}
   }
+  .gh-settings{margin-top:.75rem}
+  .gh-settings summary{cursor:pointer;color:var(--ink-dim);font-size:.85rem}
 </style>
 </head>
 <body>
@@ -218,7 +220,8 @@
   <div class="card">
     <h3>Datakälla</h3>
     <div class="filters">
-      <button id="btnLoadLocal" class="primary">Ladda från RailTimer</button>
+      <button id="btnLoadGithub" class="primary">Hämta från GitHub</button>
+      <button id="btnLoadLocal" class="ghost">Ladda från RailTimer</button>
       <span style="color:var(--mut);font-size:.85rem">eller</span>
       <div class="filter-group">
         <label>Importera JSON-fil(er)</label>
@@ -226,6 +229,24 @@
       </div>
     </div>
     <div id="loadStatus" class="meta"></div>
+    <details id="ghSettings" class="gh-settings">
+      <summary>GitHub-inställningar</summary>
+      <div class="filters" style="margin-top:.5rem">
+        <div class="filter-group">
+          <label for="ghRepo">Repo</label>
+          <input type="text" id="ghRepo" placeholder="AKjork/railtimer-data" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="filter-group">
+          <label for="ghToken">Token</label>
+          <input type="password" id="ghToken" placeholder="github_pat_…" autocomplete="off">
+        </div>
+        <div class="filter-group">
+          <label>&nbsp;</label>
+          <button id="btnSaveGithub" class="ghost">Spara</button>
+        </div>
+      </div>
+      <p class="meta">Token sparas bara i den här webbläsaren. Samma token som i appen fungerar.</p>
+    </details>
   </div>
 
   <div class="card">
@@ -403,11 +424,15 @@
   </div>
 </main>
 
+<script src="railtimer-github.js"></script>
 <script>
 (function(){
   'use strict';
 
   const STORAGE_KEY = 'kmon_gps_logs_v1';
+  const GH_KEY = 'railtimer_github_v1'; // { repo, token, branch } – samma format som i appen
+  const TEST_MODE = new URLSearchParams(location.search).has('test');
+  let testFetch = null;                 // simulerat GitHub i testerna
   let allLogs = [];
   let segments = [];
   let currentMode = 'running'; // 'running' or 'dwell'
@@ -443,6 +468,8 @@
   const ctx = els.chart.getContext('2d');
 
   // Event listeners
+  document.getElementById('btnLoadGithub').addEventListener('click', loadFromGithub);
+  document.getElementById('btnSaveGithub').addEventListener('click', saveGithubSettings);
   els.btnLoadLocal.addEventListener('click', loadFromLocalStorage);
   els.fileInput.addEventListener('change', loadFromFile);
   els.btnClearFilters.addEventListener('click', clearFilters);
@@ -492,6 +519,97 @@
   });
 
   function capitalize(s){ return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  // ── Hämtning från GitHub-repot ──
+
+  function loadGithubSettings(){
+    try{
+      const s = JSON.parse(localStorage.getItem(GH_KEY) || 'null');
+      return s && s.repo && s.token ? s : null;
+    }catch(e){ return null; }
+  }
+
+  function saveGithubSettings(){
+    const repo = RailTimerGitHub.parseRepo(document.getElementById('ghRepo').value || RailTimerGitHub.DEFAULT_REPO);
+    if(!repo){ els.loadStatus.textContent = 'Ange repot som ägare/namn, t.ex. AKjork/railtimer-data.'; return; }
+    const existing = loadGithubSettings();
+    const token = document.getElementById('ghToken').value.trim() || (existing && existing.token) || '';
+    if(!token){ els.loadStatus.textContent = 'Klistra in din token.'; return; }
+    localStorage.setItem(GH_KEY, JSON.stringify({ repo: `${repo.owner}/${repo.repo}`, token, branch: 'main' }));
+    document.getElementById('ghToken').value = '';
+    document.getElementById('ghSettings').open = false;
+    els.loadStatus.textContent = 'GitHub-inställningarna är sparade.';
+  }
+
+  // Redan hämtade filer sparas per sha i IndexedDB, så att bara nya filer hämtas
+  const BlobCache = (function(){
+    let dbPromise = null;
+    function open(){
+      if(!dbPromise){
+        dbPromise = new Promise((resolve, reject) => {
+          if(!window.indexedDB){ reject(new Error('IndexedDB saknas')); return; }
+          const req = indexedDB.open('railtimer-analys', 1);
+          req.onupgradeneeded = () => { req.result.createObjectStore('blobs', { keyPath: 'sha' }); };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        dbPromise.catch(() => {});
+      }
+      return dbPromise;
+    }
+    return {
+      async get(sha){
+        try{
+          const db = await open();
+          return await new Promise((resolve, reject) => {
+            const req = db.transaction('blobs').objectStore('blobs').get(sha);
+            req.onsuccess = () => resolve(req.result ? req.result.json : undefined);
+            req.onerror = () => reject(req.error);
+          });
+        }catch(e){ return undefined; }
+      },
+      async set(sha, json){
+        try{
+          const db = await open();
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction('blobs', 'readwrite');
+            tx.objectStore('blobs').put({ sha, json });
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+          });
+        }catch(e){ /* utan cache hämtas filen igen nästa gång */ }
+      }
+    };
+  })();
+
+  async function loadFromGithub(){
+    const s = loadGithubSettings();
+    if(!s){
+      document.getElementById('ghRepo').value = RailTimerGitHub.DEFAULT_REPO;
+      document.getElementById('ghSettings').open = true;
+      els.loadStatus.textContent = 'Ange repo och token under GitHub-inställningar.';
+      return;
+    }
+    const repo = RailTimerGitHub.parseRepo(s.repo);
+    if(!repo){ els.loadStatus.textContent = 'Repot ska anges som ägare/namn.'; return; }
+    const client = RailTimerGitHub.createClient({ owner: repo.owner, repo: repo.repo, token: s.token, branch: s.branch || 'main', fetch: testFetch || undefined });
+    els.loadStatus.textContent = 'Hämtar från GitHub…';
+    try{
+      const r = await RailTimerGitHub.loadRunsFromRepo({ client, cache: BlobCache });
+      allLogs = r.runs;
+      let text = `${r.runs.length} körningar från GitHub (${r.newFiles} nya filer).`;
+      if(r.errors.length) text += ` ${r.errors.length} filer kunde inte läsas.`;
+      els.loadStatus.textContent = text;
+      setupFilters();
+      runAnalysis();
+    }catch(err){
+      els.loadStatus.textContent = err && err.message ? err.message : 'Kunde inte hämta från GitHub.';
+    }
+  }
+
+  if(TEST_MODE){
+    window.__analys = { setFetchForTest: fn => { testFetch = fn; }, loadFromGithub, getLogs: () => allLogs };
+  }
 
   function loadFromLocalStorage(){
     try {
