@@ -484,8 +484,8 @@ test('analys: utan inställningar öppnas GitHub-inställningarna', async () => 
 // Minuter efter midnatt den 15 oktober 2026 (torsdag, lokal tid) som ISO-tid
 function atMin(min, day) { return new Date(new Date(2026, 9, day || 15).getTime() + Math.round(min * 60000)).toISOString(); }
 
-function ttStop(name, o) {
-  const t = v => (v == null ? null : atMin(v));
+function ttStop(name, o, day) {
+  const t = v => (v == null ? null : atMin(v, day));
   return {
     name,
     actualArrival: t(o.arr), actualDeparture: t(o.dep),
@@ -708,6 +708,122 @@ test('analys: utskriften av tidtabellsförslaget har rubrik och antal körningar
   const header = w.__analys.prepareTimetablePrint();
   assert(header.includes('RailTimer – Tidtabellsförslag Lidköping → Blomberg'), 'rubrik: ' + header);
   assert(header.includes('Bygger på: 4 körningar'), 'antal: ' + header);
+});
+
+// ── Analys per tåg ──
+
+/* Lidköping → Filsbäck → Källby → Blomberg den 13–15 oktober. Tåg 3344 har 6 min Filsbäck → Källby och tåg 3346
+   har 2 min; båda tar 4 min. 3344 kommer 2 min tidigt till Källby och tappar 2,5 min där den 15:e.
+   Tåg 3355 (motsatt riktning) saknar tidtabell. */
+function trainRuns() {
+  const days = [13, 14, 15];
+  const t3344 = days.map(day => {
+    const s = 420;
+    const kDep = day === 15 ? s + 13.5 : s + 11;
+    return {
+      id: '3344-' + day, trainNumber: '3344', vehicleType: 'Y31', startedAt: atMin(s, day), aborted: false,
+      startStation: 'Lidköping', endStation: 'Blomberg',
+      stops: [
+        ttStop('Lidköping', { dep: s, sDep: s }, day),
+        ttStop('Filsbäck', { arr: s + 3, dep: s + 4, sArr: s + 3, sDep: s + 4 }, day),
+        ttStop('Källby', { arr: s + 8, dep: kDep, sArr: s + 10, sDep: s + 11 }, day),
+        ttStop('Blomberg', { arr: kDep + 3, sArr: s + 14 }, day)
+      ]
+    };
+  });
+  const t3346 = days.map(day => {
+    const s = 600;
+    return {
+      id: '3346-' + day, trainNumber: '3346', vehicleType: 'Y31', startedAt: atMin(s, day), aborted: false,
+      startStation: 'Lidköping', endStation: 'Blomberg',
+      stops: [
+        ttStop('Lidköping', { dep: s, sDep: s }, day),
+        ttStop('Filsbäck', { arr: s + 3, dep: s + 4, sArr: s + 3, sDep: s + 4 }, day),
+        ttStop('Källby', { arr: s + 8, dep: s + 9, sArr: s + 6, sDep: s + 7 }, day),
+        ttStop('Blomberg', { arr: s + 12, sArr: s + 10 }, day)
+      ]
+    };
+  });
+  const t3355 = [720, 750].map(s => ({
+    id: '3355-' + s, trainNumber: '3355', vehicleType: 'Y31', startedAt: atMin(s), aborted: false,
+    startStation: 'Blomberg', endStation: 'Lidköping',
+    stops: [
+      ttStop('Blomberg', { dep: s }), ttStop('Källby', { arr: s + 3, dep: s + 4 }),
+      ttStop('Filsbäck', { arr: s + 8, dep: s + 9 }), ttStop('Lidköping', { arr: s + 12 })
+    ]
+  }));
+  return t3344.concat(t3346, t3355);
+}
+
+test('analys: Per tåg är förvald och visar varje tåg mot sin egen tidtabell', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  assert(w.document.getElementById('tabTrains').classList.contains('active'), 'Per tåg ska vara förvald');
+  const summary = w.document.getElementById('trainsSummary').textContent;
+  assertEqual(summary, 'Bygger på 6 körningar med tidtabell av 8 i urvalet · 2 tåg · period 2026-10-13 – 2026-10-15 · tolerans ±1 min · 1 tågnummer utan tidtabell (2 körningar) visas inte', 'sammanfattning');
+  assertEqual(tableRows(w, 'trainsTable'), [
+    ['3344', 'Lidköping → Blomberg', '3', '0,0', '0,0', '+2,0', '1', '2,5'],
+    ['3346', 'Lidköping → Blomberg', '3', '0,0', '+2,0', '−2,0', '0', '–']
+  ], 'tåg');
+  assertEqual(w.document.getElementById('trainDetail').innerHTML, '', 'inget tåg öppet');
+});
+
+test('analys: tågkortet visar sträckor mot vad sträckan tar, uppehåll och gånger tåget tappade tid', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  Array.from(w.document.querySelectorAll('#trainsTable tbody tr')).find(tr => tr.cells[0].textContent === '3344').click();
+  assertEqual(tableRows(w, 'trainSegments'), [
+    ['Lidköping → Filsbäck', 'Stopp–stopp', '3', '3,0', '3,0', '3,0', '6', '0,0', 'Lagom'],
+    ['Filsbäck → Källby', 'Stopp–stopp', '6', '4,0', '4,0', '4,0', '6', '+2,0', 'Generös'],
+    ['Källby → Blomberg', 'Stopp–stopp', '3', '3,0', '3,0', '3,0', '6', '0,0', 'Lagom'],
+    ['Summa', '', '12,0', '', '10,0', '', '', '+2,0', '']
+  ], 'sträckor');
+  assertEqual(tableRows(w, 'trainDwells'), [
+    ['Filsbäck', '1', '1,0', '0,0', '0', '3'],
+    ['Källby', '1', '3,0', '0,0', '1', '3']
+  ], 'uppehåll');
+  assertEqual(tableRows(w, 'trainEvents'), [
+    ['2026-10-15', 'Tor', '07:11', 'Källby', 'Uppehåll', '2,5', '−2,0', '+2,5', '5,5', '1']
+  ], 'gånger tåget tappade tid');
+  assert(w.document.querySelector('#trainsTable tbody tr.selected').cells[0].textContent === '3344', 'raden markeras');
+});
+
+test('analys: tågnummerfiltret visar ett tåg men sträckornas tid bygger på alla tåg', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  w.__analys.setFilters({ filterTrain: '3346' });
+  assertEqual(tableRows(w, 'trainsTable').map(r => r[0]), ['3346'], 'bara tåg 3346');
+  const fk = tableRows(w, 'trainSegments').find(r => r[0] === 'Filsbäck → Källby');
+  assertEqual([fk[2], fk[4], fk[6], fk[7], fk[8]], ['2', '4,0', '6', '−2,0', 'Snål'], 'kortet öppnas och Underlag är alla sex körningar');
+});
+
+test('analys: Per tåg med två valda stationer och med tomt urval', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Källby' });
+  const summary = w.document.getElementById('trainsSummary').textContent;
+  assert(summary.startsWith('Bygger på 6 körningar med tidtabell av 6 i urvalet · 2 tåg') && summary.endsWith('· sträcka Lidköping → Källby'), 'sammanfattning: ' + summary);
+  assertEqual(tableRows(w, 'trainsTable').map(r => [r[0], r[1], r[5]]), [['3344', 'Lidköping → Källby', '+2,0'], ['3346', 'Lidköping → Källby', '−2,0']], 'avskurna');
+  w.__analys.setFilters({ filterFrom: '', filterTo: '', filterDayType: 'helg' });
+  assertEqual(w.document.getElementById('trainsSummary').textContent, 'Inga körningar med tidtabellstider i urvalet.', 'tomt urval');
+  assertEqual(w.document.getElementById('trainsContent').style.display, 'none', 'tabellen döljs');
+});
+
+test('analys: export och utskrift av Per tåg, även med Ctrl+P', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  let text = w.__analys.exportTrainsCsv();
+  assert(text.charCodeAt(0) === 0xFEFF, 'BOM saknas');
+  for (const part of ['"Bygger på";"6 körningar med tidtabell (av 8 i urvalet), 2 tåg"', '"Tolerans";"±1 min"',
+    '"3344";"Lidköping → Blomberg";"3";"3";"0";"0";"2";"3";"3";"1";"2,5"']) {
+    assert(text.includes(part), 'saknas i CSV: ' + part);
+  }
+  assert(/^per-tag_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn');
+  w.__analys.showTrain('3344');
+  text = w.__analys.exportTrainsCsv();
+  assert(text.includes('"Tåg 3344 – gånger tåget tappade tid"') && text.includes('"2026-10-15";"Tor";"07:11";"Källby";"Uppehåll";"2,5";"-2";"2,5";"5,5";"1"'), 'tågkortet i CSV');
+  assert(/^tag-3344_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn med tåg');
+  const header = w.__analys.prepareTrainsPrint();
+  assert(header.includes('RailTimer – Analys per tåg') && header.includes('Bygger på: 6 körningar med tidtabell (av 8 i urvalet), 2 tåg') && header.includes('Tåg: 3344'), 'utskrift: ' + header);
+  w.__analys.setFilters({ filterTimeOfDay: 'dag' });
+  w.dispatchEvent(new w.Event('beforeprint'));
+  const printed = w.document.querySelector('#trainsReport .print-header').textContent;
+  assert(printed.includes('Bygger på: 3 körningar med tidtabell (av 5 i urvalet), 1 tåg'), 'Ctrl+P efter filterbyte: ' + printed);
 });
 
 // ── Körning ──

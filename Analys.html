@@ -206,11 +206,12 @@
   .few{color:var(--warn);font-size:.7rem;white-space:nowrap}
   .change-up{color:var(--err)}
   .change-down{color:var(--blue)}
+  .sum-row td{font-weight:600;border-top:2px solid var(--b)}
   .print-header{display:none}
   @media print{
     @page{margin:12mm}
     body{background:#fff;color:#000}
-    header,.card,#modeDescription,.stats-row,.tabs,.no-print,.tab-content:not(.active),#ttHint,#againstSummary,#ttSummary{display:none !important}
+    header,.card,#modeDescription,.stats-row,.tabs,.no-print,.tab-content:not(.active),#ttHint,#againstSummary,#ttSummary,#trainsSummary{display:none !important}
     main{max-width:none;padding:0}
     .print-header{display:block;margin-bottom:.5rem}
     .print-header h2{margin:0 0 .25rem;color:#000;font-size:1.1rem}
@@ -373,7 +374,8 @@
   </div>
 
   <div class="tabs">
-    <button class="tab active" data-tab="chart">Diagram</button>
+    <button class="tab active" data-tab="trains">Per tåg</button>
+    <button class="tab" data-tab="chart">Diagram</button>
     <button class="tab" data-tab="table">Tabell</button>
     <button class="tab" data-tab="outliers">Avvikare</button>
     <button class="tab" data-tab="details">Detaljer</button>
@@ -381,7 +383,37 @@
     <button class="tab" data-tab="against">Mot tidtabell</button>
   </div>
 
-  <div id="tabChart" class="tab-content active">
+  <div id="tabTrains" class="tab-content active">
+    <div class="report" id="trainsReport">
+      <div class="print-header"></div>
+      <p class="meta" id="trainsSummary">Ladda data för att se analys.</p>
+      <div id="trainsContent" style="display:none">
+        <div class="report-actions no-print">
+          <button id="btnTrainsCsv" class="ghost">Exportera till Excel</button>
+          <button id="btnTrainsPrint" class="ghost">Skriv ut / PDF</button>
+        </div>
+        <div class="table-wrap">
+          <table id="trainsTable" class="clickable">
+            <thead><tr>
+              <th>Tåg</th>
+              <th>Sträcka</th>
+              <th class="num" title="Körningar med tidtabell">Körningar</th>
+              <th class="num" title="Avvikelse vid avgång från första mätta station, median (min)">Avgång start</th>
+              <th class="num" title="Avvikelse vid ankomst till sista mätta station, median (min)">Ankomst slut</th>
+              <th class="num" title="Planerad gångtid − vad sträckorna tar, summerat över tågets sträckor (min). Positivt = tid över">Marginal</th>
+              <th class="num" title="Gånger tåget tappade mer än toleransen vid en station">Tappat tid</th>
+              <th class="num" title="Mest tappad tid vid en station (min)">Mest tappat</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="trainDetail"></div>
+        <p class="meta no-print">Klicka på ett tåg för att se dess sträckor, uppehåll och gångerna det tappade tid. <strong>Sträckan tar</strong> = median av mätta gångtider för alla tåg som stannade och passerade som tidtabellen säger; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Marginal</strong> = planerad gångtid − vad sträckan tar. <strong>Tappad tid</strong> vid en station = avgångens avvikelse − ankomstens försening (tidig ankomst räknas som 0), alltså hur mycket längre tåget stod än tidtabellen gav utrymme för. Resandeantal finns inte i mätningarna; datum, veckodag och klockslag visas så att mönster syns.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="tabChart" class="tab-content">
     <div class="chart-container">
       <canvas id="chart" width="1200" height="650"></canvas>
     </div>
@@ -577,6 +609,8 @@
   let lastTimetable = null;      // senaste tidtabellsförslaget
   let againstState = null;       // senaste analysen i Mot tidtabell
   let lastDownload = null;       // senaste exporten (läses av testerna)
+  let tState = null;             // analys per tåg: urval, vad sträckorna tar, tåg och sträckor
+  let openTrain = '';            // tåget vars kort visas i Per tåg
 
   // Elements
   const els = {
@@ -641,6 +675,13 @@
       const tr = e.target.closest('tr[data-key]');
       if(tr) renderAgainstDetail(tr.dataset.kind, tr.dataset.key);
     });
+  });
+
+  document.getElementById('btnTrainsCsv').addEventListener('click', exportTrainsCsv);
+  document.getElementById('btnTrainsPrint').addEventListener('click', printTrains);
+  document.getElementById('trainsTable').addEventListener('click', e => {
+    const tr = e.target.closest('tr[data-train]');
+    if(tr) showTrain(tr.dataset.train);
   });
 
   // Mode tabs (Gångtider / Uppehållstider)
@@ -947,6 +988,8 @@
     renderDetailsTable(segments);
     updateTimetable(filteredLogs);
     renderAgainst(filteredLogs);
+    tState = timetableData();
+    renderTrains();
   }
 
   function buildSegmentsBetweenStations(logs, station1, station2, mergeDir){
@@ -1135,6 +1178,9 @@
     lastTimetable = null;
     document.getElementById('againstSummary').textContent = 'Ladda data för att se analys.';
     document.getElementById('againstContent').style.display = 'none';
+    tState = null;
+    document.getElementById('trainsSummary').textContent = 'Ladda data för att se analys.';
+    document.getElementById('trainsContent').style.display = 'none';
   }
 
   function renderSummaryTable(segs){
@@ -1447,6 +1493,9 @@
   const BASIS_LABELS = { median: 'Median', p90: 'P90', mean: 'Medelvärde' };
   const AGAINST_TITLE = 'RailTimer – Avvikelser mot tidtabell';
   const TIMETABLE_TITLE = 'RailTimer – Tidtabellsförslag';
+  const TRAINS_TITLE = 'RailTimer – Analys per tåg';
+  const EVENT_LABELS = { start: 'Avgång från start', stopp: 'Uppehåll', passage: 'Stopp vid passage' };
+  const WEEKDAYS = ['Sön', 'Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör'];
 
   function esc(v){ return escapeHtml(v == null ? '' : String(v)); }
   function toleranceValue(){ return Number(els.filterTolerance.value) || AN.DEFAULT_TOLERANCE; }
@@ -1464,6 +1513,12 @@
     return min != null && max != null && min !== max ? `${fmtMin(p, 0)} (${fmtMin(min, 0)}–${fmtMin(max, 0)})` : fmtMin(p, 0);
   }
   function periodText(p){ return p ? (p.from === p.to ? p.from : p.from + ' – ' + p.to) : '–'; }
+  // Minuter efter midnatt som klockslag TT:MM (tåg över midnatt börjar om på 00:00)
+  function fmtClock(min){
+    if(min == null) return '–';
+    const total = ((Math.round(min) % 1440) + 1440) % 1440;
+    return String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
+  }
   function nowText(){ return new Date().toLocaleString('sv-SE', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }); }
   function safeFilePart(s){ return String(s || '').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, '_'); }
 
@@ -1507,6 +1562,197 @@
   function printReport(reportId, title, meta){
     preparePrint(reportId, title, meta);
     if(!TEST_MODE) window.print();
+  }
+
+  // ── Analys per tåg: urvalet och vad sträckorna tar ──
+
+  function timetableData(){
+    const tol = toleranceValue();
+    const filter = currentFilter();
+    const from = validStations.has(els.filterFrom.value) ? els.filterFrom.value : '';
+    const to = validStations.has(els.filterTo.value) ? els.filterTo.value : '';
+    const onRoute = from && to && from !== to;
+    // Vad sträckorna tar räknas på alla tåg i urvalet, även när ett tågnummer är valt
+    const all = allLogs.filter(log => AN.runMatches(log, Object.assign({}, filter, { train: '' })));
+    const base = onRoute ? AN.sliceRuns(all, from, to) : all;
+    const obs = AN.segmentObservations(base, { tolerance: tol });
+    const needs = AN.segmentNeeds(obs);
+    const trainRuns = filter.train ? base.filter(r => String(r.trainNumber || '') === filter.train) : base;
+    const withTimetable = trainRuns.filter(r => (r.stops || []).some(s => s.scheduledArrival || s.scheduledDeparture));
+    const stationType = els.filterStationType.value;
+    return {
+      tol, filter, stationType, route: onRoute ? from + ' → ' + to : '',
+      base, obs, needs, trainRuns,
+      runCount: trainRuns.length, timetableRuns: withTimetable.length, period: AN.period(withTimetable),
+      trains: AN.summarizeTrains(trainRuns, needs, { tolerance: tol, stationType })
+    };
+  }
+
+  // ── Per tåg ──
+
+  // Summerad marginal; "x av y sträckor" när några sträckor saknar underlag
+  function marginText(m){
+    if(m.sum == null) return '–';
+    return fmtSigned(m.sum) + (m.count < m.of ? ` <span class="few">${m.count} av ${m.of} sträckor</span>` : '');
+  }
+
+  function renderTrains(){
+    const summary = document.getElementById('trainsSummary');
+    const content = document.getElementById('trainsContent');
+    const d = tState;
+    if(!d || !d.trains.rows.length){
+      summary.textContent = 'Inga körningar med tidtabellstider i urvalet.';
+      content.style.display = 'none';
+      openTrain = '';
+      document.getElementById('trainDetail').innerHTML = '';
+      return;
+    }
+    content.style.display = '';
+    const w = d.trains.withoutTimetable;
+    summary.textContent = `Bygger på ${d.timetableRuns} körningar med tidtabell av ${d.runCount} i urvalet · ${d.trains.rows.length} tåg · period ${periodText(d.period)} · tolerans ${fmtTol(d.tol)}` +
+      (w.trains ? ` · ${w.trains} tågnummer utan tidtabell (${w.runs} körningar) visas inte` : '') +
+      (d.route ? ` · sträcka ${d.route}` : '');
+    document.querySelector('#trainsTable tbody').innerHTML = d.trains.rows.map(r => `<tr data-train="${esc(r.train)}">
+      <td>${esc(r.train)}</td>
+      <td>${esc(r.routeLabel)}</td>
+      <td class="num">${r.timetableRuns}</td>
+      <td class="num">${fmtSigned(r.startDelay.median)}</td>
+      <td class="num">${fmtSigned(r.endDelay.median)}</td>
+      <td class="num">${marginText(r.margin)}</td>
+      <td class="num">${r.eventCount}</td>
+      <td class="num">${r.lostMax == null ? '–' : fmtMin(r.lostMax)}</td>
+    </tr>`).join('');
+    // Ett ensamt tåg (t.ex. med tågnummerfiltret) öppnas direkt
+    if(!d.trains.rows.some(r => r.train === openTrain)) openTrain = d.trains.rows.length === 1 ? d.trains.rows[0].train : '';
+    renderTrainDetail();
+  }
+
+  function showTrain(train){
+    openTrain = String(train || '');
+    renderTrainDetail();
+  }
+
+  function prevText(values){
+    return values.length ? ' <span class="few">tidigare ' + values.map(v => fmtMin(v, 0)).join(', ') + '</span>' : '';
+  }
+
+  function renderTrainDetail(){
+    const el = document.getElementById('trainDetail');
+    document.querySelectorAll('#trainsTable tbody tr').forEach(tr => tr.classList.toggle('selected', tr.dataset.train === openTrain));
+    const r = tState && tState.trains.rows.find(x => x.train === openTrain);
+    if(!r){ el.innerHTML = ''; return; }
+    const tol = tState.tol;
+    let html = `<h3>Tåg ${esc(r.train)} · ${esc(r.routeLabel)} · ${r.timetableRuns} körningar med tidtabell` +
+      (r.runCount > r.timetableRuns ? ` (av ${r.runCount})` : '') + ` · period ${esc(periodText(r.period))}</h3>`;
+
+    html += '<h3>Gångtid mot vad sträckan tar</h3><div class="table-wrap"><table id="trainSegments"><thead><tr>' +
+      '<th>Sträcka</th><th>Stopp</th>' +
+      '<th class="num" title="Planerad gångtid i senaste körningen (min)">Planerad</th>' +
+      '<th class="num" title="Tågets egen gångtid, median (min)">Tåget kör</th>' +
+      '<th class="num" title="Median för alla tåg som stannade och passerade som tidtabellen säger (min)">Sträckan tar</th>' +
+      '<th class="num">P90</th><th class="num" title="Mätningar bakom Sträckan tar">Underlag</th>' +
+      '<th class="num" title="Planerad − vad sträckan tar (min)">Marginal</th><th>Bedömning</th></tr></thead><tbody>';
+    html += r.segments.map(s => `<tr>
+      <td>${esc(s.segment)}</td>
+      <td>${esc(AN.PATTERN_LABELS[s.pattern])}${s.need && s.need.pattern === '*' ? ' <span class="few">alla mätningar</span>' : ''}</td>
+      <td class="num">${fmtMin(s.planned, 0)}${prevText(s.plannedPrev)}</td>
+      <td class="num">${fmtMin(s.actual.median)}</td>
+      <td class="num">${s.need ? fmtMin(s.need.median) : '–'}</td>
+      <td class="num">${s.need ? fmtMin(s.need.p90) : '–'}</td>
+      <td class="num">${s.need ? s.need.n : 0}</td>
+      <td class="num">${fmtSigned(s.margin)}</td>
+      <td><span class="assess ${s.assessment}">${ASSESSMENT_LABELS[s.assessment]}</span></td>
+    </tr>`).join('');
+    if(r.margin.count){
+      html += `<tr class="sum-row"><td>Summa${r.margin.count < r.margin.of ? ` (${r.margin.count} av ${r.margin.of} sträckor)` : ''}</td><td></td>` +
+        `<td class="num">${fmtMin(r.margin.planned)}</td><td></td><td class="num">${fmtMin(r.margin.need)}</td><td></td><td></td>` +
+        `<td class="num">${fmtSigned(r.margin.sum)}</td><td></td></tr>`;
+    }
+    html += '</tbody></table></div>';
+
+    html += '<h3>Uppehåll</h3>';
+    if(r.dwells.length){
+      html += '<div class="table-wrap"><table id="trainDwells"><thead><tr><th>Station</th>' +
+        '<th class="num" title="Planerat uppehåll i senaste körningen (min)">Planerat</th>' +
+        '<th class="num" title="Verkligt uppehåll när tåget stannade, median (min)">Verkligt</th>' +
+        '<th class="num" title="Tappad tid vid stationen, median (min)">Tappad tid</th>' +
+        `<th class="num" title="Gånger tåget tappade mer än ${esc(fmtTol(tol))}">Gånger tappat</th>` +
+        '<th class="num">Mätningar</th></tr></thead><tbody>' +
+        r.dwells.map(x => `<tr><td>${esc(x.station)}</td>
+          <td class="num">${fmtMin(x.plannedDwell, 0)}${prevText(x.plannedPrev)}</td>
+          <td class="num">${fmtMin(x.dwell.median)}</td><td class="num">${fmtSigned(x.lost.median)}</td>
+          <td class="num">${x.events}</td><td class="num">${x.n}</td></tr>`).join('') + '</tbody></table></div>';
+    }else{
+      html += '<p class="meta">Inga planerade uppehåll på mellanstationer.</p>';
+    }
+
+    html += `<h3>Gånger tåget tappade tid (mer än ${esc(fmtTol(tol))})</h3>`;
+    if(r.events.length){
+      html += '<div class="table-wrap"><table id="trainEvents"><thead><tr><th>Datum</th><th>Dag</th>' +
+        '<th class="num" title="Planerad avgång">Tid</th><th>Station</th><th>Typ</th>' +
+        '<th class="num" title="Tappad tid (min)">Tappat</th><th class="num" title="Ankomstens avvikelse (min)">Ankomst</th>' +
+        '<th class="num" title="Avgångens avvikelse (min)">Avgång</th><th class="num" title="Verkligt uppehåll (min)">Uppehåll</th>' +
+        '<th class="num" title="Planerat uppehåll (min)">Planerat</th></tr></thead><tbody>' +
+        r.events.map(e => `<tr><td>${esc(e.date)}</td><td>${WEEKDAYS[e.weekday] || ''}</td>
+          <td class="num">${fmtClock(e.plannedClock)}</td><td>${esc(e.station)}</td><td>${EVENT_LABELS[e.type]}</td>
+          <td class="num">${fmtMin(e.lost)}</td><td class="num">${fmtSigned(e.arrivalDev)}</td><td class="num">${fmtSigned(e.departureDev)}</td>
+          <td class="num">${fmtMin(e.dwell)}</td><td class="num">${fmtMin(e.plannedDwell, 0)}</td></tr>`).join('') + '</tbody></table></div>';
+    }else{
+      html += '<p class="meta">Tåget har inte tappat mer än toleransen vid någon station i urvalet.</p>';
+    }
+    el.innerHTML = html;
+  }
+
+  function trainsMeta(d){
+    const meta = [
+      ['Bygger på', `${d.timetableRuns} körningar med tidtabell (av ${d.runCount} i urvalet), ${d.trains.rows.length} tåg`],
+      ['Period', periodText(d.period)],
+      ['Urval', describeFilter(d.route ? 'Sträcka: ' + d.route : '')],
+      ['Tolerans', fmtTol(d.tol)]
+    ];
+    if(openTrain) meta.push(['Tåg', openTrain]);
+    meta.push(['Skapad', nowText()]);
+    return meta;
+  }
+
+  function exportTrainsCsv(){
+    const d = tState;
+    if(!d || !d.trains.rows.length) return null;
+    const sections = [{
+      title: 'Tåg',
+      header: ['Tåg', 'Sträcka', 'Körningar med tidtabell', 'Körningar totalt', 'Avgång start median (min)', 'Ankomst slut median (min)',
+        'Marginal summa (min)', 'Sträckor med marginal', 'Sträckor totalt', 'Gånger tappat tid', 'Mest tappat (min)'],
+      rows: d.trains.rows.map(r => [r.train, r.routeLabel, r.timetableRuns, r.runCount, r.startDelay.median, r.endDelay.median,
+        r.margin.sum, r.margin.count, r.margin.of, r.eventCount, r.lostMax])
+    }];
+    const r = d.trains.rows.find(x => x.train === openTrain);
+    if(r){
+      sections.push({
+        title: `Tåg ${r.train} – gångtid mot vad sträckan tar`,
+        header: ['Sträcka', 'Stopp', 'Planerad (min)', 'Tidigare planerad (min)', 'Tåget kör median (min)', 'Sträckan tar median (min)',
+          'Sträckan tar P90 (min)', 'Underlag', 'Underlag avser', 'Marginal (min)', 'Bedömning'],
+        rows: r.segments.map(s => [s.segment, AN.PATTERN_LABELS[s.pattern], s.planned, s.plannedPrev.map(v => AN.formatMinutes(v, 0)).join(', '),
+          s.actual.median, s.need ? s.need.median : null, s.need ? s.need.p90 : null, s.need ? s.need.n : 0,
+          s.need ? AN.PATTERN_LABELS[s.need.pattern] : '', s.margin, ASSESSMENT_LABELS[s.assessment]])
+      }, {
+        title: `Tåg ${r.train} – uppehåll`,
+        header: ['Station', 'Planerat (min)', 'Verkligt median (min)', 'Tappad tid median (min)', 'Gånger tappat', 'Mätningar'],
+        rows: r.dwells.map(x => [x.station, x.plannedDwell, x.dwell.median, x.lost.median, x.events, x.n])
+      }, {
+        title: `Tåg ${r.train} – gånger tåget tappade tid`,
+        header: ['Datum', 'Veckodag', 'Planerad avgång', 'Station', 'Typ', 'Tappat (min)', 'Ankomst avvikelse (min)',
+          'Avgång avvikelse (min)', 'Uppehåll (min)', 'Planerat uppehåll (min)'],
+        rows: r.events.map(e => [e.date, WEEKDAYS[e.weekday] || '', fmtClock(e.plannedClock), e.station, EVENT_LABELS[e.type],
+          e.lost, e.arrivalDev, e.departureDev, e.dwell, e.plannedDwell])
+      });
+    }
+    const text = AN.csvDocument(TRAINS_TITLE, trainsMeta(d), sections);
+    downloadText((r ? 'tag-' + safeFilePart(r.train) : 'per-tag') + '_' + AN.localDate(new Date()) + '.csv', text);
+    return text;
+  }
+
+  function printTrains(){
+    if(tState && tState.trains.rows.length) printReport('trainsReport', TRAINS_TITLE, trainsMeta(tState));
   }
 
   // ── Mot tidtabell: gångtid per sträcka och klockslag per station ──
@@ -1850,7 +2096,10 @@
   function fillActivePrintHeader(){
     const active = document.querySelector('.tab-content.active');
     if(!active) return;
-    if(active.id === 'tabAgainst'){
+    if(active.id === 'tabTrains'){
+      if(tState && tState.trains.rows.length) preparePrint('trainsReport', TRAINS_TITLE, trainsMeta(tState));
+      else preparePrint('trainsReport', TRAINS_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga körningar med tidtabellstider i urvalet.']]);
+    }else if(active.id === 'tabAgainst'){
       if(againstState && againstState.timetableRuns) preparePrint('againstReport', AGAINST_TITLE, againstMeta(againstState));
       else preparePrint('againstReport', AGAINST_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga körningar med tidtabellstider i urvalet.']]);
     }else if(active.id === 'tabTimetable'){
@@ -1871,6 +2120,9 @@
         runAnalysis();
       },
       showTab(name){ document.querySelector('.tab[data-tab="' + name + '"]').click(); },
+      showTrain,
+      exportTrainsCsv,
+      prepareTrainsPrint: () => tState && preparePrint('trainsReport', TRAINS_TITLE, trainsMeta(tState)),
       exportAgainstCsv,
       prepareAgainstPrint: () => againstState && preparePrint('againstReport', AGAINST_TITLE, againstMeta(againstState)),
       exportTimetableCsv,
