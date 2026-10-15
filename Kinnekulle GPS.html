@@ -1525,6 +1525,7 @@
     state.nextIndex=route.length>1?1:null;
     state.autoReason='';
     state.aborted=false;
+    state.journeyId=Date.now().toString(36); // blir körningens id när resan sparas
   }
 
   function buildRouteFromTimetable(timetableResult, startSig, endSig){
@@ -2716,7 +2717,9 @@
   function saveLog(aborted){
     const logs=loadLogs();
     const entry={
-      id:Date.now().toString(36),
+      id:state.journeyId||Date.now().toString(36),
+      format:2,
+      appVersion:APP_VERSION,
       trainNumber:state.trainNumber,
       vehicleType:state.vehicleType,
       startStation:state.route[0]?.name||'',
@@ -2725,8 +2728,13 @@
       finishedAt:new Date(),
       aborted:!!aborted,
       notes:state.notes,
+      interruptions:(state.interruptions||[]).slice(),
       stops:state.route.map(st=>({
         name:st.name,
+        sig:st.sig||'',
+        lat:st.lat,
+        lon:st.lon,
+        radius:st.radius,
         actualArrival:st.actualArrival,
         actualDeparture:st.actualDeparture,
         scheduledArrival:st.scheduledArrival,
@@ -3477,20 +3485,27 @@
     const endStation = entry.endStation || endpoints.end || lastStop.name || '';
     const startedAt = entry.startedAt || entry.date || firstStop.actualDeparture || firstStop.actualArrival || null;
     const finishedAt = entry.finishedAt || lastStop.actualArrival || lastStop.actualDeparture || null;
-    const normalizedStops = stopsArray.map((stop,idx)=>({
-      name: stop.name || stop.station || `Uppehåll ${idx+1}`,
-      actualArrival: stop.actualArrival || stop.arrival || stop.arr || null,
-      actualDeparture: stop.actualDeparture || stop.departure || stop.dep || null,
-      scheduledArrival: stop.scheduledArrival || null,
-      scheduledDeparture: stop.scheduledDeparture || null,
-      arrivalSource: stop.arrivalSource || '',
-      departSource: stop.departSource || '',
-      shouldStop: stop.shouldStop!=null ? !!stop.shouldStop : !stop.skipNoStop,
-      excludeInboundRun: !!(stop.excludeInboundRun || stop.exclude),
-      notes: stop.notes || ''
-    }));
+    const normalizedStops = stopsArray.map((stop,idx)=>{
+      const out = {
+        name: stop.name || stop.station || `Uppehåll ${idx+1}`,
+        actualArrival: stop.actualArrival || stop.arrival || stop.arr || null,
+        actualDeparture: stop.actualDeparture || stop.departure || stop.dep || null,
+        scheduledArrival: stop.scheduledArrival || null,
+        scheduledDeparture: stop.scheduledDeparture || null,
+        arrivalSource: stop.arrivalSource || '',
+        departSource: stop.departSource || '',
+        shouldStop: stop.shouldStop!=null ? !!stop.shouldStop : !stop.skipNoStop,
+        excludeInboundRun: !!(stop.excludeInboundRun || stop.exclude),
+        notes: stop.notes || ''
+      };
+      // Fält från format 2 bevaras när de finns
+      for(const key of ['sig','lat','lon','radius','arrivalWindow','departureWindow','missedReason']){
+        if(stop[key]!==undefined) out[key]=stop[key];
+      }
+      return out;
+    });
     const rawId = entry.id || entry.measurementId || entry.measurementID || `${entry.trainNumber||''}|${startStation||''}|${startedAt||''}`;
-    return {
+    const out = {
       id: String(rawId || Date.now().toString(36)),
       trainNumber: entry.trainNumber || '',
       vehicleType: entry.vehicleType || '',
@@ -3502,6 +3517,10 @@
       notes: entry.notes || entry.note || '',
       stops: normalizedStops
     };
+    for(const key of ['format','appVersion','interruptions','trackPath']){
+      if(entry[key]!==undefined) out[key]=entry[key];
+    }
+    return out;
   }
 
   function dedupeLogs(logs){
@@ -3612,6 +3631,7 @@
         lastReachedIndex: state.lastReachedIndex,
         nextIndex: state.nextIndex,
         awaitingDepartureIndex: state.awaitingDepartureIndex,
+        journeyId: state.journeyId,
         lastSaveTime: Date.now()
       };
       localStorage.setItem(STORAGE_KEY_ACTIVE_JOURNEY, JSON.stringify(journeyState));
@@ -3695,6 +3715,7 @@
     state.nextIndex = saved.nextIndex;
     state.awaitingDepartureIndex = saved.awaitingDepartureIndex;
     state.aborted = false;
+    state.journeyId = saved.journeyId || Date.now().toString(36);
 
     // Update UI
     hideSetupError();

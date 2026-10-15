@@ -168,6 +168,19 @@ test('regression: vanlig resa ger exakt samma tider som facit', async () => {
   assertEqual(summarize(r.log), await golden(), 'tider');
 });
 
+// ── Task 3: körningsformat 2 ──
+
+test('format 2: id, format, appversion och stationsfält', async () => {
+  const r = await runJourney(buildJourney());
+  const log = r.log;
+  assertEqual(log.format, 2, 'format');
+  assert(typeof log.appVersion === 'string' && log.appVersion.length > 0, 'appVersion saknas');
+  assertEqual(log.id, r.rt.state.journeyId, 'id ska vara resans id');
+  const s = log.stops[1];
+  assertEqual([s.sig, s.lat, s.lon, s.radius], ['Fiä', STATIONS[1][1], STATIONS[1][2], 200], 'stationsfält');
+  assertEqual(log.interruptions, [], 'avbrott');
+});
+
 // ── Körning ──
 
 window.captureGolden = async function () {
