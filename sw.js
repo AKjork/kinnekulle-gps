@@ -11,6 +11,8 @@ const CACHE_NAME = `kinnekulle-gps-cache-${VERSION}`;
 const ASSETS = [
   './index.html',
   './Kinnekulle GPS.html',
+  './railtimer-avbrott.js',
+  './railtimer-github.js',
   './kinnekulle-gps.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png'

@@ -442,6 +442,30 @@ test('analys: utan inställningar öppnas GitHub-inställningarna', async () => 
 
 // ── Körning ──
 
+// Bilder i telefonstorlek för granskning (node tests/run-browser-tests.mjs --shot=<namn>)
+window.prepareShot = async function (name) {
+  if (name === 'installningar') {
+    const w = await loadApp();
+    await clearAppStorage(w);
+    w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'x', branch: 'main' }));
+    w.localStorage.setItem('railtimer_upload_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', uploadedIds: ['a', 'b', 'c'], backlogDone: true, uploadedTrackCount: 2, lastSuccessAt: '2026-10-15T06:10:00.000Z' }));
+    w.__railtimer.showUploadSettings();
+  } else if (name === 'avbrott') {
+    const fixes = buildJourney();
+    const call = twoStationCall(fixes);
+    await runJourney(fixes, { drop: f => call.drop(f) || f.t > call.resume + 60000 });
+  } else if (name === 'rapport') {
+    const fixes = buildJourney();
+    await runJourney(fixes, { drop: twoStationCall(fixes).drop });
+  } else {
+    throw new Error('Okänd bild: ' + name);
+  }
+  await realSleep(300);
+  window.scrollTo(0, 0); // appen kan ha scrollat även testsidan (scrollIntoView)
+  const r = document.getElementById('app').getBoundingClientRect();
+  return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
+};
+
 window.captureGolden = async function () {
   const r = await runJourney(buildJourney());
   return summarize(r.log);
