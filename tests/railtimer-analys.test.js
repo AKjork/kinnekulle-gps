@@ -237,6 +237,17 @@ test('summarizeStations: väntan, sen ankomst och sen avgång', () => {
   assert.equal(few.find(r => r.key === 'B|mot|C').assessment, 'fa');
 });
 
+test('summarizeStations: tidig ankomst utan väntan och tidig passage blir Tidig, inte Tidig – väntan', () => {
+  const runs = [0, 1, 2].map(k => run('e' + k, [
+    stop('A', { dep: [7, 0], sDep: [7, 0] }),
+    stop('B', { arr: [7, 3], dep: [7, 3, 50], sArr: [7, 5], sDep: [7, 5] }),   // åker före planerad ankomst: ingen väntan
+    stop('P', { arr: [7, 6], dep: [7, 6, 5], sArr: [7, 8], sDep: [7, 8], pass: true, shouldStop: false }),
+    stop('C', { arr: [7, 10], sArr: [7, 10] })
+  ]));
+  const rows = AN.summarizeStations(AN.stationObservations(runs, { tolerance: 1 }), { tolerance: 1 });
+  assert.deepEqual(['B|mot|P', 'P|mot|C'].map(k => rows.find(r => r.key === k).assessment), ['tidig', 'tidig']);
+});
+
 // ── Tidtabellsförslag ──
 
 // Passage i B och C, 2,4 min per sträcka: exakt 2,4 / 4,8 / 7,2 → avrundat 2 / 5 / 7 (inte 2 + 2 + 2 = 6)

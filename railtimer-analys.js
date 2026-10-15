@@ -320,7 +320,7 @@
     return rows;
   }
 
-  const STATION_ORDER = { vantan: 0, 'sen-ankomst': 1, 'sen-avgang': 2, itid: 3, fa: 4 };
+  const STATION_ORDER = { vantan: 0, tidig: 1, 'sen-ankomst': 2, 'sen-avgang': 3, itid: 4, fa: 5 };
 
   function summarizeStations(obs, opts) {
     const tol = opts && opts.tolerance != null ? opts.tolerance : DEFAULT_TOLERANCE;
@@ -333,9 +333,11 @@
       const nPlanned = list.filter(o => o.arrivalDev != null || o.departureDev != null).length;
       const arrivalDev = stats(arr.map(o => o.arrivalDev));
       const departureDev = stats(dep.map(o => o.departureDev));
+      const waits = list.filter(o => o.wait != null && o.wait > 0).map(o => o.wait);
       let assessment;
       if (nPlanned < MIN_SAMPLES) assessment = 'fa';
-      else if (arrivalDev.median != null && arrivalDev.median < -tol) assessment = 'vantan';
+      // Tidig ankomst blir "Tidig – väntan" bara när tåget faktiskt väntade; annars (och vid passage) "Tidig"
+      else if (arrivalDev.median != null && arrivalDev.median < -tol) assessment = waits.length ? 'vantan' : 'tidig';
       else if (arrivalDev.median != null && arrivalDev.median > tol) assessment = 'sen-ankomst';
       else if (departureDev.median != null && departureDev.median > tol) assessment = 'sen-avgang';
       else assessment = 'itid';
@@ -346,7 +348,7 @@
         n: list.length, nPlanned,
         arrivalDev, arrivalCounts: countCategories(arr, 'arrivalCategory'),
         departureDev, departureCounts: countCategories(dep, 'departureCategory'),
-        wait: stats(list.filter(o => o.wait != null && o.wait > 0).map(o => o.wait)),
+        wait: stats(waits),
         dwell: stats(list.map(o => o.dwell)),
         plannedDwell: mode(list.map(o => o.plannedDwell)),
         assessment

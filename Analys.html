@@ -197,7 +197,7 @@
   .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
   .assess{display:inline-block;padding:.1rem .4rem;border-radius:4px;font-size:.7rem;font-weight:600;white-space:nowrap}
   .assess.snal,.assess.sen-ankomst,.assess.sen-avgang{background:rgba(239,68,68,0.15);color:var(--err)}
-  .assess.generos,.assess.vantan{background:rgba(59,130,246,0.15);color:var(--blue)}
+  .assess.generos,.assess.vantan,.assess.tidig{background:rgba(59,130,246,0.15);color:var(--blue)}
   .assess.lagom,.assess.itid{background:rgba(34,197,94,0.15);color:var(--pri)}
   .assess.fa{background:var(--bg);color:var(--mut)}
   .clickable tbody tr[data-key]{cursor:pointer}
@@ -1439,7 +1439,7 @@
 
   const ASSESSMENT_LABELS = {
     snal: 'Snål', generos: 'Generös', lagom: 'Lagom', fa: 'För få mätningar',
-    vantan: 'Tidig – väntan', 'sen-ankomst': 'Sen ankomst', 'sen-avgang': 'Sen avgång', itid: 'I tid'
+    vantan: 'Tidig – väntan', tidig: 'Tidig', 'sen-ankomst': 'Sen ankomst', 'sen-avgang': 'Sen avgång', itid: 'I tid'
   };
   const TIME_OF_DAY_LABELS = { morgon: 'Morgon 05–09', dag: 'Dag 09–15', eftermiddag: 'Eftermiddag 15–18', kvall: 'Kväll 18–05' };
   const DAY_LABELS = { vardag: 'Vardag', helg: 'Helg' };

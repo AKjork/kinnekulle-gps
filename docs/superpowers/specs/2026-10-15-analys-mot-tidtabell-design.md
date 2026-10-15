@@ -102,7 +102,7 @@ Följande räknas fram per station och riktning:
 
 **Bedömning**, i den här ordningen:
 1. *För få mätningar* om färre än 3 mätningar har tidtabellstider.
-2. *Tidig – väntan* om ankomstens mediansavvikelse < −tol.
+2. *Tidig – väntan* om ankomstens mediansavvikelse < −tol och tåget väntade minst en gång. Annars blir det *Tidig*, till exempel vid passage eller när tåget åkte före planerad ankomst. Ändrat 2026-10-15 efter slutgranskningen.
 3. *Sen ankomst* om den är > +tol.
 4. *Sen avgång* om avgångens mediansavvikelse > +tol.
 5. I övrigt *I tid*.
