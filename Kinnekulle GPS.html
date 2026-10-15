@@ -726,6 +726,8 @@
   const CLOSE_APPROACH_EPS = 1; // meters
   const PASS_DISTANCE_MARGIN = 5; // meters before we consider leaving after pass
   const DEPART_REVERT_WINDOW_MS = 120000; // allow 2 min to re-time a premature departure
+  // ?test=1 används av tests/replay.html: ingen nätverkstrafik, GPS, service worker eller skärmlås
+  const TEST_MODE = new URLSearchParams(location.search).has('test');
   const STORAGE_KEY_LOGS = 'kmon_gps_logs_v1';
   const STORAGE_KEY_STATIONS = 'kmon_gps_station_meta_v1';
   const STORAGE_KEY_SAVE_FILE = 'kmon_gps_file_handle_v1';
@@ -825,16 +827,28 @@
   async function init(){
     updateLogCount();
     bindEvents();
-    setupPWA();
+    if(!TEST_MODE) setupPWA();
     updateWakeButton();
     setupOnlineStatus();
     setupStationSearch();
     applyStoredSettings();
     hideUnsupportedFileActions();
     trackHeaderHeight();
+    if(TEST_MODE){
+      exposeTestHooks();
+      return;
+    }
     await loadAllStations();
     getUserLocation();
     checkForInterruptedJourney();
+  }
+
+  // Bara i testläge: tests/replay.html spelar upp resor genom de här funktionerna
+  function exposeTestHooks(){
+    window.__railtimer = {
+      state, makeRouteStation, initJourneyState, handlePosition, stopJourney,
+      loadLogs, loadActiveJourney, resumeJourney, showView, renderRouteCards
+    };
   }
 
   // "Spara till fil" och "Synka loggfil" kräver File System Access API, som saknas i mobilwebbläsare
@@ -1377,11 +1391,6 @@
       showHeaderStatus('En resa pågår redan – avsluta den först.', true);
       return;
     }
-    speedHistory.length=0; // nollställer tidigare hastighetsposter inför ny resa
-    state.awaitingDepartureIndex=null;
-    state.departureProvisionalIdx=null;
-    state.lastSpeed=null;
-    state.lastSpeedTime=null;
 
     // Validate selection
     if(!selectedStartStation || !selectedEndStation){
@@ -1439,7 +1448,36 @@
       }
     }
 
-    const route = slice.map((st, idx) => ({
+    const route = slice.map(makeRouteStation);
+    initJourneyState(route, {
+      trainNumber,
+      vehicleType,
+      notes: (document.getElementById('startNotes').value||'').trim()
+    });
+    hideSetupError();
+    showView('journey');
+    els.journeyTitle.textContent=`${startName} → ${endName} • ${state.vehicleType} • tåg ${state.trainNumber||'–'}`;
+    els.journeyMsg.style.display='none';
+    expandedCards.clear();
+    renderedRouteKey='';
+    renderRouteCards();
+    renderRouteMap();
+    requestGpsWatch();
+    enableWakeLockForJourney();
+
+    if(timetableResult && timetableResult.success){
+      const stopCount = state.route.length;
+      showJourneyMessage(`Tidtabell hämtad! (${stopCount} stationer)`, false);
+      setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
+    }else if(trainNumber && timetableResult){
+      showJourneyMessage(`Tidtabell: ${timetableResult.error}`, true);
+      setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
+    }
+  }
+
+  // En station i resans rutt, i det format logiken för ankomst/avgång förväntar sig
+  function makeRouteStation(st, idx){
+    return {
       name:st.name,
       sig:st.sig||'',
       lat:st.lat,
@@ -1467,36 +1505,26 @@
       departureProvisional:false,
       departureProvisionalAt:null,
       order:idx+1
-    }));
+    };
+  }
+
+  // Nollställer och startar en ny resa. Används av startJourney och av testerna.
+  function initJourneyState(route, meta){
+    speedHistory.length=0; // nollställer tidigare hastighetsposter inför ny resa
+    state.awaitingDepartureIndex=null;
+    state.departureProvisionalIdx=null;
+    state.lastSpeed=null;
+    state.lastSpeedTime=null;
     state.route=route;
     state.running=true;
-    state.trainNumber=trainNumber;
-    state.vehicleType=vehicleType;
-    state.notes=(document.getElementById('startNotes').value||'').trim();
+    state.trainNumber=meta.trainNumber||'';
+    state.vehicleType=meta.vehicleType||'';
+    state.notes=meta.notes||'';
     state.startedAt=new Date();
     state.lastReachedIndex=0;
     state.nextIndex=route.length>1?1:null;
     state.autoReason='';
     state.aborted=false;
-    hideSetupError();
-    showView('journey');
-    els.journeyTitle.textContent=`${startName} → ${endName} • ${state.vehicleType} • tåg ${state.trainNumber||'–'}`;
-    els.journeyMsg.style.display='none';
-    expandedCards.clear();
-    renderedRouteKey='';
-    renderRouteCards();
-    renderRouteMap();
-    requestGpsWatch();
-    enableWakeLockForJourney();
-
-    if(timetableResult && timetableResult.success){
-      const stopCount = state.route.length;
-      showJourneyMessage(`Tidtabell hämtad! (${stopCount} stationer)`, false);
-      setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
-    }else if(trainNumber && timetableResult){
-      showJourneyMessage(`Tidtabell: ${timetableResult.error}`, true);
-      setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
-    }
   }
 
   function buildRouteFromTimetable(timetableResult, startSig, endSig){
@@ -1566,6 +1594,7 @@
   }
 
   function requestGpsWatch(){
+    if(TEST_MODE) return; // testerna matar positioner direkt till handlePosition
     if(!navigator.geolocation){
       updateGpsStatus(null, { message:'GPS saknas i webbläsaren.' });
       showJourneyMessage('GPS stöds inte i den här webbläsaren.', true);
@@ -2307,7 +2336,7 @@
 
   // Skärmen hålls vaken automatiskt under resan, om den inte redan är påslagen manuellt
   function enableWakeLockForJourney(){
-    if(keepScreenAwake || !('wakeLock' in navigator)) return;
+    if(TEST_MODE || keepScreenAwake || !('wakeLock' in navigator)) return;
     wakeLockByJourney=true;
     requestWakeLock();
   }

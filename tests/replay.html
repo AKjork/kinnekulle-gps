@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<title>RailTimer – uppspelade resor</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 1rem; }
+  iframe { width: 390px; height: 844px; border: 1px solid #888; }
+</style>
+</head>
+<body>
+<h1>RailTimer – uppspelade resor</h1>
+<p>Körs med <code>node tests/run-browser-tests.mjs</code>. Appen laddas i testläge (<code>?test=1</code>) och får simulerade GPS-positioner.</p>
+<iframe id="app"></iframe>
+<script>
+'use strict';
+
+// Kinnekullebanan Lidköping → Hällekis: namn, latitud, longitud, signatur
+const STATIONS = [
+  ['Lidköping', 58.50462, 13.1639339, 'Lkp'],
+  ['Filsbäck', 58.4931843, 13.2469536, 'Fiä'],
+  ['Källby', 58.5107931, 13.3023402, 'Kll'],
+  ['Blomberg', 58.5402058, 13.3206466, 'Bmb'],
+  ['Råbäck', 58.6105061, 13.376454, 'Rbk'],
+  ['Hällekis', 58.6302156, 13.432943, 'Hlk']
+];
+const START = Date.UTC(2026, 9, 15, 5, 0, 0);
+const STEP_MS = 2000;
+const realSleep = ms => new Promise(r => setTimeout(r, ms));
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/* GPS-positioner var 2:a sekund för en hel resa. Tåget står vid start, accelererar till 20 m/s,
+   bromsar in de sista 400 m och står 40 s vid varje station (dwellMs: avvikande uppehåll per stationsindex).
+   Varje position: { t, lat, lon, speed, leg, frac, dwellAt } där leg i går från station i till i+1. */
+function buildJourney(dwellMs) {
+  const dwell = Object.assign({}, dwellMs);
+  const fixes = [];
+  let t = START;
+  const push = (lat, lon, speed, info) => { fixes.push(Object.assign({ t, lat, lon, speed }, info)); t += STEP_MS; };
+  for (let i = 0; i < 3; i++) push(STATIONS[0][1], STATIONS[0][2], 0, { leg: -1, frac: 0, dwellAt: 0 });
+  for (let leg = 0; leg < STATIONS.length - 1; leg++) {
+    const A = STATIONS[leg], B = STATIONS[leg + 1];
+    const L = haversine(A[1], A[2], B[1], B[2]);
+    for (let s = 0; s < L; ) {
+      const v = s < 200 ? 3 + 12 * s / 200 : (s < L - 400 ? 20 : Math.max(1.5, 20 * (L - s) / 400));
+      const f = s / L;
+      push(A[1] + (B[1] - A[1]) * f, A[2] + (B[2] - A[2]) * f, v, { leg, frac: f, dwellAt: null });
+      s += v * STEP_MS / 1000;
+    }
+    const isLast = leg + 1 === STATIONS.length - 1;
+    const ms = isLast ? 10000 : (dwell[leg + 1] != null ? dwell[leg + 1] : 40000);
+    for (let k = 0; k < ms / STEP_MS; k++) push(B[1], B[2], 0, { leg, frac: 1, dwellAt: leg + 1 });
+  }
+  return fixes;
+}
+
+async function loadApp() {
+  const frame = document.getElementById('app');
+  await new Promise(resolve => { frame.onload = resolve; frame.src = '../index.html?test=1&n=' + Date.now(); });
+  const w = frame.contentWindow;
+  for (let i = 0; i < 100 && !w.__railtimer; i++) await realSleep(20);
+  if (!w.__railtimer) throw new Error('Appen startade inte i testläge');
+  return w;
+}
+
+// Appen använder new Date() och Date.now(); i testerna styr vi klockan
+function installClock(w, startMs) {
+  const RealDate = w.Date;
+  let now = startMs;
+  class TestDate extends RealDate {
+    constructor(...args) { if (args.length) super(...args); else super(now); }
+    static now() { return now; }
+  }
+  w.Date = TestDate;
+  return { set(t) { now = t; } };
+}
+
+async function clearAppStorage(w) {
+  w.localStorage.clear();
+  await new Promise(resolve => {
+    const req = w.indexedDB.deleteDatabase('railtimer');
+    req.onsuccess = req.onerror = req.onblocked = () => resolve();
+  });
+}
+
+/* Spelar upp en resa. opts.drop(fix) → true tar bort positionen (avbrott).
+   opts.reloadBefore: sidan laddas om (och resan återupptas) innan första position med t ≥ reloadBefore.
+   opts.beforeStart(w): körs innan resan startar, t.ex. för att ställa in uppladdning. */
+async function runJourney(fixes, opts) {
+  const o = opts || {};
+  let w = await loadApp();
+  await clearAppStorage(w);
+  if (o.beforeStart) await o.beforeStart(w);
+  let clock = installClock(w, fixes[0].t - STEP_MS);
+  let rt = w.__railtimer;
+  const route = STATIONS.map((s, i) => rt.makeRouteStation({ name: s[0], lat: s[1], lon: s[2], sig: s[3], radius: 200 }, i));
+  rt.initJourneyState(route, { trainNumber: 'TEST', vehicleType: 'Y31', notes: '' });
+  rt.showView('journey');
+  rt.renderRouteCards();
+  const fed = [];
+  let reloaded = false;
+  for (const f of fixes) {
+    if (o.drop && o.drop(f)) continue;
+    if (o.reloadBefore && !reloaded && f.t >= o.reloadBefore) {
+      reloaded = true;
+      // Samtalet kommer: appen går till bakgrunden (spåret sparas, Task 6) och sidan laddas sedan om
+      if (rt.onAppHidden) await rt.onAppHidden();
+      const saved = rt.loadActiveJourney();
+      w = await loadApp();
+      clock = installClock(w, f.t);
+      rt = w.__railtimer;
+      await rt.resumeJourney(saved);
+    }
+    clock.set(f.t);
+    rt.handlePosition({ coords: { latitude: f.lat, longitude: f.lon, accuracy: 5, speed: f.speed, heading: null }, timestamp: f.t });
+    fed.push(f);
+    await realSleep(0); // som i verkligheten: webbläsaren hinner arbeta (t.ex. spara i IndexedDB) mellan positionerna
+    if (!rt.state.running) break;
+  }
+  await realSleep(150);
+  const logs = rt.loadLogs();
+  return { w, rt, log: logs[logs.length - 1], fed };
+}
+
+const pick = s => ({ name: s.name, actualArrival: s.actualArrival, actualDeparture: s.actualDeparture, arrivalSource: s.arrivalSource, departSource: s.departSource });
+const summarize = log => log.stops.map(pick);
+const stopOf = (log, name) => log.stops.find(s => s.name === name);
+const iso = t => new Date(t).toISOString();
+
+function assertEqual(actual, expected, label) {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected);
+  if (a !== e) throw new Error(`${label}: fick ${a}, väntade ${e}`);
+}
+function assert(cond, label) {
+  if (!cond) throw new Error(label);
+}
+function sameAsControl(log, control, names) {
+  for (const name of names) assertEqual(pick(stopOf(log, name)), pick(stopOf(control, name)), name);
+}
+
+const TESTS = [];
+function test(name, fn) { TESTS.push({ name, fn }); }
+
+async function golden() {
+  const res = await fetch('golden-normal-run.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error('Facit saknas – kör: node tests/run-browser-tests.mjs --golden');
+  return res.json();
+}
+
+// ── Task 1: regression ──
+
+test('vanlig resa: alla stationer får tider', async () => {
+  const r = await runJourney(buildJourney());
+  const s = r.log.stops;
+  assert(s[0].actualDeparture, 'avgång från start saknas');
+  for (let i = 1; i < s.length - 1; i++) assert(s[i].actualArrival && s[i].actualDeparture, `tider saknas för ${s[i].name}`);
+  assert(s[s.length - 1].actualArrival, 'ankomst till slutstationen saknas');
+});
+
+test('regression: vanlig resa ger exakt samma tider som facit', async () => {
+  const r = await runJourney(buildJourney());
+  assertEqual(summarize(r.log), await golden(), 'tider');
+});
+
+// ── Körning ──
+
+window.captureGolden = async function () {
+  const r = await runJourney(buildJourney());
+  return summarize(r.log);
+};
+
+window.runTests = async function (filter) {
+  const results = [];
+  for (const t of TESTS) {
+    if (filter && !t.name.includes(filter)) continue;
+    try {
+      await t.fn();
+      results.push({ name: t.name, ok: true });
+    } catch (e) {
+      results.push({ name: t.name, ok: false, error: String(e && e.message || e) });
+    }
+  }
+  return { results, passed: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length };
+};
+</script>
+</body>
+</html>
