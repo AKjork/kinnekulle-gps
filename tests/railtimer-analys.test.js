@@ -359,3 +359,63 @@ test('stats och formatMinutes', () => {
   assert.deepEqual(AN.stats([]), { n: 0, median: null, p90: null, mean: null });
   assert.deepEqual([AN.formatMinutes(3.26), AN.formatMinutes(-1.04), AN.formatMinutes(null), AN.formatMinutes(2, 0)], ['3,3', '-1,0', '', '2']);
 });
+
+// ── Analys per tåg ──
+
+test('clockMinutes: minuter efter midnatt räknade på klockslag, även när vintertiden börjar', () => {
+  assert.equal(AN.clockMinutes(at(7, 30), at(7, 0)), 450);
+  assert.equal(AN.clockMinutes(at(0, 15, 0, 16), at(23, 50)), 1455, 'efter midnatt räknas vidare');
+  // 25 oktober 2026 ställs klockan tillbaka 03:00 → 02:00. 07:00 är ändå 420 minuter efter midnatt.
+  assert.equal(AN.clockMinutes(new Date(2026, 9, 25, 7, 0), new Date(2026, 9, 25, 6, 0)), 420);
+  assert.equal(AN.clockMinutes(null, at(7, 0)), null);
+});
+
+test('segmentObservations: planerat och verkligt stoppmönster och planerad avgång som klockslag', () => {
+  const r = run('m', [
+    stop('A', { dep: [7, 0], sDep: [7, 0] }),
+    stop('B', { arr: [7, 3], dep: [7, 3, 5], sArr: [7, 3], sDep: [7, 3], pass: true }),   // planerat stopp som passerades
+    stop('C', { arr: [7, 7], dep: [7, 7, 5], sDep: [7, 7], pass: true, shouldStop: false }),
+    stop('D', { arr: [7, 10], sArr: [7, 10] })
+  ]);
+  const obs = AN.segmentObservations([r], {});
+  assert.deepEqual(obs.map(o => [o.key, o.plannedPattern, o.actualPattern, o.order]),
+    [['A → B', 'SS', 'SP', 420], ['B → C', 'SP', 'PP', 423], ['C → D', 'PS', 'PS', 427]]);
+  assert.equal(AN.plannedType(r.stops[1]), 'stopp', 'planerat stopp även när tåget passerade');
+  assert.equal(AN.PATTERN_LABELS.SP, 'Stopp–passage');
+});
+
+test('segmentNeeds: gångtid per sträcka och verkligt stoppmönster, från alla körningar', () => {
+  const stopping = [0, 1, 2].map(k => run('s' + k, [
+    stop('A', { dep: [7, 0] }), stop('B', { arr: [7, 4], dep: [7, 5] }), stop('C', { arr: [7, 9] })
+  ], { trainNumber: k === 0 ? '3344' : '3346' }));
+  const passing = [0, 1].map(k => run('p' + k, [
+    stop('A', { dep: [8, 0] }), stop('B', { arr: [8, 3, 30], dep: [8, 3, 35], pass: true }), stop('C', { arr: [8, 7, 35] })
+  ]));
+  const needs = AN.segmentNeeds(AN.segmentObservations(stopping.concat(passing), {}));
+  assert.deepEqual(needs.map(n => [n.key, n.n, n.median]), [
+    ['A → B|*', 5, 4], ['A → B|SP', 2, 3.5], ['A → B|SS', 3, 4],
+    ['B → C|*', 5, 4], ['B → C|PS', 2, 4], ['B → C|SS', 3, 4]
+  ], 'en rad per verkligt mönster och en (*) med alla mätningar på sträckan');
+  const ss = needs.find(n => n.key === 'A → B|SS');
+  assert.deepEqual([ss.segment, ss.from, ss.to, ss.pattern], ['A → B', 'A', 'B', 'SS']);
+});
+
+test('stationTimes: tappad tid vid uppehåll, avgång från start och passage', () => {
+  const r = run('t', [
+    stop('A', { dep: [7, 1], sDep: [7, 0] }),                                     // start: 1 min sen
+    stop('B', { arr: [7, 3], dep: [7, 6, 30], sArr: [7, 5], sDep: [7, 6] }),         // 2 min tidig, åker 0,5 min sent: tappar 0,5
+    stop('C', { arr: [7, 10], dep: [7, 13], sArr: [7, 9], sDep: [7, 10] }),          // 1 min sen, åker 3 min sent: tappar 2
+    stop('P', { arr: [7, 15], dep: [7, 15, 6], sDep: [7, 13], pass: true, shouldStop: false }),   // passerar 2 min sent: tappar 0,1
+    stop('X', { dep: [7, 17], sArr: [7, 16], sDep: [7, 16] }),                      // ingen mätt ankomst (avbrott): räknas inte
+    stop('D', { arr: [7, 20], sArr: [7, 18] })
+  ]);
+  const t = AN.stationTimes([r]);
+  assert.deepEqual(t.map(x => [x.station, x.type]), [['A', 'start'], ['B', 'stopp'], ['C', 'stopp'], ['P', 'passage']]);
+  const [a, b, c, p] = t;
+  assert.deepEqual([a.arrivalDev, a.departureDev, a.lost, a.plannedClock], [null, 1, 1, 420]);
+  assert.deepEqual([b.arrivalDev, b.departureDev, b.lost, b.dwell, b.plannedDwell], [-2, 0.5, 0.5, 3.5, 1]);
+  assert.deepEqual([c.arrivalDev, c.departureDev, c.lost, c.dwell], [1, 3, 2, 3]);
+  close(p.lost, 0.1, 'passage');
+  assert.equal(p.plannedDwell, null);
+  assert.deepEqual([b.train, b.date, b.weekday, b.runId, b.stopped], ['3344', '2026-10-15', 4, 't', true]);
+});

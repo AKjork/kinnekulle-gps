@@ -76,6 +76,16 @@
     return d ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : null;
   }
 
+  // Minuter efter midnatt den dag `base` har (lokal tid). Räknas på kalenderdag och klockslag,
+  // så att bytet mellan sommar- och vintertid inte flyttar tiderna.
+  function clockMinutes(v, base) {
+    const d = toDate(v);
+    if (!d) return null;
+    const b = toDate(base) || d;
+    const days = Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(b.getFullYear(), b.getMonth(), b.getDate())) / 86400000);
+    return days * 1440 + d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+  }
+
   // Körningens starttid: verklig avgång från första stationen, annars startedAt
   function runStart(run) {
     const first = run && Array.isArray(run.stops) ? run.stops[0] : null;
@@ -131,6 +141,20 @@
     return stop.shouldStop === false || stop.departSource === 'gps-pass' ? 'passage' : 'stopp';
   }
 
+  // Planerad typ: stopp om tåget ska stanna enligt tidtabellen (även behovsstopp), annars passage
+  function plannedType(stop) {
+    if (!stop) return null;
+    return stop.shouldStop === false ? 'passage' : 'stopp';
+  }
+
+  // Stoppmönster för en sträcka: S (stopp) eller P (passage) vid avgångs- och ankomststationen
+  function patternOf(a, b, typeOf) {
+    return (typeOf(a) === 'stopp' ? 'S' : 'P') + (typeOf(b) === 'stopp' ? 'S' : 'P');
+  }
+
+  // '*' = alla mätningar på sträckan (stopp och passage), reserv när tågets mönster har för få mätningar
+  const PATTERN_LABELS = { SS: 'Stopp–stopp', SP: 'Stopp–passage', PS: 'Passage–stopp', PP: 'Passage–passage', '*': 'Stopp och passage' };
+
   // Avvikelse i minuter → 'sen' (> +tol), 'tidig' (< −tol) eller 'itid'. Exakt ±tol är i tid.
   function classify(dev, tol) {
     if (dev == null || !isFinite(dev)) return null;
@@ -152,6 +176,7 @@
       trainNumber: run.trainNumber || '',
       vehicleType: run.vehicleType || '',
       date: localDate(start),
+      weekday: start ? start.getDay() : null,
       start: start ? start.toISOString() : null,
       runId: run.id != null ? String(run.id) : ''
     };
@@ -179,7 +204,10 @@
         out.push(Object.assign({
           key: `${a.name} → ${b.name}`, from: a.name, to: b.name,
           actual, planned, deviation, category: classify(deviation, tol),
-          fromType: stopType(a), toType: stopType(b)
+          fromType: stopType(a), toType: stopType(b),
+          plannedPattern: patternOf(a, b, plannedType),
+          actualPattern: patternOf(a, b, stopType),
+          order: pDep ? clockMinutes(pDep, info.start) : null
         }, info));
       }
     }
@@ -496,6 +524,98 @@
     };
   }
 
+  // ── Analys per tåg ──
+
+  function hasTimetable(run) {
+    return ((run && run.stops) || []).some(s => s.scheduledArrival || s.scheduledDeparture);
+  }
+
+  // Planerade tider jämförs på hela sekunder
+  function roundSec(v) { return Math.round(v * 60) / 60; }
+
+  function uniqueSorted(values) {
+    return Array.from(new Set(values.filter(v => v != null))).sort((a, b) => a - b);
+  }
+
+  function needMap(needs) {
+    const m = new Map();
+    for (const n of needs || []) m.set(n.key, n);
+    return m;
+  }
+
+  /* Vad sträckan tar: mätta gångtider per sträcka och verkligt stoppmönster, från alla körningar i urvalet
+     (även körningar utan tidtabell), plus en rad per sträcka med alla mätningar (mönster '*'). */
+  function segmentNeeds(obs) {
+    const groups = new Map();
+    const add = (o, pattern) => {
+      const key = `${o.key}|${pattern}`;
+      if (!groups.has(key)) groups.set(key, { key, segment: o.key, from: o.from, to: o.to, pattern, values: [] });
+      groups.get(key).values.push(o.actual);
+    };
+    for (const o of obs || []) {
+      add(o, o.actualPattern);
+      add(o, '*');
+    }
+    return Array.from(groups.values()).map(g => {
+      const s = stats(g.values);
+      return { key: g.key, segment: g.segment, from: g.from, to: g.to, pattern: g.pattern, n: s.n, median: s.median, p90: s.p90, mean: s.mean };
+    }).sort((a, b) => a.key.localeCompare(b.key));
+  }
+
+  /* Vad sträckan tar för ett planerat mönster: körningar som stannade och passerade som planerat, så att en
+     planerad tid med stopp jämförs med körningar som stannade. Har de färre än MIN_SAMPLES mätningar används
+     alla mätningar på sträckan ('*'), om de är fler – till exempel vid behovsstopp som tåget nästan alltid passerar. */
+  function needFor(needsByKey, segment, pattern) {
+    const exact = needsByKey.get(`${segment}|${pattern}`) || null;
+    if (exact && exact.n >= MIN_SAMPLES) return exact;
+    const all = needsByKey.get(`${segment}|*`) || null;
+    return all && all.n > (exact ? exact.n : 0) ? all : exact;
+  }
+
+  /* Tid som tåget tappade vid varje station: avgångsavvikelse − max(ankomstavvikelse, 0).
+     Kom tåget tidigt och åkte enligt tidtabellen tappade det ingen tid (väntan enligt tidtabellen).
+     Första stationen saknar mätt ankomst: där är tappad tid avgångsavvikelsen (typ 'start').
+     Mellanstationer utan mätt ankomst (t.ex. avbrott) och sista stationen räknas inte. */
+  function stationTimes(runs) {
+    const out = [];
+    for (const run of runs || []) {
+      const stops = run.stops || [];
+      const info = runInfo(run);
+      for (let k = 0; k < stops.length - 1; k++) {
+        const s = stops[k];
+        const aDep = toDate(s.actualDeparture);
+        const pDep = plannedDeparture(s);
+        if (!aDep || !pDep) continue;
+        const departureDev = minutes(pDep, aDep);
+        let type = 'start';
+        let arrivalDev = null;
+        let dwell = null;
+        let lost = departureDev;
+        if (k > 0) {
+          const aArr = toDate(s.actualArrival);
+          const pArr = plannedArrival(s);
+          if (!aArr || !pArr) continue;
+          type = plannedType(s);
+          arrivalDev = minutes(pArr, aArr);
+          lost = departureDev - Math.max(arrivalDev, 0);
+          dwell = aDep >= aArr ? minutes(aArr, aDep) : null;
+        }
+        const sArr = toDate(s.scheduledArrival);
+        const sDep = toDate(s.scheduledDeparture);
+        out.push({
+          runId: info.runId, train: info.trainNumber, vehicleType: info.vehicleType,
+          date: info.date, weekday: info.weekday, start: info.start,
+          station: s.name, index: k, type,
+          plannedClock: clockMinutes(pDep, info.start),
+          arrivalDev, departureDev, lost, dwell,
+          plannedDwell: sArr && sDep && sDep >= sArr ? minutes(sArr, sDep) : null,
+          stopped: stopType(s) === 'stopp'
+        });
+      }
+    }
+    return out;
+  }
+
   // ── Export ──
 
   // Minuter med decimalkomma, utan "-0,0"
@@ -529,8 +649,9 @@
   return {
     DEFAULT_TOLERANCE, MIN_SAMPLES, STATION_ALIASES,
     canonicalStation, normalizeRuns,
-    localDate, runStart, timeOfDay, dayType, runMatches, period,
-    stopType, classify, segmentObservations, stationObservations, stationLabel,
+    localDate, clockMinutes, runStart, timeOfDay, dayType, runMatches, period,
+    stopType, plannedType, PATTERN_LABELS, classify, segmentObservations, stationObservations, stationLabel,
+    segmentNeeds, stationTimes,
     stats, mode, summarizeSegments, summarizeStations,
     directedRuns, sliceRuns, proposeTimetable,
     formatMinutes, csvDocument
