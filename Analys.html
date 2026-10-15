@@ -397,7 +397,7 @@
               <th class="num" title="Körningar med tidtabell">Körningar</th>
               <th class="num" title="Avvikelse vid avgång från första mätta station, median (min)">Avgång start</th>
               <th class="num" title="Avvikelse vid ankomst till sista mätta station, median (min)">Ankomst slut</th>
-              <th class="num" title="Planerad gångtid − vad sträckorna tar, summerat över tågets sträckor (min). Positivt = tid över">Marginal</th>
+              <th class="num" title="Planerad restid − vad tåget behöver: sträckornas tid och tågets egna uppehåll utan väntan (min). Positivt = tid över, negativt = för lite tid">Tid över</th>
               <th class="num" title="Gånger tåget tappade mer än toleransen vid en station">Tappat tid</th>
               <th class="num" title="Mest tappad tid vid en station (min)">Mest tappat</th>
             </tr></thead>
@@ -405,7 +405,7 @@
           </table>
         </div>
         <div id="trainDetail"></div>
-        <p class="meta no-print">Klicka på ett tåg för att se dess sträckor, uppehåll och gångerna det tappade tid. <strong>Sträckan tar</strong> = median av mätta gångtider för alla tåg som stannade och passerade som tidtabellen säger; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Marginal</strong> = planerad gångtid − vad sträckan tar. <strong>Tappad tid</strong> vid en station = avgångens avvikelse − ankomstens försening (tidig ankomst räknas som 0), alltså hur mycket längre tåget stod än tidtabellen gav utrymme för. Resandeantal finns inte i mätningarna; datum, veckodag och klockslag visas så att mönster syns.</p>
+        <p class="meta no-print">Klicka på ett tåg för att se dess sträckor, uppehåll och gångerna det tappade tid. <strong>Sträckan tar</strong> = median av mätta gångtider för alla tåg som stannade och passerade som tidtabellen säger; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Tid över</strong> = planerad restid − vad tåget behöver (sträckornas tid och tågets egna uppehåll utan väntan). <strong>Marginal gångtid</strong> per sträcka = planerad gångtid − vad sträckan tar; den räknar inte med uppehållen, som ofta ryms i den planerade gångtiden när ankomst och avgång har samma minut. <strong>Tappad tid</strong> vid en station = avgångens avvikelse − ankomstens försening (tidig ankomst räknas som 0), alltså hur mycket längre tåget stod än tidtabellen gav utrymme för. Resandeantal finns inte i mätningarna; datum, veckodag och klockslag visas så att mönster syns.</p>
       </div>
     </div>
   </div>
@@ -443,7 +443,7 @@
           </table>
         </div>
         <div id="segmentDetail"></div>
-        <p class="meta no-print">Varje rad är en sträcka med ett planerat stoppmönster. <strong>Sträckan tar</strong> är medianen för alla tåg i urvalet som stannade och passerade som tidtabellen säger, även körningar utan tidtabell; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Planerad tid per tåg</strong> visar varje planerad gångtid med marginalen mot vad sträckan tar inom parentes och tågen som har den. <strong>Snål och generös</strong>: något tåg har för lite tid och något annat för mycket. Klicka på en rad för att se mätningarna.</p>
+        <p class="meta no-print">Varje rad är en sträcka med ett planerat stoppmönster. <strong>Sträckan tar</strong> är medianen för alla tåg i urvalet som stannade och passerade som tidtabellen säger, även körningar utan tidtabell; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Planerad tid per tåg</strong> visar varje planerad gångtid med marginalen mot vad sträckan tar inom parentes och tågen som har den. <strong>Snål och generös</strong>: något tåg har för lite tid och något annat för mycket. Marginalen gäller gångtiden: när ankomst och avgång har samma minut i tidtabellen ryms uppehållet i den planerade gångtiden, så se Tid över i Per tåg för hela tåget. Klicka på en rad för att se mätningarna.</p>
       </div>
     </div>
   </div>
@@ -1548,12 +1548,6 @@
 
   // ── Per tåg ──
 
-  // Summerad marginal; "x av y sträckor" när några sträckor saknar underlag
-  function marginText(m){
-    if(m.sum == null) return '–';
-    return fmtSigned(m.sum) + (m.count < m.of ? ` <span class="few">${m.count} av ${m.of} sträckor</span>` : '');
-  }
-
   function renderTrains(){
     const summary = document.getElementById('trainsSummary');
     const content = document.getElementById('trainsContent');
@@ -1576,7 +1570,7 @@
       <td class="num">${r.timetableRuns}</td>
       <td class="num">${fmtSigned(r.startDelay.median)}</td>
       <td class="num">${fmtSigned(r.endDelay.median)}</td>
-      <td class="num">${marginText(r.margin)}</td>
+      <td class="num">${fmtSigned(r.travel.spare)}</td>
       <td class="num">${r.eventCount}</td>
       <td class="num">${r.lostMax == null ? '–' : fmtMin(r.lostMax)}</td>
     </tr>`).join('');
@@ -1610,7 +1604,7 @@
       '<th class="num" title="Tågets egen gångtid, median (min)">Tåget kör</th>' +
       '<th class="num" title="Median för alla tåg som stannade och passerade som tidtabellen säger (min)">Sträckan tar</th>' +
       '<th class="num">P90</th><th class="num" title="Mätningar bakom Sträckan tar">Underlag</th>' +
-      '<th class="num" title="Planerad − vad sträckan tar (min)">Marginal</th><th>Bedömning</th></tr></thead><tbody>';
+      '<th class="num" title="Planerad gångtid − vad sträckan tar (min). Uppehållen räknas inte här; se Tid över">Marginal gångtid</th><th>Bedömning</th></tr></thead><tbody>';
     html += r.segments.map(s => `<tr>
       <td>${esc(s.segment)}</td>
       <td>${esc(AN.PATTERN_LABELS[s.pattern])}${s.need && s.need.pattern === '*' ? ' <span class="few">alla mätningar</span>' : ''}</td>
@@ -1628,6 +1622,12 @@
         `<td class="num">${fmtSigned(r.margin.sum)}</td><td></td></tr>`;
     }
     html += '</tbody></table></div>';
+    const t = r.travel;
+    if(t.planned != null){
+      html += `<p class="tt-note" id="trainTravel">Restid enligt tidtabell ${fmtMin(t.planned, 0)} min · ` + (t.needed == null
+        ? 'vad tåget behöver kan inte räknas fram (mätningar saknas på någon sträcka)</p>'
+        : `tåget behöver ${fmtMin(t.needed)} min (sträckornas tid och tågets egna uppehåll utan väntan) · tid över ${fmtSigned(t.spare)} min</p>`);
+    }
 
     html += '<h3>Uppehåll</h3>';
     if(r.dwells.length){
@@ -1681,16 +1681,17 @@
     const sections = [{
       title: 'Tåg',
       header: ['Tåg', 'Sträcka', 'Körningar med tidtabell', 'Körningar totalt', 'Avgång start median (min)', 'Ankomst slut median (min)',
-        'Marginal summa (min)', 'Sträckor med marginal', 'Sträckor totalt', 'Gånger tappat tid', 'Mest tappat (min)'],
+        'Tid över (min)', 'Restid planerad (min)', 'Restid behövs (min)', 'Gångtidsmarginal summa (min)', 'Sträckor med marginal',
+        'Sträckor totalt', 'Gånger tappat tid', 'Mest tappat (min)'],
       rows: d.trains.rows.map(r => [r.label, r.routeLabel, r.timetableRuns, r.runCount, r.startDelay.median, r.endDelay.median,
-        r.margin.sum, r.margin.count, r.margin.of, r.eventCount, r.lostMax])
+        r.travel.spare, r.travel.planned, r.travel.needed, r.margin.sum, r.margin.count, r.margin.of, r.eventCount, r.lostMax])
     }];
     const r = d.trains.rows.find(x => x.key === openTrain);
     if(r){
       sections.push({
         title: `Tåg ${r.label} – gångtid mot vad sträckan tar`,
         header: ['Sträcka', 'Stopp', 'Planerad (min)', 'Tidigare planerad (min)', 'Tåget kör median (min)', 'Sträckan tar median (min)',
-          'Sträckan tar P90 (min)', 'Underlag', 'Underlag avser', 'Marginal (min)', 'Bedömning'],
+          'Sträckan tar P90 (min)', 'Underlag', 'Underlag avser', 'Marginal gångtid (min)', 'Bedömning'],
         rows: r.segments.map(s => [s.segment, AN.PATTERN_LABELS[s.pattern], s.planned, s.plannedPrev.map(v => AN.formatMinutes(v, 0)).join(', '),
           s.actual.median, s.need ? s.need.median : null, s.need ? s.need.p90 : null, s.need ? s.need.n : 0,
           s.need ? AN.PATTERN_LABELS[s.need.pattern] : '', s.margin, ASSESSMENT_LABELS[s.assessment]])

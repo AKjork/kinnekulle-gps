@@ -555,11 +555,20 @@
       return a && p ? minutes(p, a) : null;
     }));
 
+    // Tid över: planerad restid − vad tåget behöver (sträckornas tid och tågets egna uppehåll utan väntan, median).
+    // Gångtidsmarginalen ovan räknar inte med uppehållen, som ofta ryms i den planerade gångtiden.
+    const prop = proposeFor(tRuns, needsByKey, 'median');
+    const travel = {
+      planned: prop.error ? null : prop.totalCurrent,
+      needed: prop.error ? null : prop.totalExact,
+      spare: !prop.error && prop.totalCurrent != null && prop.totalExact != null ? prop.totalCurrent - prop.totalExact : null
+    };
+
     return {
       train: v.train, key: v.key, label: v.label, runCount, timetableRuns: tRuns.length, period: period(tRuns),
       route, routeLabel: route.length ? `${route[0]} → ${route[route.length - 1]}` : '',
       startDelay: stats(times.filter(t => t.index === 0).map(t => t.departureDev)),
-      endDelay, segments, margin, dwells, events,
+      endDelay, segments, margin, travel, dwells, events,
       eventCount: events.length,
       lostMax: events.length ? Math.max(...events.map(e => e.lost)) : null
     };
@@ -660,12 +669,14 @@
     // `train` är tidtabellens nyckel från trainVariants: tågnumret, eller "<tåg> <dagar>" när tåget har flera
     const key = String(train == null ? '' : train).trim();
     const v = trainVariants(runs).find(x => x.key === key);
-    const tRuns = v ? v.runs : [];
+    const head = { train: v ? v.train : key, key, label: v ? v.label : key, basis };
+    return Object.assign(head, proposeFor(v ? v.runs : [], needMap(needs), basis));
+  }
+
+  // Förslaget för en tidtabells körningar (se proposeTrainTimetable); ger också Tid över i Per tåg
+  function proposeFor(tRuns, needsByKey, basis) {
     const route = routeOf(tRuns);
-    if (!v || route.length < 2) {
-      return { train: v ? v.train : key, key, label: v ? v.label : key, basis, error: 'inga-korningar', route: [], rows: [], missing: [], runCount: tRuns.length };
-    }
-    const needsByKey = needMap(needs);
+    if (route.length < 2) return { error: 'inga-korningar', route: [], rows: [], missing: [], runCount: tRuns.length };
     const startOf = r => { const d = runStart(r); return d ? d.getTime() : 0; };
     const byLatest = tRuns.slice().sort((a, b) => startOf(b) - startOf(a));
 
@@ -764,7 +775,7 @@
     });
     const last = rows[rows.length - 1];
     return {
-      train: v.train, key: v.key, label: v.label, basis, route, rows, missing,
+      route, rows, missing,
       runCount: tRuns.length, period: period(tRuns),
       totalCurrent: rows[0].currentDep != null && last.currentArr != null ? last.currentArr - rows[0].currentDep : null,
       totalProposed: known ? last.propArr - anchor : null,

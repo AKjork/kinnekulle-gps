@@ -645,6 +645,8 @@ test('analys: tågkortet visar sträckor mot vad sträckan tar, uppehåll och g�
     ['Källby → Blomberg', 'Stopp–stopp', '3', '3,0', '3,0', '3,0', '6', '0,0', 'Lagom'],
     ['Summa', '', '12,0', '', '10,0', '', '', '+2,0', '']
   ], 'sträckor');
+  assertEqual(w.document.getElementById('trainTravel').textContent,
+    'Restid enligt tidtabell 14 min · tåget behöver 12,0 min (sträckornas tid och tågets egna uppehåll utan väntan) · tid över +2,0 min', 'restid');
   assertEqual(tableRows(w, 'trainDwells'), [
     ['Filsbäck', '1', '1,0', '0,0', '0', '3'],
     ['Källby', '1', '3,0', '0,0', '1', '3']
@@ -709,7 +711,8 @@ test('analys: export och utskrift av Per tåg, även med Ctrl+P', async () => {
   let text = w.__analys.exportTrainsCsv();
   assert(text.charCodeAt(0) === 0xFEFF, 'BOM saknas');
   for (const part of ['"Bygger på";"6 körningar med tidtabell (av 8 i urvalet), 2 tåg"', '"Tolerans";"±1 min"',
-    '"3344";"Lidköping → Blomberg";"3";"3";"0";"0";"2";"3";"3";"1";"2,5"']) {
+    '"Tid över (min)";"Restid planerad (min)";"Restid behövs (min)";"Gångtidsmarginal summa (min)"',
+    '"3344";"Lidköping → Blomberg";"3";"3";"0";"0";"2";"14";"12";"2";"3";"3";"1";"2,5"']) {
     assert(text.includes(part), 'saknas i CSV: ' + part);
   }
   assert(/^per-tag_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn');

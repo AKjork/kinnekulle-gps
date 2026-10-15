@@ -361,3 +361,16 @@ test('summarizeTrains och proposeTrainTimetable: samma tågnummer med två tidta
   const plans = AN.segmentPlans(AN.segmentObservations(all, {}), needs, { tolerance: 1, labels: new Map(AN.trainVariants(all).flatMap(v => v.runIds.map(id => [id, v.label]))) });
   assert.deepEqual(plans.find(r => r.segment === 'B → C').plans.map(x => [x.planned, x.trains]), [[2, ['3346 vardag']], [5, ['3346 söndag']]]);
 });
+
+test('summarizeTrains: Tid över räknar med tågets uppehåll, inte bara gångtiden', () => {
+  // Planerat A 07:00, B 07:04/07:04 (uppehåll 0), C 07:09. Tåget kör 4 + 4 min men står 1 min i B:
+  // gångtiden har 1 min över på B → C, men den minuten går åt till uppehållet
+  const runs = [13, 14, 15].map(day => run('v' + day, [
+    stop('A', { dep: [7, 0, 0, day], sDep: [7, 0, 0, day] }),
+    stop('B', { arr: [7, 4, 0, day], dep: [7, 5, 0, day], sArr: [7, 4, 0, day], sDep: [7, 4, 0, day] }),
+    stop('C', { arr: [7, 9, 0, day], sArr: [7, 9, 0, day] })
+  ], { trainNumber: '3360' }));
+  const row = AN.summarizeTrains(runs, AN.segmentNeeds(AN.segmentObservations(runs, {})), { tolerance: 1 }).rows[0];
+  assert.equal(row.margin.sum, 1, 'gångtidsmarginalen');
+  assert.deepEqual([row.travel.planned, row.travel.needed, row.travel.spare], [9, 9, 0], 'ingen tid över när uppehållet räknas');
+});
