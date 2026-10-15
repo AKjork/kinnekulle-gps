@@ -409,3 +409,32 @@ Nu finns endast två möjliga utfall:
 ```
 
 Detta säkerställer att endast relevant data för det valda datumet hämtas, oavsett hur många totala poster tågnumret har.
+
+## Uppdatering (2026-10-15)
+
+Utseende och buggfixar. Logiken för ankomst/avgång (`processSpeedTriggers`, `handleStationEntry`, `handleStationExit`, `trackClosestApproach`, trösklar) är **oförändrad**.
+
+### Buggfixar
+- **Statistik under resa**: att stänga Statistik visade startformuläret och gömde den pågående resan. Nu återgår `hideStatistics` alltid till resan om den pågår. `startJourney` vägrar starta om en resa redan pågår.
+- **Anteckningar under resa**: stationskorten byggdes om helt vid varje GPS-position, så fokus i anteckningsfältet tappades. Nu byggs korten bara om när rutten ändras (`renderedRouteKey`); annars uppdaterar `updateCard` bara tider, avstånd och klasser.
+- **Statusmeddelanden**: ljusa bakgrunder från gamla temat gav grå text på ljusgrönt. Meddelanden visas nu som en toast längst ner (`.toast`), resmeddelanden med `badge live/warn`.
+- **Rapporten** visades under startformuläret. Nu visas den ensam (`showView('report')`); formuläret kommer via "Starta ny mätning".
+
+### Utseende
+- Header på en rad: titel, försening, GPS, antal loggar och ⋮-meny. Skärm vaken, ljud och stor text är reglage i menyn; export ligger i menyn.
+- Panel för **nästa station** överst under resan (fastnar under headern vid scroll): namn, avstånd, tid enligt tidtabell, fart och GPS-noggrannhet. Vid station: uppehållets längd och planerad avgång. Ersätter de fyra statusrutorna.
+- Kommande stationer visar tidtabellens tid nedtonad i stället för streck. Tidtabellstider visas utan sekunder (`formatClock`).
+- Stora knappar för manuell ankomst/avgång i utfällt kort. "Flytta stationens mittpunkt hit" kräver bekräftelse.
+- Passerade kort tonas bara ner i rubrikdelen, inte i den utfällda delen.
+- Avsluta/Avbryt längst ner i resvyn.
+- Rapport: sammanfattning (restid, försening vid slutstation, antal uppehåll, längsta uppehåll) och en lista per station i stället för tabell med sju kolumner.
+- Basstorlek 16 px. Stor text skalar hela appen via `html.large-text` (rem). Chrome räknar inte om rem för synliga knappar, därför tvingar `toggleLargeText` en omräkning.
+- Kartan: korrigerad för longitud (cos(lat)), centrerad, och etiketter klipps inte i kanten. Nästa station får namn bredvid punkten.
+- `theme-color` ändrad från gammal blå till headerns mörka färg.
+
+### Övrigt
+- Utan tågnummer mäts bara start- och slutstation; det står nu under fältet.
+- "Spara till fil" och "Synka loggfil" döljs när webbläsaren saknar File System Access API (mobil).
+- Statistiken listar sträckor i ordning längs linjen (längsta körningarna först, insättningsordning) i stället för bokstavsordning.
+- Skärmen hålls vaken automatiskt under resan (`enableWakeLockForJourney`) och släpps efteråt om resan slog på den.
+- `formatDistance` med decimalkomma ("1,2 km"), `formatDuration` klarar över en timme (h:mm:ss).

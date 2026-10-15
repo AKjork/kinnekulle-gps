@@ -3,11 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#1a1d23">
 <title>RailTimer – Gångtidsmätare för tåg</title>
 <link rel="manifest" href="kinnekulle-gps.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
+<script>
+  // Stor text sätts innan sidan ritas, så att allt får rätt storlek från början
+  try{ if(localStorage.getItem('railtimer_large_text_v1')==='true') document.documentElement.classList.add('large-text'); }catch(e){}
+</script>
 <style>
   :root{
     --bg:#1a1d23;
@@ -34,7 +38,8 @@
     --blue-bg:rgba(59,130,246,0.15);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html{font-size:15px}
+  html{font-size:16px}
+  html.large-text{font-size:19px}
   body{
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     margin:0;
@@ -49,17 +54,19 @@
     position:sticky;
     top:0;
     background:var(--bg);
-    padding:.75rem 1rem;
+    padding:.6rem .75rem;
     margin:0;
     border-bottom:1px solid var(--b);
     z-index:10;
   }
+  .header-spacer{flex:1 1 auto}
   h1{
-    margin:0 0 .5rem;
+    margin:0;
     font-size:1.1rem;
     font-weight:600;
     color:var(--ink);
     letter-spacing:-0.01em;
+    white-space:nowrap;
   }
   h1::before{content:'🚂 '}
   h2{
@@ -73,7 +80,11 @@
   .bar{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
   .row{display:flex;gap:.4rem;flex-wrap:wrap}
   .grow{flex:1 1 auto}
-  .form-group{margin:.5rem 0}
+  .form-group{margin:.5rem 0;min-width:0}
+  .row > .form-group{flex:1 1 9rem}
+  .form-group input,.form-group select,.form-group textarea{width:100%}
+  .hint{font-size:.8rem;color:var(--mut);margin-top:.3rem}
+  .btn-start{width:100%;min-height:3rem;font-size:1rem;margin-top:.5rem}
   label{display:block;margin:.2rem 0;font-weight:500;color:var(--ink-dim);font-size:.8rem;text-transform:uppercase;letter-spacing:.03em}
   input,select,button,textarea{
     font-size:.95rem;
@@ -150,7 +161,9 @@
     background:linear-gradient(135deg, var(--card-bg) 0%, rgba(34,197,94,0.05) 100%);
     box-shadow:0 0 0 1px var(--pri-glow);
   }
-  .card.done{opacity:0.6}
+  .card.at-station{border-color:var(--sec);box-shadow:0 0 0 1px var(--warn-bg)}
+  /* Passerade stationer tonas ner – men inte den utfällda delen, så att den går att läsa och rätta */
+  .card.done .card-header{opacity:0.55}
   .card-header{
     display:flex;
     align-items:center;
@@ -181,15 +194,24 @@
     color:var(--ink-dim);
     margin-top:.5rem;
   }
+  .card-times{flex-wrap:wrap;font-variant-numeric:tabular-nums}
   .card-times strong{color:var(--ink);font-weight:600}
+  .card-times .planned{color:var(--mut)}
   .card-times .arr::before{content:'↓ ';color:var(--pri)}
   .card-times .dep::before{content:'↑ ';color:var(--sec)}
+  .card-main{flex:1 1 auto;min-width:0}
+  .card-title-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+  .card-side{display:flex;align-items:center;gap:.4rem;flex:none}
   .card-expand{
     max-height:0;
     overflow:hidden;
     transition:max-height 0.25s ease;
   }
-  .card.expanded .card-expand{max-height:20rem}
+  .card.expanded .card-expand{max-height:40rem}
+  .manual-actions{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin:.6rem 0}
+  .manual-actions button{min-height:3rem;font-size:1rem;font-weight:600}
+  .card-foot{display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap;margin-top:.6rem}
+  button.link-btn{background:transparent;border:none;color:var(--ink-dim);padding:.4rem 0;font-size:.8rem;text-decoration:underline}
   .card-expand-inner{
     padding-top:.6rem;
     margin-top:.5rem;
@@ -240,6 +262,11 @@
     font-size:.85rem;
   }
   .header-menu-dropdown button:hover{background:var(--b)}
+  .header-menu-dropdown{min-width:220px}
+  .header-menu-dropdown .menu-toggle{display:flex;justify-content:space-between;gap:1rem}
+  .menu-toggle .toggle-state{color:var(--mut);font-weight:600}
+  .menu-toggle[aria-pressed="true"] .toggle-state{color:var(--pri)}
+  .menu-section{padding:.5rem .8rem .2rem;font-size:.7rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
   .header-menu-dropdown button:first-child{border-radius:6px 6px 0 0}
   .header-menu-dropdown button:last-child{border-radius:0 0 6px 6px}
   .header-menu-dropdown hr{border:none;border-top:1px solid var(--b);margin:0}
@@ -292,12 +319,12 @@
     font-size:.85rem;
   }
 
-  .meta{font-size:.75rem;color:var(--mut);line-height:1.4}
+  .meta{font-size:.8rem;color:var(--mut);line-height:1.4}
   .badge{
     background:var(--b);
     border-radius:4px;
     padding:.15rem .4rem;
-    font-size:.7rem;
+    font-size:.75rem;
     font-weight:600;
     display:inline-flex;
     align-items:center;
@@ -309,29 +336,67 @@
   .badge.late{background:var(--warn-bg);color:var(--warn)}
   .badge.very-late{background:var(--err-bg);color:var(--err)}
   .badge.dist{background:transparent;color:var(--ink-dim);font-weight:500;font-variant-numeric:tabular-nums}
-  .scheduled{font-size:.7rem;color:var(--mut);margin:.15rem 0 0}
-  .status-grid{
-    display:grid;
-    grid-template-columns:repeat(2,1fr);
-    gap:.5rem;
-    margin:.75rem 0;
-  }
-  .status-box{
+  .scheduled{font-size:.8rem;color:var(--ink-dim);margin:.15rem 0 0}
+
+  /* Panel för nästa station – stannar kvar under headern när man scrollar */
+  .journey-title{font-size:.85rem;font-weight:500;color:var(--ink-dim);margin:.75rem 0 .5rem}
+  .journey-title::before{content:''}
+  .next-panel{
+    position:sticky;
+    top:var(--header-h,3rem);
+    z-index:5;
     border:1px solid var(--b);
-    border-radius:8px;
-    padding:.6rem .75rem;
+    border-radius:10px;
+    padding:.75rem .9rem;
     background:var(--card-bg);
+    box-shadow:0 6px 12px -6px rgba(0,0,0,.6);
   }
-  .status-box h4{
-    margin:0 0 .2rem;
-    font-size:.65rem;
-    color:var(--mut);
-    text-transform:uppercase;
-    letter-spacing:.04em;
-    font-weight:600;
+  .next-panel.at-station{border-color:var(--sec)}
+  .next-label{font-size:.75rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  .next-panel.at-station .next-label{color:var(--sec)}
+  .next-name{font-size:1.6rem;font-weight:700;line-height:1.2;margin:.1rem 0 .4rem;overflow-wrap:anywhere}
+  .next-row{display:flex;gap:1.5rem;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+  .next-big{display:block;font-size:1.35rem;font-weight:600;color:var(--ink)}
+  .next-sub{display:block;font-size:.75rem;color:var(--mut)}
+  .next-status{margin-top:.5rem;font-size:.8rem;color:var(--ink-dim);font-variant-numeric:tabular-nums}
+  #journeyMsg{margin-top:.5rem}
+  .journey-actions{display:flex;gap:.5rem;margin:1.25rem 0 .5rem}
+  .journey-actions button{flex:1;min-height:2.75rem;font-size:.95rem}
+
+  /* Kort meddelande längst ner på skärmen */
+  .toast{
+    position:fixed;
+    left:50%;
+    bottom:calc(1rem + env(safe-area-inset-bottom, 0px));
+    transform:translateX(-50%);
+    max-width:calc(100% - 2rem);
+    padding:.6rem .9rem;
+    border-radius:8px;
+    border:1px solid var(--b);
+    background:var(--card-bg);
+    color:var(--ink);
+    font-size:.9rem;
+    font-weight:500;
+    z-index:200;
+    box-shadow:0 6px 18px rgba(0,0,0,.55);
   }
-  .status-box strong{font-size:1rem;color:var(--ink);font-weight:600;display:block}
-  .status-box .meta{margin-top:.15rem}
+  .toast.ok{border-color:var(--pri);color:var(--pri)}
+  .toast.err{border-color:var(--err);color:var(--err)}
+
+  /* Rapport */
+  .report-summary{border:1px solid var(--b);border-radius:10px;padding:.9rem;background:var(--card-bg);margin-bottom:.75rem}
+  .rs-title{font-size:1.2rem;font-weight:700}
+  .rs-grid{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin:.75rem 0 .25rem;font-variant-numeric:tabular-nums}
+  .rs-big{display:block;font-size:1.3rem;font-weight:600}
+  .rs-sub{display:block;font-size:.75rem;color:var(--mut)}
+  .report-list{display:flex;flex-direction:column;gap:.4rem}
+  .rl-row{border:1px solid var(--b);border-radius:8px;padding:.6rem .75rem;background:var(--card-bg)}
+  .rl-name{font-weight:600;display:flex;align-items:center;gap:.5rem}
+  .rl-name .station-num{color:var(--mut);font-weight:400;font-size:.85rem;min-width:1.4rem}
+  .rl-times{display:flex;flex-wrap:wrap;gap:.25rem 1rem;margin-top:.3rem;font-size:.85rem;color:var(--ink-dim);font-variant-numeric:tabular-nums}
+  .rl-times strong{color:var(--ink)}
+  .rl-times small{color:var(--mut);font-size:.75rem}
+  .rl-note{font-size:.8rem;color:var(--ink-dim);margin-top:.3rem;font-style:italic}
   .control-row{margin:.4rem 0}
   .control-row label{
     display:inline-flex;
@@ -368,44 +433,29 @@
     border-radius:4px;
   }
   @media (max-width:640px){
-    html{font-size:14px}
-    header{padding:.6rem .75rem}
-    h1{font-size:1rem}
-    main{padding:.5rem}
-    .status-grid{grid-template-columns:1fr 1fr}
-    .status-box{padding:.5rem}
-    .bar{gap:.3rem}
-    button{padding:.35rem .6rem}
-  }
-  @media (min-width:641px){
-    .cards{max-width:500px}
+    main{padding:.6rem}
+    .bar{gap:.35rem}
   }
 
-  /* Large text mode */
-  body.large-text{font-size:18px}
-  body.large-text .card h3{font-size:1.4rem}
-  body.large-text .card-times{font-size:1.1rem}
-  body.large-text .badge{font-size:.9rem;padding:.25rem .5rem}
-  body.large-text .status-box strong{font-size:1.2rem}
-  body.large-text button{font-size:1rem;padding:.5rem .9rem}
+  /* Large text mode: hela appen skalas eftersom storlekarna anges i rem */
+  html.large-text .next-name{font-size:1.5rem}
 
   /* Landscape mode */
   @media (orientation:landscape) and (max-height:500px){
     header{padding:.4rem .75rem}
-    header h1{font-size:.95rem;margin-bottom:.25rem}
+    header h1{font-size:.95rem}
     main{padding:.4rem}
     .card{padding:.5rem .7rem}
     .card h3{font-size:1rem}
-    .card-times{font-size:.8rem}
+    .card-times{font-size:.85rem}
     .cards{
       display:grid;
       grid-template-columns:1fr 1fr;
       gap:.4rem;
     }
-    .status-grid{grid-template-columns:repeat(4,1fr);gap:.3rem}
-    .status-box{padding:.4rem .5rem}
-    .status-box h4{font-size:.6rem}
-    .status-box strong{font-size:.85rem}
+    .next-panel{position:static;padding:.5rem .75rem}
+    .next-name{font-size:1.2rem;margin-bottom:.2rem}
+    .next-big{font-size:1.1rem}
     #routeMap{height:100px}
   }
 
@@ -495,23 +545,24 @@
 </head>
 <body>
 <header>
-  <h1>RailTimer</h1>
-  <div class="bar">
-    <div class="header-menu">
-      <button id="btnExportMenu" class="primary header-menu-btn" aria-label="Exportera">Exportera ▾</button>
-      <div id="exportMenuDropdown" class="header-menu-dropdown">
-        <button id="btnExportCSV">CSV (Excel)</button>
-        <button id="btnExport">JSON</button>
-      </div>
-    </div>
-    <button id="btnWakeLock" class="ghost" aria-pressed="false" aria-label="Hindra att skärmen slocknar">Skärm på</button>
-    <button id="btnSound" class="ghost" aria-pressed="false" aria-label="Ljudsignaler av/på">Ljud av</button>
-    <button id="btnTextSize" class="ghost" aria-label="Växla textstorlek">Aa</button>
+  <div class="bar header-row">
+    <h1>RailTimer</h1>
     <span id="delaySummary"></span>
+    <span id="offlineIndicator" class="badge warn" style="display:none" role="status" aria-live="polite">Offline</span>
+    <span class="header-spacer"></span>
+    <span id="gpsStatusBadge" class="badge">GPS</span>
+    <span id="logCountTop" class="badge" role="status" aria-live="polite">0 loggar</span>
     <div class="header-menu">
-      <button id="btnMoreMenu" class="ghost header-menu-btn" aria-label="Fler alternativ">⋮</button>
+      <button id="btnMoreMenu" class="ghost header-menu-btn" aria-label="Meny">⋮</button>
       <div id="moreMenuDropdown" class="header-menu-dropdown">
+        <div class="menu-section">Inställningar</div>
+        <button id="btnWakeLock" class="menu-toggle" aria-pressed="false">Håll skärmen vaken <span class="toggle-state">Av</span></button>
+        <button id="btnSound" class="menu-toggle" aria-pressed="false">Ljud vid ankomst/avgång <span class="toggle-state">Av</span></button>
+        <button id="btnTextSize" class="menu-toggle" aria-pressed="false">Stor text <span class="toggle-state">Av</span></button>
+        <hr>
         <button id="btnStatistics">Statistik</button>
+        <button id="btnExportCSV">Exportera CSV (Excel)</button>
+        <button id="btnExport">Exportera JSON</button>
         <button id="btnSaveFile">Spara till fil</button>
         <button id="btnSync">Synka loggfil</button>
         <hr>
@@ -521,20 +572,17 @@
         <button id="btnUpdate" style="display:none">Uppdatera app</button>
       </div>
     </div>
-    <span id="headerStatus" class="badge" style="display:none"></span>
-    <span id="offlineIndicator" class="badge warn" style="display:none" role="status" aria-live="polite">Offline</span>
-    <span id="logCountTop" class="badge" role="status" aria-live="polite" style="margin-left:auto">0</span>
-    <span id="gpsStatusBadge" class="badge">GPS</span>
   </div>
 </header>
+<div id="headerStatus" class="toast" role="status" aria-live="polite" style="display:none"></div>
 
 <main>
   <section id="setup">
     <h2>1. Ställ in resan</h2>
     <div class="row">
       <div class="form-group grow">
-        <label for="trainNumber">Tågnummer (valfritt)</label>
-        <input id="trainNumber" type="text" placeholder="t.ex. 8074">
+        <label for="trainNumber">Tågnummer</label>
+        <input id="trainNumber" type="text" inputmode="numeric" placeholder="t.ex. 8074">
       </div>
       <div class="form-group grow">
         <label for="vehicleType">Fordonstyp *</label>
@@ -579,6 +627,7 @@
         </select>
       </div>
     </div>
+    <div class="hint">Tågnumret används för att hämta tidtabellen och stationerna längs vägen. Utan tågnummer mäts bara start- och slutstation.</div>
     <div id="routeSuggestion" style="display:none;margin:.6rem 0;padding:.75rem;background:var(--pri-glow);border:1px solid var(--pri);border-radius:8px">
       <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.4rem">
         <span style="font-size:1rem">💡</span>
@@ -607,39 +656,20 @@
       <label for="startNotes">Anteckningar (syns i rapporten)</label>
       <textarea id="startNotes" rows="2" placeholder="Skriv här om du vill anteckna något om mätningen …"></textarea>
     </div>
-    <div class="bar">
-      <button id="btnStart" class="primary">Starta GPS-resan</button>
-      <span id="setupError" class="badge warn" style="display:none"></span>
-    </div>
+    <span id="setupError" class="badge warn" style="display:none"></span>
+    <button id="btnStart" class="primary btn-start">Starta GPS-resan</button>
   </section>
 
   <section id="journey" style="display:none">
-    <h2 id="journeyTitle">Aktiv resa</h2>
-    <div class="status-grid">
-      <div class="status-box">
-        <h4>GPS-status</h4>
-        <strong id="gpsStatusText">–</strong>
-        <div class="meta" id="gpsAccuracy">Noggrannhet: –</div>
+    <h2 id="journeyTitle" class="journey-title">Aktiv resa</h2>
+    <div class="next-panel" id="nextPanel">
+      <div class="next-label" id="nextLabel">Nästa station</div>
+      <div class="next-name" id="nextStop">–</div>
+      <div class="next-row">
+        <div><span class="next-big" id="nextValue1">–</span><span class="next-sub" id="nextSub1">kvar</span></div>
+        <div><span class="next-big" id="nextValue2">–</span><span class="next-sub" id="nextSub2">enligt tidtabell</span></div>
       </div>
-      <div class="status-box">
-        <h4>Senaste position</h4>
-        <strong id="gpsCoords">–</strong>
-        <div class="meta" id="gpsTimestamp">–</div>
-      </div>
-      <div class="status-box">
-        <h4>Hastighet</h4>
-        <strong id="gpsSpeed">–</strong>
-        <div class="meta" id="gpsExtra">Ingen rörelse registrerad</div>
-      </div>
-      <div class="status-box">
-        <h4>Nästa station</h4>
-        <strong id="nextStop">–</strong>
-        <div class="meta" id="nextStopInfo">Ingen aktiv resa</div>
-      </div>
-    </div>
-    <div class="bar" style="margin:1rem 0">
-      <button id="btnFinish" class="primary">Avsluta & spara</button>
-      <button id="btnAbort" class="danger">Avbryt resa</button>
+      <div class="next-status"><span id="gpsSpeed">–</span> · <span id="gpsExtra">Väntar på GPS</span> · <span id="gpsAccuracy">GPS –</span></div>
       <span id="journeyMsg" class="badge" style="display:none"></span>
     </div>
     <div id="routeMapContainer">
@@ -650,6 +680,10 @@
       <div id="routeMap"></div>
     </div>
     <div id="cards" class="cards"></div>
+    <div class="journey-actions">
+      <button id="btnFinish" class="primary">Avsluta & spara</button>
+      <button id="btnAbort" class="danger">Avbryt resa</button>
+    </div>
   </section>
 
   <section id="report" style="display:none">
@@ -677,14 +711,14 @@
 </main>
 
 <footer>
-  Tips: Kör sidan via <code>https://</code> på mobilen för att få tillgång till högupplöst GPS. All data sparas endast lokalt i webbläsaren.
+  All data sparas endast lokalt i webbläsaren på den här enheten.
 </footer>
 
 <script>
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-01-23b';
+  const APP_VERSION = '2026-10-15';
   const DEFAULT_RADIUS = 200;
   const EXTRA_MARGIN = 150;
   const SPEED_THRESHOLD_KMH = 2; // Sänkt från 5 - endast riktigt stopp räknas
@@ -725,14 +759,16 @@
     journeyMsg: document.getElementById('journeyMsg'),
     reportHTML: document.getElementById('reportHTML'),
     gpsStatusBadge: document.getElementById('gpsStatusBadge'),
-    gpsStatusText: document.getElementById('gpsStatusText'),
     gpsAccuracy: document.getElementById('gpsAccuracy'),
-    gpsCoords: document.getElementById('gpsCoords'),
-    gpsTimestamp: document.getElementById('gpsTimestamp'),
     gpsSpeed: document.getElementById('gpsSpeed'),
     gpsExtra: document.getElementById('gpsExtra'),
+    nextPanel: document.getElementById('nextPanel'),
+    nextLabel: document.getElementById('nextLabel'),
     nextStop: document.getElementById('nextStop'),
-    nextStopInfo: document.getElementById('nextStopInfo'),
+    nextValue1: document.getElementById('nextValue1'),
+    nextSub1: document.getElementById('nextSub1'),
+    nextValue2: document.getElementById('nextValue2'),
+    nextSub2: document.getElementById('nextSub2'),
     journeyTitle: document.getElementById('journeyTitle'),
     logCountTop: document.getElementById('logCountTop'),
     installBtn: document.getElementById('btnInstall'),
@@ -777,6 +813,9 @@
   let updateTriggered = false;
   let hadController = !!navigator.serviceWorker.controller;
   let expandedCards = new Set(); // Track which cards are expanded
+  let renderedRouteKey = ''; // Vilken rutt stationskorten senast byggdes för
+  let wakeLockByJourney = false; // Skärmlåset slogs på av resan (inte manuellt)
+  let statsReturnView = null; // Vilka vyer som var synliga innan Statistik öppnades
 
   // Settings
   let soundEnabled = localStorage.getItem(STORAGE_KEY_SOUND_ENABLED) === 'true';
@@ -791,9 +830,33 @@
     setupOnlineStatus();
     setupStationSearch();
     applyStoredSettings();
+    hideUnsupportedFileActions();
+    trackHeaderHeight();
     await loadAllStations();
     getUserLocation();
     checkForInterruptedJourney();
+  }
+
+  // "Spara till fil" och "Synka loggfil" kräver File System Access API, som saknas i mobilwebbläsare
+  function hideUnsupportedFileActions(){
+    if('showOpenFilePicker' in window) return;
+    ['btnSaveFile','btnSync'].forEach(id=>{
+      const btn=document.getElementById(id);
+      if(btn) btn.style.display='none';
+    });
+  }
+
+  // Panelen för nästa station ska fastna precis under headern, vars höjd varierar
+  function trackHeaderHeight(){
+    const header=document.querySelector('header');
+    if(!header) return;
+    const apply=()=>document.documentElement.style.setProperty('--header-h', header.offsetHeight+'px');
+    apply();
+    if('ResizeObserver' in window){
+      new ResizeObserver(apply).observe(header);
+    }else{
+      window.addEventListener('resize', apply);
+    }
   }
 
   // Vibration feedback for arrivals/departures
@@ -843,31 +906,38 @@
     if(soundEnabled) playTone(800, 100, 1);
   }
 
-  function updateSoundButton(){
-    const btn = document.getElementById('btnSound');
+  function setMenuToggle(btn, on){
     if(!btn) return;
-    btn.textContent = soundEnabled ? 'Ljud på' : 'Ljud av';
-    btn.setAttribute('aria-pressed', soundEnabled);
-    btn.classList.toggle('primary', soundEnabled);
-    btn.classList.toggle('ghost', !soundEnabled);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const label = btn.querySelector('.toggle-state');
+    if(label) label.textContent = on ? 'På' : 'Av';
+  }
+
+  function updateSoundButton(){
+    setMenuToggle(document.getElementById('btnSound'), soundEnabled);
   }
 
   function toggleLargeText(){
     largeTextEnabled = !largeTextEnabled;
     localStorage.setItem(STORAGE_KEY_LARGE_TEXT, largeTextEnabled);
-    document.body.classList.toggle('large-text', largeTextEnabled);
+    document.documentElement.classList.toggle('large-text', largeTextEnabled);
+    // Chrome räknar inte om rem-storleken för knappar som redan visas när
+    // rotens textstorlek ändras – tvinga en omräkning, men behåll scrollläget
+    const y=window.scrollY;
+    document.body.style.display='none';
+    void document.body.offsetHeight;
+    document.body.style.display='';
+    window.scrollTo(0,y);
     updateTextSizeButton();
+    renderRouteMap();
   }
 
   function updateTextSizeButton(){
-    const btn = document.getElementById('btnTextSize');
-    if(!btn) return;
-    btn.classList.toggle('primary', largeTextEnabled);
-    btn.classList.toggle('ghost', !largeTextEnabled);
+    setMenuToggle(document.getElementById('btnTextSize'), largeTextEnabled);
   }
 
   function applyStoredSettings(){
-    if(largeTextEnabled) document.body.classList.add('large-text');
+    if(largeTextEnabled) document.documentElement.classList.add('large-text');
     updateSoundButton();
     updateTextSizeButton();
   }
@@ -1251,11 +1321,7 @@
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Header dropdown menus
-    document.getElementById('btnExportMenu').addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleMenu('exportMenuDropdown');
-    });
+    // Header dropdown menu
     document.getElementById('btnMoreMenu').addEventListener('click', (e) => {
       e.stopPropagation();
       toggleMenu('moreMenuDropdown');
@@ -1305,6 +1371,12 @@
   }
 
   async function startJourney(){
+    if(state.running){
+      // Skydd: en ny resa får aldrig skriva över en som pågår
+      showView('journey');
+      showHeaderStatus('En resa pågår redan – avsluta den först.', true);
+      return;
+    }
     speedHistory.length=0; // nollställer tidigare hastighetsposter inför ny resa
     state.awaitingDepartureIndex=null;
     state.departureProvisionalIdx=null;
@@ -1335,7 +1407,7 @@
 
     // If train number provided, try to build route from timetable
     if(trainNumber){
-      showSetupError('');
+      hideSetupError();
       document.getElementById('btnStart').disabled = true;
       document.getElementById('btnStart').textContent = 'Hämtar tidtabell...';
 
@@ -1407,14 +1479,15 @@
     state.autoReason='';
     state.aborted=false;
     hideSetupError();
-    els.setup.style.display='none';
-    els.journey.style.display='block';
-    els.report.style.display='none';
+    showView('journey');
     els.journeyTitle.textContent=`${startName} → ${endName} • ${state.vehicleType} • tåg ${state.trainNumber||'–'}`;
     els.journeyMsg.style.display='none';
+    expandedCards.clear();
+    renderedRouteKey='';
     renderRouteCards();
     renderRouteMap();
     requestGpsWatch();
+    enableWakeLockForJourney();
 
     if(timetableResult && timetableResult.success){
       const stopCount = state.route.length;
@@ -1571,20 +1644,20 @@
 
   function updateSpeedReadout(speed, accuracy){
     if(speed!=null){
-      els.gpsSpeed.textContent=`${(speed*3.6).toFixed(1)} km/h`;
-      if(speed<0.5){
-        els.gpsExtra.textContent='Stillastående (under 0,5 km/h)';
+      els.gpsSpeed.textContent=`${Math.round(speed*3.6)} km/h`;
+      if(speed<=SPEED_THRESHOLD_MS){
+        els.gpsExtra.textContent='Står still';
       }else if(speed<5){
-        els.gpsExtra.textContent='Låg fart – möjlig inbromsning eller avgång';
+        els.gpsExtra.textContent='Låg fart';
       }else{
         els.gpsExtra.textContent='I rörelse';
       }
     }else{
-      els.gpsSpeed.textContent='–';
-      els.gpsExtra.textContent='Hastighet saknas i GPS-datat';
+      els.gpsSpeed.textContent='– km/h';
+      els.gpsExtra.textContent='Fart saknas i GPS-datat';
     }
     if(accuracy!=null){
-      els.gpsAccuracy.textContent=`Noggrannhet: ±${Math.round(accuracy)} m`;
+      els.gpsAccuracy.textContent=`GPS ±${Math.round(accuracy)} m`;
     }
   }
 
@@ -1607,22 +1680,18 @@
       els.gpsStatusBadge.textContent='GPS aktiv';
       els.gpsStatusBadge.classList.add('live');
       els.gpsStatusBadge.classList.remove('warn');
-      els.gpsStatusText.textContent='Signal mottagen';
-      els.gpsCoords.textContent=`${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
-      const ts=new Date(pos.timestamp||Date.now());
-      els.gpsTimestamp.textContent=ts.toLocaleTimeString('sv-SE');
+      if(pos.coords.accuracy!=null){
+        els.gpsAccuracy.textContent=`GPS ±${Math.round(pos.coords.accuracy)} m`;
+      }
     }else if(error){
       els.gpsStatusBadge.textContent='GPS saknas';
       els.gpsStatusBadge.classList.add('warn');
-      els.gpsStatusText.textContent=error.message||'Ingen GPS';
-      els.gpsCoords.textContent='–';
-      els.gpsTimestamp.textContent='–';
+      els.gpsStatusBadge.classList.remove('live');
+      els.gpsAccuracy.textContent=error.message||'Ingen GPS';
     }else{
-      els.gpsStatusBadge.textContent='Ingen GPS ännu';
+      els.gpsStatusBadge.textContent='GPS';
       els.gpsStatusBadge.classList.remove('warn','live');
-      els.gpsStatusText.textContent='Väntar på position…';
-      els.gpsCoords.textContent='–';
-      els.gpsTimestamp.textContent='–';
+      els.gpsAccuracy.textContent='Väntar på GPS…';
     }
   }
 
@@ -1953,119 +2022,147 @@
     }, 500);
   }
 
+  // Stationen tåget står vid (ankommit, ej avgått) – annars null
+  function currentStationIndex(){
+    const idx=state.awaitingDepartureIndex;
+    if(idx==null) return null;
+    const st=state.route[idx];
+    if(!st || st.actualDeparture) return null;
+    if(idx===0 || st.actualArrival) return idx;
+    return null;
+  }
+
   function updateNextStopUI(){
-    if(state.nextIndex==null){
-      els.nextStop.textContent='–';
-      els.nextStopInfo.textContent='Alla stationer registrerade';
-    }else{
-      const st=state.route[state.nextIndex];
+    if(!els.nextPanel) return;
+    const atIdx=currentStationIndex();
+    els.nextPanel.classList.toggle('at-station', atIdx!=null);
+    if(atIdx!=null){
+      // Vid station: visa uppehållets längd och planerad avgång
+      const st=state.route[atIdx];
+      els.nextLabel.textContent = atIdx===0 && !st.actualArrival ? 'Startstation' : 'Vid station';
       els.nextStop.textContent=st.name;
-      const dist=st.lastSeenDistance;
-      els.nextStopInfo.textContent = dist!=null ? `≈${formatDistance(dist)} bort` : 'Ingen distansdata ännu';
+      if(st.actualArrival){
+        els.nextValue1.textContent=formatDuration((Date.now()-new Date(st.actualArrival))/1000);
+        els.nextSub1.textContent='uppehåll';
+      }else{
+        els.nextValue1.textContent=st.lastSeenDistance!=null?formatDistance(st.lastSeenDistance):'–';
+        els.nextSub1.textContent='från stationen';
+      }
+      els.nextValue2.textContent=st.scheduledDeparture?formatClock(st.scheduledDeparture):'–';
+      els.nextSub2.textContent='avgång enligt tidtabell';
+      return;
     }
+    if(state.nextIndex==null){
+      els.nextLabel.textContent='Klart';
+      els.nextStop.textContent='Alla stationer registrerade';
+      els.nextValue1.textContent='–';
+      els.nextSub1.textContent='kvar';
+      els.nextValue2.textContent='–';
+      els.nextSub2.textContent='enligt tidtabell';
+      return;
+    }
+    const st=state.route[state.nextIndex];
+    els.nextLabel.textContent='Nästa station';
+    els.nextStop.textContent=st.name + (st.shouldStop?'':' (passeras)');
+    els.nextValue1.textContent=st.lastSeenDistance!=null?formatDistance(st.lastSeenDistance):'–';
+    els.nextSub1.textContent='kvar';
+    const planned=st.scheduledArrival||st.scheduledDeparture;
+    els.nextValue2.textContent=planned?formatClock(planned):'–';
+    els.nextSub2.textContent='ankomst enligt tidtabell';
+  }
+
+  // Försening som badge: "I tid" inom ±1 min, gul upp till 5 min, röd därefter
+  function delayBadge(actual, scheduled){
+    if(!actual || !scheduled) return '';
+    const delayMin=Math.round((new Date(actual)-new Date(scheduled))/60000);
+    let cls, text;
+    if(delayMin < -1){ cls='early'; text=`${Math.abs(delayMin)} min tidig`; }
+    else if(delayMin > 5){ cls='very-late'; text=`+${delayMin} min`; }
+    else if(delayMin > 1){ cls='late'; text=`+${delayMin} min`; }
+    else { cls='live'; text='I tid'; }
+    return ` <span class="badge ${cls}">${text}</span>`;
+  }
+
+  // Faktisk tid om den finns, annars tidtabellens tid nedtonad
+  function timeCell(cls, actual, scheduled){
+    if(actual) return `<span class="${cls}"><strong>${formatTime(actual)}</strong>${delayBadge(actual, scheduled)}</span>`;
+    if(scheduled) return `<span class="${cls} planned" title="Enligt tidtabell">${formatClock(scheduled)}</span>`;
+    return `<span class="${cls} planned">–</span>`;
+  }
+
+  function cardShellHtml(station, idx){
+    return `<div class="card" data-idx="${idx}">
+      <div class="card-header" data-action="toggle-expand" data-idx="${idx}">
+        <div class="card-main"></div>
+      </div>
+      <div class="card-expand">
+        <div class="card-expand-inner">
+          <p class="scheduled" data-role="sched"></p>
+          <div class="manual-actions">
+            <button class="ghost" data-action="arrive" data-idx="${idx}">↓ Ankomst nu</button>
+            <button class="ghost" data-action="depart" data-idx="${idx}">↑ Avgång nu</button>
+          </div>
+          <div class="control-row">
+            <label><input type="checkbox" data-action="toggle-stop" data-idx="${idx}"> Planerat stopp</label>
+          </div>
+          <div class="control-row">
+            <label><input type="checkbox" data-action="exclude-run" data-idx="${idx}"> Exkludera gångtiden hit</label>
+          </div>
+          <textarea class="station-note" data-action="station-note" data-idx="${idx}" placeholder="Anteckning (t.ex. signal, möte...)">${escapeHtml(station.notes||'')}</textarea>
+          <div class="card-foot">
+            <span class="meta" data-role="geo"></span>
+            <button class="link-btn" data-action="update-pos" data-idx="${idx}">Flytta stationens mittpunkt hit</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // Uppdaterar ett befintligt kort utan att bygga om det, så att fokus i
+  // anteckningsfält och kryssrutor inte tappas vid varje GPS-position
+  function updateCard(card, station, idx){
+    const isLast = idx===state.route.length-1;
+    const classes=['card'];
+    if(currentStationIndex()===idx) classes.push('at-station');
+    else if(state.nextIndex===idx) classes.push('active');
+    if(expandedCards.has(idx)) classes.push('expanded');
+    // Startstationen har ingen ankomst och slutstationen ingen avgång
+    const done = idx===0 ? !!station.actualDeparture : (isLast ? !!station.actualArrival : !!(station.actualArrival && station.actualDeparture));
+    if(done) classes.push('done');
+    card.className=classes.join(' ');
+
+    const stopIcon = station.shouldStop ? '' : ' ⏩';
+    const times=[];
+    if(idx>0 || station.actualArrival) times.push(timeCell('arr', station.actualArrival, station.scheduledArrival));
+    if(!isLast || station.actualDeparture) times.push(timeCell('dep', station.actualDeparture, station.scheduledDeparture));
+    const dist=station.lastSeenDistance!=null?formatDistance(station.lastSeenDistance):'';
+    card.querySelector('.card-main').innerHTML=`
+      <div class="card-title-row">
+        <h3><span class="station-num">${station.order}</span>${escapeHtml(station.name)}${stopIcon}</h3>
+        <span class="card-side"><span class="badge dist">${dist}</span><span class="card-toggle">▼</span></span>
+      </div>
+      <div class="card-times">${times.join('')}</div>`;
+
+    const sched=[];
+    if(station.scheduledArrival) sched.push(`Ankomst ${formatClock(station.scheduledArrival)}`);
+    if(station.scheduledDeparture) sched.push(`avgång ${formatClock(station.scheduledDeparture)}`);
+    card.querySelector('[data-role="sched"]').textContent = sched.length ? `Tidtabell: ${sched.join(', ')}` : 'Ingen tidtabell för stationen';
+    card.querySelector('[data-role="geo"]').textContent = `${Math.round(station.radius)} m radie`;
+
+    const stopBox=card.querySelector('[data-action="toggle-stop"]');
+    if(stopBox) stopBox.checked=!!station.shouldStop;
+    const exclBox=card.querySelector('[data-action="exclude-run"]');
+    if(exclBox) exclBox.checked=!!station.excludeInboundRun;
   }
 
   function renderRouteCards(){
-    const cardsHtml=state.route.map((station,idx)=>{
-      const arrival=station.actualArrival?formatTime(station.actualArrival):'–';
-      const depart=station.actualDeparture?formatTime(station.actualDeparture):'–';
-      const dist=station.lastSeenDistance!=null?formatDistance(station.lastSeenDistance):'–';
-      const classes=['card'];
-      if(state.nextIndex===idx) classes.push('active');
-      if(expandedCards.has(idx)) classes.push('expanded');
-
-      const schedArr = station.scheduledArrival ? formatTime(station.scheduledArrival) : null;
-      const schedDep = station.scheduledDeparture ? formatTime(station.scheduledDeparture) : null;
-
-      let arrDelayBadge = '';
-      let depDelayBadge = '';
-
-      if(station.actualArrival && station.scheduledArrival){
-        const delayMin = Math.round((new Date(station.actualArrival) - new Date(station.scheduledArrival)) / 60000);
-        const absDelay = Math.abs(delayMin);
-        let badgeClass = '';
-        let delayText = '';
-
-        if(delayMin < -1){
-          badgeClass = 'early';
-          delayText = `${absDelay} min tidig`;
-        } else if(delayMin > 1 && delayMin <= 5){
-          badgeClass = 'late';
-          delayText = `+${delayMin} min`;
-        } else if(delayMin > 5){
-          badgeClass = 'very-late';
-          delayText = `+${delayMin} min`;
-        } else {
-          badgeClass = 'live';
-          delayText = 'I tid';
-        }
-
-        arrDelayBadge = ` <span class="badge ${badgeClass}">${delayText}</span>`;
-      }
-
-      if(station.actualDeparture && station.scheduledDeparture){
-        const delayMin = Math.round((new Date(station.actualDeparture) - new Date(station.scheduledDeparture)) / 60000);
-        const absDelay = Math.abs(delayMin);
-        let badgeClass = '';
-        let delayText = '';
-
-        if(delayMin < -1){
-          badgeClass = 'early';
-          delayText = `${absDelay} min tidig`;
-        } else if(delayMin > 1 && delayMin <= 5){
-          badgeClass = 'late';
-          delayText = `+${delayMin} min`;
-        } else if(delayMin > 5){
-          badgeClass = 'very-late';
-          delayText = `+${delayMin} min`;
-        } else {
-          badgeClass = 'live';
-          delayText = 'I tid';
-        }
-
-        depDelayBadge = ` <span class="badge ${badgeClass}">${delayText}</span>`;
-      }
-
-      const isDone = station.actualArrival && station.actualDeparture;
-      if(isDone) classes.push('done');
-      const stopIcon = station.shouldStop ? '' : ' ⏩';
-
-      return `<div class="${classes.join(' ')}" data-idx="${idx}">
-        <div class="card-header" data-action="toggle-expand" data-idx="${idx}">
-          <div>
-            <h3><span class="station-num">${station.order}</span>${station.name}${stopIcon}</h3>
-            <div class="card-times">
-              <span class="arr"><strong>${arrival}</strong>${arrDelayBadge}</span>
-              <span class="dep"><strong>${depart}</strong>${depDelayBadge}</span>
-            </div>
-          </div>
-          <div style="display:flex;align-items:center;gap:.4rem">
-            <span class="badge dist">${dist}</span>
-            <span class="card-toggle">▼</span>
-          </div>
-        </div>
-        <div class="card-expand">
-          <div class="card-expand-inner">
-            ${schedArr ? `<p class="scheduled">Ank schema: ${schedArr}</p>` : ''}
-            ${schedDep ? `<p class="scheduled">Avg schema: ${schedDep}</p>` : ''}
-            <p class="meta">${Math.round(station.radius)} m radie • ${station.lat!=null?station.lat.toFixed(4):'–'}, ${station.lon!=null?station.lon.toFixed(4):'–'}</p>
-            <div class="control-row">
-              <label><input type="checkbox" data-action="toggle-stop" data-idx="${idx}" ${station.shouldStop?'checked':''}> Planerat stopp</label>
-            </div>
-            <div class="control-row">
-              <label><input type="checkbox" data-action="exclude-run" data-idx="${idx}" ${station.excludeInboundRun?'checked':''}> Exkludera gångtid</label>
-            </div>
-            <div class="bar card-actions">
-              <button class="ghost sm" data-action="arrive" data-idx="${idx}">↓ Ankomst</button>
-              <button class="ghost sm" data-action="depart" data-idx="${idx}">↑ Avgång</button>
-              <button class="ghost sm" data-action="update-pos" data-idx="${idx}">📍 Uppdatera pos</button>
-            </div>
-            <textarea class="station-note" data-action="station-note" data-idx="${idx}" placeholder="Anteckning (t.ex. signal, möte...)">${escapeHtml(station.notes||'')}</textarea>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-    els.cards.innerHTML=cardsHtml;
+    const key=state.route.map(s=>s.name).join('|');
+    if(key!==renderedRouteKey || els.cards.children.length!==state.route.length){
+      els.cards.innerHTML=state.route.map((station,idx)=>cardShellHtml(station, idx)).join('');
+      renderedRouteKey=key;
+    }
+    const cards=els.cards.children;
+    state.route.forEach((station,idx)=>updateCard(cards[idx], station, idx));
     updateNextStopUI();
   }
 
@@ -2073,8 +2170,13 @@
     return new Date(dt).toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   }
 
+  // Klockslag utan sekunder – för tidtabellstider som alltid är hela minuter
+  function formatClock(dt){
+    return new Date(dt).toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'});
+  }
+
   function formatDistance(meters){
-    if(meters>1000) return (meters/1000).toFixed(2)+' km';
+    if(meters>=1000) return (meters/1000).toFixed(1).replace('.', ',')+' km';
     return Math.round(meters)+' m';
   }
 
@@ -2105,6 +2207,8 @@
     }else if(btn.dataset.action==='update-pos'){
       const station=state.route[idx];
       if(!station) return;
+      // Flyttar stationens mittpunkt och påverkar när ankomst/avgång registreras – fråga först
+      if(!confirm(`Flytta mittpunkten för ${station.name} till din nuvarande position?\n\nDet påverkar när ankomst och avgång registreras vid stationen under den här resan.`)) return;
       calibrateWithCurrentPosition(station.name, true);
     }
   }
@@ -2182,14 +2286,36 @@
     state.autoReason=reason||'';
     state.departureProvisionalIdx=null;
     clearActiveJourney(); // Clear saved journey since it's now complete
+    releaseWakeLockAfterJourney();
     document.getElementById('delaySummary').style.display='none';
-    els.journeyMsg.textContent=reason|| (aborted?'Resan avslutad':'Resan sparad');
-    els.journeyMsg.style.display='inline-block';
+    els.journeyMsg.style.display='none';
     const logEntry=saveLog(aborted);
     renderReport(logEntry);
-    els.journey.style.display='none';
-    els.report.style.display='block';
-    els.setup.style.display='block';
+    // Rapporten visas ensam överst; startformuläret kommer först via "Starta ny mätning"
+    showView('report');
+  }
+
+  let currentView='setup';
+  function showView(view){
+    currentView=view;
+    els.setup.style.display = view==='setup' ? 'block' : 'none';
+    els.journey.style.display = view==='journey' ? 'block' : 'none';
+    els.report.style.display = view==='report' ? 'block' : 'none';
+    document.getElementById('statistics').style.display = view==='statistics' ? 'block' : 'none';
+    window.scrollTo(0,0);
+  }
+
+  // Skärmen hålls vaken automatiskt under resan, om den inte redan är påslagen manuellt
+  function enableWakeLockForJourney(){
+    if(keepScreenAwake || !('wakeLock' in navigator)) return;
+    wakeLockByJourney=true;
+    requestWakeLock();
+  }
+
+  function releaseWakeLockAfterJourney(){
+    if(!wakeLockByJourney) return;
+    wakeLockByJourney=false;
+    if(keepScreenAwake) releaseWakeLock();
   }
 
   function renderReport(logEntry){
@@ -2197,72 +2323,89 @@
       els.reportHTML.innerHTML='<p>Ingen data att visa.</p>';
       return;
     }
-    const rows=logEntry.stops.map((st,idx)=>{
-      const dwell=st.actualArrival&&st.actualDeparture?((new Date(st.actualDeparture)-new Date(st.actualArrival))/60000).toFixed(1)+' min':'–';
+    const stops=logEntry.stops||[];
+    const first=stops[0]||{};
+    const last=stops[stops.length-1]||{};
 
-      let arrDelay = '–';
-      if(st.actualArrival && st.scheduledArrival){
-        const delayMin = Math.round((new Date(st.actualArrival) - new Date(st.scheduledArrival)) / 60000);
-        if(delayMin < -1){
-          arrDelay = `${Math.abs(delayMin)} min tidig`;
-        } else if(delayMin > 1){
-          arrDelay = `+${delayMin} min`;
-        } else {
-          arrDelay = 'I tid';
-        }
+    // Restid: faktisk avgång från första station till ankomst vid sista
+    const tripStart=first.actualDeparture||logEntry.startedAt;
+    const tripEnd=last.actualArrival||logEntry.finishedAt;
+    const tripSeconds=tripStart&&tripEnd?(new Date(tripEnd)-new Date(tripStart))/1000:null;
+
+    let endDelay='–';
+    if(last.actualArrival && last.scheduledArrival){
+      const m=Math.round((new Date(last.actualArrival)-new Date(last.scheduledArrival))/60000);
+      endDelay = Math.abs(m)<=1 ? 'I tid' : (m>0?`+${m} min`:`${m} min`);
+    }
+
+    let dwellCount=0, longest=null;
+    stops.forEach((st,idx)=>{
+      if(idx===0 || idx===stops.length-1) return;
+      if(!st.actualArrival || !st.actualDeparture) return;
+      const sec=(new Date(st.actualDeparture)-new Date(st.actualArrival))/1000;
+      if(sec<=0) return;
+      dwellCount++;
+      if(!longest || sec>longest.sec) longest={sec, name:st.name};
+    });
+
+    const rows=stops.map((st,idx)=>{
+      const parts=[];
+      if(idx>0 || st.actualArrival){
+        parts.push(`<span>↓ <strong>${st.actualArrival?formatTime(st.actualArrival):'–'}</strong>${st.scheduledArrival?` <small>(${formatClock(st.scheduledArrival)})</small>`:''}${delayBadge(st.actualArrival, st.scheduledArrival)}</span>`);
       }
-
-      let depDelay = '–';
-      if(st.actualDeparture && st.scheduledDeparture){
-        const delayMin = Math.round((new Date(st.actualDeparture) - new Date(st.scheduledDeparture)) / 60000);
-        if(delayMin < -1){
-          depDelay = `${Math.abs(delayMin)} min tidig`;
-        } else if(delayMin > 1){
-          depDelay = `+${delayMin} min`;
-        } else {
-          depDelay = 'I tid';
-        }
+      if(idx<stops.length-1 || st.actualDeparture){
+        parts.push(`<span>↑ <strong>${st.actualDeparture?formatTime(st.actualDeparture):'–'}</strong>${st.scheduledDeparture?` <small>(${formatClock(st.scheduledDeparture)})</small>`:''}${delayBadge(st.actualDeparture, st.scheduledDeparture)}</span>`);
       }
-
-      return `<tr>
-        <td>${idx+1}</td>
-        <td>${st.name}</td>
-        <td>${st.actualArrival?formatTime(st.actualArrival):'–'}${st.scheduledArrival?`<br><span class="meta">Schema: ${formatTime(st.scheduledArrival)}</span>`:''}</td>
-        <td>${st.actualDeparture?formatTime(st.actualDeparture):'–'}${st.scheduledDeparture?`<br><span class="meta">Schema: ${formatTime(st.scheduledDeparture)}</span>`:''}</td>
-        <td>${dwell}</td>
-        <td>${arrDelay}</td>
-        <td>${depDelay}</td>
-      </tr>`;
+      if(st.actualArrival && st.actualDeparture && idx>0 && idx<stops.length-1){
+        parts.push(`<span>uppehåll ${formatDuration((new Date(st.actualDeparture)-new Date(st.actualArrival))/1000)}</span>`);
+      }
+      return `<div class="rl-row">
+        <div class="rl-name"><span class="station-num">${idx+1}</span>${escapeHtml(st.name)}${st.shouldStop===false?' ⏩':''}</div>
+        <div class="rl-times">${parts.join('')}</div>
+        ${st.notes?`<div class="rl-note">${escapeHtml(st.notes)}</div>`:''}
+      </div>`;
     }).join('');
+
+    const started=logEntry.startedAt?new Date(logEntry.startedAt):null;
+    const finished=logEntry.finishedAt?new Date(logEntry.finishedAt):null;
+    const when=started?`${started.toLocaleDateString('sv-SE')} ${formatClock(started)}${finished?`–${formatClock(finished)}`:''}`:'';
+    const meta=[logEntry.trainNumber?`Tåg ${escapeHtml(logEntry.trainNumber)}`:null, logEntry.vehicleType?escapeHtml(logEntry.vehicleType):null, when].filter(Boolean).join(' · ');
+    const status=(state.aborted?'Avbruten':'Klar')+(state.autoReason?` – ${escapeHtml(state.autoReason)}`:'');
+
     els.reportHTML.innerHTML=`
-      <p><strong>Tåg:</strong> ${logEntry.trainNumber||'–'} • <strong>Fordon:</strong> ${logEntry.vehicleType||'–'} • <strong>Sträcka:</strong> ${logEntry.startStation} → ${logEntry.endStation}</p>
-      <p><strong>Start:</strong> ${logEntry.startedAt?new Date(logEntry.startedAt).toLocaleString('sv-SE'):'–'} • <strong>Slut:</strong> ${logEntry.finishedAt?new Date(logEntry.finishedAt).toLocaleString('sv-SE'):'–'}</p>
-      ${logEntry.notes?`<p><strong>Anteckningar:</strong> ${escapeHtml(logEntry.notes)}</p>`:''}
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>#</th><th>Station</th><th>Ankomst</th><th>Avgång</th><th>Uppehåll</th><th>Förseningank</th><th>Förseningavg</th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
+      <div class="report-summary">
+        <div class="rs-title">${escapeHtml(logEntry.startStation||'')} → ${escapeHtml(logEntry.endStation||'')}</div>
+        <div class="meta">${meta}</div>
+        <div class="rs-grid">
+          <div><span class="rs-big">${tripSeconds!=null&&tripSeconds>0?formatDuration(tripSeconds):'–'}</span><span class="rs-sub">restid</span></div>
+          <div><span class="rs-big">${endDelay}</span><span class="rs-sub">vid slutstationen</span></div>
+          <div><span class="rs-big">${dwellCount}</span><span class="rs-sub">uppehåll på vägen</span></div>
+          <div><span class="rs-big">${longest?formatDuration(longest.sec):'–'}</span><span class="rs-sub">längsta uppehåll${longest?` (${escapeHtml(longest.name)})`:''}</span></div>
+        </div>
+        <div class="meta">${status}</div>
+        ${logEntry.notes?`<p class="rl-note">${escapeHtml(logEntry.notes)}</p>`:''}
       </div>
-      <p>${state.aborted?'Status: Avbruten':'Status: Klar'}${state.autoReason?` – ${state.autoReason}`:''}</p>
+      <div class="report-list">${rows}</div>
     `;
   }
 
   // === Statistics ===
   function showStatistics(){
-    document.getElementById('setup').style.display = 'none';
-    document.getElementById('journey').style.display = 'none';
-    document.getElementById('report').style.display = 'none';
-    document.getElementById('statistics').style.display = 'block';
+    if(currentView!=='statistics') statsReturnView=currentView;
+    showView('statistics');
     populateStatsFilters();
     renderStatistics();
   }
 
+  // Tillbaka till vyn som var öppen – en pågående resa ska alltid gå att komma tillbaka till
   function hideStatistics(){
-    document.getElementById('statistics').style.display = 'none';
-    document.getElementById('setup').style.display = 'block';
+    const target = state.running ? 'journey' : (statsReturnView || 'setup');
+    statsReturnView=null;
+    showView(target);
+    if(target==='journey'){
+      renderRouteCards();
+      renderRouteMap();
+    }
   }
 
   function populateStatsFilters(){
@@ -2307,9 +2450,11 @@
       return;
     }
 
-    // Calculate segment statistics
+    // Calculate segment statistics. Längsta körningarna först, så att sträckorna
+    // hamnar i ordning längs linjen (första förekomsten bestämmer ordningen).
     const segments = {};
-    filtered.forEach(log => {
+    const byLength = filtered.slice().sort((a,b)=>(b.stops?b.stops.length:0)-(a.stops?a.stops.length:0));
+    byLength.forEach(log => {
       if(!log.stops || log.stops.length < 2) return;
 
       for(let i=0; i<log.stops.length-1; i++){
@@ -2332,7 +2477,7 @@
       }
     });
 
-    const segmentKeys = Object.keys(segments).sort();
+    const segmentKeys = Object.keys(segments); // insättningsordning = ordning längs linjen
     if(segmentKeys.length === 0){
       document.getElementById('statsContent').innerHTML = '<p style="color:var(--mut)">Inga gångtider registrerade.</p>';
       return;
@@ -2376,9 +2521,12 @@
   }
 
   function formatDuration(seconds){
-    const m = Math.floor(seconds / 60);
-    const s = Math.round(seconds % 60);
-    return `${m}:${s.toString().padStart(2,'0')}`;
+    const total = Math.max(0, Math.round(seconds));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const ss = s.toString().padStart(2,'0');
+    return h ? `${h}:${m.toString().padStart(2,'0')}:${ss}` : `${m}:${ss}`;
   }
 
   // === Route Map ===
@@ -2397,17 +2545,36 @@
     const minLon = Math.min(...lons);
     const maxLon = Math.max(...lons);
 
-    const padding = 20;
+    const padding = 24;
     const width = container.clientWidth || 300;
     const height = container.clientHeight || 150;
 
-    // Scale coordinates to SVG
+    // Scale coordinates to SVG. En längdgrad är kortare än en breddgrad
+    // (cos(latitud), ≈0,53 vid 58° N) – utan korrigering blir kartan utdragen i sidled.
+    const kx = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180);
     const latRange = maxLat - minLat || 0.01;
     const lonRange = maxLon - minLon || 0.01;
-    const scale = Math.min((width - padding*2) / lonRange, (height - padding*2) / latRange);
+    const scale = Math.min((width - padding*2) / (lonRange * kx), (height - padding*2) / latRange);
+    const offsetX = (width - lonRange * kx * scale) / 2;
+    const offsetY = (height - latRange * scale) / 2;
 
-    function toX(lon){ return padding + (lon - minLon) * scale; }
-    function toY(lat){ return height - padding - (lat - minLat) * scale; }
+    function toX(lon){ return offsetX + (lon - minLon) * kx * scale; }
+    function toY(lat){ return height - offsetY - (lat - minLat) * scale; }
+
+    // Etikett som hålls inom kartan: förankras åt vänster/höger nära kanterna.
+    // Mellanstationer får namnet bredvid punkten, så att det inte krockar med linjen.
+    function label(x, y, r, text, beside){
+      if(beside){
+        const right = x < width * 0.6;
+        const tx = right ? x + r + 5 : x - r - 5;
+        return `<text x="${tx}" y="${y + 4}" text-anchor="${right?'start':'end'}" fill="var(--ink)" font-size="12" font-weight="600">${escapeHtml(text)}</text>`;
+      }
+      const anchor = x < width * 0.25 ? 'start' : (x > width * 0.75 ? 'end' : 'middle');
+      const tx = anchor === 'start' ? Math.max(4, x - r) : (anchor === 'end' ? Math.min(width - 4, x + r) : x);
+      const below = y + r + 15 <= height;
+      const ty = below ? y + r + 13 : y - r - 5;
+      return `<text x="${tx}" y="${ty}" text-anchor="${anchor}" fill="var(--ink-dim)" font-size="12">${escapeHtml(text)}</text>`;
+    }
 
     // Build SVG
     let svg = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">`;
@@ -2436,11 +2603,12 @@
 
       const isCurrent = isArrived || isStartingHere;
       const r = isCurrent ? 8 : 6;
+      // Namn på första, sista och nästa/aktuella station
+      const isEnd = idx === 0 || idx === stations.length-1;
+      const isFocus = isCurrent || state.nextIndex === state.route.indexOf(st);
       svg += `<g class="map-station">
         <circle cx="${x}" cy="${y}" r="${r}" fill="${color}" stroke="var(--bg)" stroke-width="2"/>
-        ${idx === 0 || idx === stations.length-1 ?
-          `<text x="${x}" y="${y + r + 12}" text-anchor="middle" fill="var(--ink-dim)" font-size="10">${escapeHtml(st.name.substring(0,10))}</text>` : ''
-        }
+        ${isEnd || isFocus ? label(x, y, r, st.name, isFocus && !isEnd) : ''}
       </g>`;
     });
 
@@ -2700,7 +2868,7 @@
         const text = `Tåg ${trainNumber}: ${suggestion.start} → ${suggestion.end}`;
 
         document.getElementById('suggestionText').innerHTML =
-          `<strong style="font-size:1.1rem">${text}</strong><br><span style="color:#718096;font-size:.9rem">${suggestionSource}</span>`;
+          `<strong style="font-size:1.1rem">${escapeHtml(text)}</strong><br><span style="color:var(--ink-dim);font-size:.9rem">${escapeHtml(suggestionSource)}</span>`;
         document.getElementById('routeSuggestion').style.display='block';
       } else {
         document.getElementById('routeSuggestion').style.display='none';
@@ -2726,12 +2894,7 @@
     }
 
     document.getElementById('routeSuggestion').style.display='none';
-
-    const msg = document.createElement('div');
-    msg.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);background:#48bb78;color:white;padding:.8rem 1.5rem;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:1000;font-weight:600;';
-    msg.textContent = `✓ Rutt vald: ${currentSuggestion.start} → ${currentSuggestion.end}`;
-    document.body.appendChild(msg);
-    setTimeout(() => msg.remove(), 2500);
+    showHeaderStatus(`✓ Rutt vald: ${currentSuggestion.start} → ${currentSuggestion.end}`, false);
   }
 
   async function findNearestStation(){
@@ -3013,7 +3176,7 @@
 
   function updateLogCount(){
     const count=loadLogs().length;
-    els.logCountTop.textContent=count;
+    els.logCountTop.textContent=`${count} ${count===1?'logg':'loggar'}`;
     els.logCountTop.title=`${count} sparade loggar`;
   }
 
@@ -3093,9 +3256,8 @@
 
   function showJourneyMessage(text, isError){
     els.journeyMsg.textContent=text;
-    els.journeyMsg.style.display='inline-block';
-    els.journeyMsg.style.background=isError?'#fee2e2':'var(--soft)';
-    els.journeyMsg.style.borderColor=isError?'#fecaca':'var(--softb)';
+    els.journeyMsg.className='badge '+(isError?'warn':'live');
+    els.journeyMsg.style.display='inline-flex';
   }
 
   function resetForNewRun(){
@@ -3107,10 +3269,9 @@
     state.running=false;
     state.nextIndex=null;
     state.lastReachedIndex=0;
-    els.report.style.display='none';
-    els.journey.style.display='none';
-    els.setup.style.display='block';
+    showView('setup');
     els.cards.innerHTML='';
+    renderedRouteKey='';
     updateNextStopUI();
   }
 
@@ -3371,6 +3532,7 @@
   }
 
   function toggleWakeLock(){
+    wakeLockByJourney=false; // manuellt val tar över
     if(keepScreenAwake){
       releaseWakeLock();
     }else{
@@ -3379,10 +3541,7 @@
   }
 
   function updateWakeButton(){
-    if(!els.wakeBtn) return;
-    els.wakeBtn.textContent=keepScreenAwake?'Tillåt skärmen slockna':'Håll skärmen vaken';
-    els.wakeBtn.setAttribute('aria-pressed', keepScreenAwake?'true':'false');
-    els.wakeBtn.classList.toggle('primary', keepScreenAwake);
+    setMenuToggle(els.wakeBtn, keepScreenAwake);
   }
 
   function handleVisibilityChange(){
@@ -3510,17 +3669,17 @@
 
     // Update UI
     hideSetupError();
-    els.setup.style.display = 'none';
-    els.journey.style.display = 'block';
-    els.report.style.display = 'none';
+    showView('journey');
 
     const startName = state.route[0]?.name || '?';
     const endName = state.route[state.route.length-1]?.name || '?';
     els.journeyTitle.textContent = `${startName} → ${endName} • ${state.vehicleType} • tåg ${state.trainNumber||'–'}`;
 
+    renderedRouteKey='';
     renderRouteCards();
     renderRouteMap();
     requestGpsWatch();
+    enableWakeLockForJourney();
 
     showJourneyMessage('Resa återupptagen!', false);
     setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
@@ -3612,15 +3771,14 @@
     if(!els.updateBtn) return;
     els.updateBtn.style.display='inline-block';
     els.updateBtn.disabled=false;
-    showHeaderStatus('Ny version finns – uppdatera appen.', false);
+    showHeaderStatus('Ny version finns – öppna ⋮ och välj Uppdatera app.', false);
   }
 
   function showHeaderStatus(text, isError){
     if(!els.headerStatus) return;
     els.headerStatus.textContent=text;
-    els.headerStatus.style.display='inline-block';
-    els.headerStatus.style.background=isError?'#fee2e2':'#dcfce7';
-    els.headerStatus.style.borderColor=isError?'#fecaca':'#86efac';
+    els.headerStatus.className='toast '+(isError?'err':'ok');
+    els.headerStatus.style.display='block';
     clearTimeout(showHeaderStatus._timer);
     showHeaderStatus._timer=setTimeout(()=>{
       els.headerStatus.style.display='none';
