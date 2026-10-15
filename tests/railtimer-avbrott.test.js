@@ -79,9 +79,30 @@ test('planCatchUp: inom radien för en senare station blir den nästa station', 
   assert.deepEqual(plan, { passed: [2], lastReachedIndex: 2, nextIndex: 3, departedDuringGap: null });
 });
 
-test('planCatchUp: inom radien för nästa station – vanlig logik tar hand om det', () => {
-  const plan = AV.planCatchUp(route, { lastReachedIndex: 1, nextIndex: 2, awaitingDepartureIndex: 1 }, { lat: route[2].lat, lon: 13.0 });
+test('planCatchUp: inom radien för nästa station utan väntande avgång – vanlig logik tar hand om det', () => {
+  const plan = AV.planCatchUp(route, { lastReachedIndex: 1, nextIndex: 2, awaitingDepartureIndex: null }, { lat: route[2].lat, lon: 13.0 });
   assert.equal(plan, null);
+});
+
+test('planCatchUp: avgick under avbrottet och står redan vid nästa station – avgången blir okänd', () => {
+  const plan = AV.planCatchUp(route, { lastReachedIndex: 1, nextIndex: 2, awaitingDepartureIndex: 1 }, { lat: route[2].lat, lon: 13.0 });
+  assert.deepEqual(plan, { passed: [], lastReachedIndex: 1, nextIndex: 2, departedDuringGap: 1 });
+});
+
+test('planCatchUp: avgick under avbrottet och står mellan stationerna – avgången blir okänd', () => {
+  const plan = AV.planCatchUp(route, { lastReachedIndex: 1, nextIndex: 2, awaitingDepartureIndex: 1 }, between(1, 0.5));
+  assert.deepEqual(plan, { passed: [], lastReachedIndex: 1, nextIndex: 2, departedDuringGap: 1 });
+});
+
+test('planCatchUp: kvar innanför stationens utgångsgräns (radie + 150 m) – vanlig logik avgör avgången', () => {
+  const plan = AV.planCatchUp(route, { lastReachedIndex: 1, nextIndex: 2, awaitingDepartureIndex: 1 }, between(1, 0.075)); // ≈ 250 m
+  assert.equal(plan, null);
+});
+
+test('planCatchUp: station med egen radie har ingen extra marginal, som i appen', () => {
+  const custom = route.map((s, i) => (i === 1 ? Object.assign({}, s, { customRadius: true }) : s));
+  const plan = AV.planCatchUp(custom, { lastReachedIndex: 1, nextIndex: 2, awaitingDepartureIndex: 1 }, between(1, 0.075)); // ≈ 250 m
+  assert.deepEqual(plan, { passed: [], lastReachedIndex: 1, nextIndex: 2, departedDuringGap: 1 });
 });
 
 test('planCatchUp: går aldrig bakåt', () => {

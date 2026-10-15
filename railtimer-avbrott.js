@@ -11,6 +11,7 @@
   const MOVE_M = 150;       // … och minst 150 m förflyttning = avbrott
   const GRACE_MS = 2000;    // tider registrerade av första positionen efter avbrottet
   const DEFAULT_RADIUS = 200;
+  const EXIT_MARGIN = 150;  // samma som EXTRA_MARGIN i index.html: zonen lämnas först bortom radie + marginal
 
   function haversine(lat1, lon1, lat2, lon2) {
     const R = 6371000;
@@ -122,15 +123,29 @@
     return Math.hypot(ax + t * dx, ay + t * dy);
   }
 
+  // Har tåget lämnat stationen? Samma gräns som zonutgången i appen (evaluateGeofence i index.html).
+  function hasLeftStation(st, pos) {
+    if (!st || st.lat == null || st.lon == null) return false;
+    const exit = (st.radius || DEFAULT_RADIUS) + (st.customRadius ? 0 : EXIT_MARGIN);
+    return haversine(pos.lat, pos.lon, st.lat, st.lon) > exit;
+  }
+
   /* Var på rutten är tåget efter ett avbrott?
-     route: [{lat, lon, radius}], progress: {lastReachedIndex, nextIndex, awaitingDepartureIndex}, pos: {lat, lon}
+     route: [{lat, lon, radius, customRadius}], progress: {lastReachedIndex, nextIndex, awaitingDepartureIndex}, pos: {lat, lon}
      Returnerar null om inget behöver ändras, annars
-     { passed: [index], lastReachedIndex, nextIndex, departedDuringGap: index|null }. Går aldrig bakåt. */
+     { passed: [index], lastReachedIndex, nextIndex, departedDuringGap: index|null }. Går aldrig bakåt.
+     Väntade tåget på avgång från en station som det nu har lämnat, blir avgången okänd även om
+     inga stationer passerats (passed: [], samma index) – t.ex. stopp vid en signal efter samtalet. */
   function planCatchUp(route, progress, pos) {
     if (!Array.isArray(route) || !progress || !pos) return null;
     const next = progress.nextIndex;
     if (next == null || next >= route.length) return null;
     const last = Math.max(0, progress.lastReachedIndex || 0);
+    const waiting = progress.awaitingDepartureIndex;
+    const awaiting = (waiting != null && waiting < next) ? waiting : null;
+    const departedOnly = (awaiting != null && hasLeftStation(route[awaiting], pos))
+      ? { passed: [], lastReachedIndex: last, nextIndex: next, departedDuringGap: awaiting }
+      : null;
 
     // 1. Inom radien för en station som ännu inte nåtts – den närmaste vinner
     let target = null;
@@ -148,7 +163,7 @@
     let newLast;
     let newNext;
     if (target != null) {
-      if (target === next) return null;
+      if (target === next) return departedOnly;
       newLast = target - 1;
       newNext = target;
     } else {
@@ -165,16 +180,14 @@
           k = i;
         }
       }
-      if (k == null || k + 1 <= next) return null;
+      if (k == null || k + 1 <= next) return departedOnly;
       newLast = k;
       newNext = k + 1;
     }
 
     const passed = [];
     for (let i = next; i < newNext; i++) passed.push(i);
-    const a = progress.awaitingDepartureIndex;
-    const departedDuringGap = (a != null && a < next) ? a : null;
-    return { passed, lastReachedIndex: Math.max(last, newLast), nextIndex: newNext, departedDuringGap };
+    return { passed, lastReachedIndex: Math.max(last, newLast), nextIndex: newNext, departedDuringGap: awaiting };
   }
 
   return {
