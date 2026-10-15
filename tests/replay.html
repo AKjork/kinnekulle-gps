@@ -682,6 +682,28 @@ test('analys: med en mellanstation som Station 1 räknas förseningen tåget har
     [['3344', 'Källby → Blomberg', '0,0', '1', '2,5'], ['3346', 'Källby → Blomberg', '+2,0', '0', '–']], 'tillfällen i Källby');
 });
 
+test('analys: samma tågnummer med en söndagstidtabell blir en egen rad och ett eget förslag', async () => {
+  // Söndagen 18 oktober går 3346 kl. 11:30 i stället för 10:00, enligt sin söndagstidtabell
+  const s = 690;
+  const sunday = {
+    id: '3346-18', trainNumber: '3346', vehicleType: 'Y31', startedAt: atMin(s, 18), aborted: false,
+    startStation: 'Lidköping', endStation: 'Blomberg',
+    stops: [
+      ttStop('Lidköping', { dep: s, sDep: s }, 18),
+      ttStop('Filsbäck', { arr: s + 3, dep: s + 4, sArr: s + 3, sDep: s + 4 }, 18),
+      ttStop('Källby', { arr: s + 8, dep: s + 9, sArr: s + 8, sDep: s + 9 }, 18),
+      ttStop('Blomberg', { arr: s + 12, sArr: s + 12 }, 18)
+    ]
+  };
+  const w = await loadAnalysWith(trainRuns().concat([sunday]));
+  assertEqual(tableRows(w, 'trainsTable').map(r => r[0]), ['3344', '3346 vardag', '3346 söndag'], 'tåg');
+  w.__analys.setTimetableTrain('3346 söndag');
+  assertEqual(tableRows(w, 'ttTable').map(r => r[3]), ['11:30', '11:34', '11:39', ''], 'söndagens avgångar nu');
+  const fk = Array.from(w.document.querySelectorAll('#segmentsTable tbody tr')).find(tr => tr.cells[0].textContent === 'Filsbäck → Källby');
+  assertEqual(Array.from(fk.querySelectorAll('.plan-line')).map(l => l.textContent),
+    ['2 min (−2,0): 3346 vardag', '4 min (0,0): 3346 söndag', '6 min (+2,0): 3344'], 'Sträckor skiljer på tidtabellerna');
+});
+
 test('analys: export och utskrift av Per tåg, även med Ctrl+P', async () => {
   const w = await loadAnalysWith(trainRuns());
   let text = w.__analys.exportTrainsCsv();

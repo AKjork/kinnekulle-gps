@@ -341,3 +341,23 @@ test('stationTimes: avskuren körning (Station 1 mitt på linjen) räknar först
   const row = AN.summarizeTrains(sliced, AN.segmentNeeds(AN.segmentObservations(sliced, {})), { tolerance: 1 }).rows[0];
   assert.deepEqual([row.eventCount, row.startDelay.median], [0, 10.5], 'inget tillfälle; Avgång start är avgångsavvikelsen');
 });
+
+test('summarizeTrains och proposeTrainTimetable: samma tågnummer med två tidtabeller blir två rader', () => {
+  // 3346 går 10:00 på vardagarna 13–15 oktober och 11:30 söndagen den 18:e (B → C planerat 5 min)
+  const weekdays = trainFixture().filter(r => r.trainNumber === '3346');
+  const sunday = run('sön', [
+    stop('A', { dep: [11, 30, 0, 18], sDep: [11, 30, 0, 18] }),
+    stop('B', { arr: [11, 33, 0, 18], dep: [11, 34, 0, 18], sArr: [11, 33, 0, 18], sDep: [11, 34, 0, 18] }),
+    stop('C', { arr: [11, 38, 0, 18], sArr: [11, 39, 0, 18] })
+  ], { trainNumber: '3346' });
+  const all = weekdays.concat([sunday]);
+  const needs = AN.segmentNeeds(AN.segmentObservations(all, {}));
+  const rows = AN.summarizeTrains(all, needs, { tolerance: 1 }).rows;
+  assert.deepEqual(rows.map(r => [r.key, r.label, r.train, r.timetableRuns]), [['3346 vardag', '3346 vardag', '3346', 3], ['3346 söndag', '3346 söndag', '3346', 1]]);
+  assert.deepEqual([rows[0].segments[1].planned, rows[0].segments[1].plannedPrev], [2, []], 'söndagens tider blandas inte in i vardagstågets');
+  const p = AN.proposeTrainTimetable(all, needs, '3346 söndag', { basis: 'median' });
+  assert.deepEqual([p.label, p.runCount, p.rows[0].currentDep, p.totalCurrent], ['3346 söndag', 1, 690, 9]);
+  assert.deepEqual(AN.trainVariants(trainFixture()).map(v => v.key), ['3344', '3346'], 'en tidtabell per tåg: nyckeln är tågnumret');
+  const plans = AN.segmentPlans(AN.segmentObservations(all, {}), needs, { tolerance: 1, labels: new Map(AN.trainVariants(all).flatMap(v => v.runIds.map(id => [id, v.label]))) });
+  assert.deepEqual(plans.find(r => r.segment === 'B → C').plans.map(x => [x.planned, x.trains]), [[2, ['3346 vardag']], [5, ['3346 söndag']]]);
+});
