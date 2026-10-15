@@ -419,3 +419,81 @@ test('stationTimes: tappad tid vid uppehåll, avgång från start och passage', 
   assert.equal(p.plannedDwell, null);
   assert.deepEqual([b.train, b.date, b.weekday, b.runId, b.stopped], ['3344', '2026-10-15', 4, 't', true]);
 });
+
+// Två tåg A → B → C med olika planerad tid B → C (3344: 6 min, 3346: 2 min); B → C tar 4 min för båda.
+// 3344 tappar 2,5 min i B den 15:e. Tåg 3355 har ingen tidtabell.
+function trainFixture() {
+  const t3344 = [13, 14, 15].map(day => run('a' + day, [
+    stop('A', { dep: [7, 0, 0, day], sDep: [7, 0, 0, day] }),
+    stop('B', { arr: [7, 3, 0, day], dep: day === 15 ? [7, 6, 30, day] : [7, 4, 0, day], sArr: [7, 3, 0, day], sDep: [7, 4, 0, day] }),
+    stop('C', { arr: day === 15 ? [7, 10, 30, day] : [7, 8, 0, day], sArr: [7, 10, 0, day] })
+  ], { trainNumber: '3344' }));
+  const t3346 = [13, 14, 15].map(day => run('b' + day, [
+    stop('A', { dep: [10, 0, 0, day], sDep: [10, 0, 0, day] }),
+    stop('B', { arr: [10, 3, 0, day], dep: [10, 4, 0, day], sArr: [10, 3, 0, day], sDep: [10, 4, 0, day] }),
+    stop('C', { arr: [10, 8, 0, day], sArr: [10, 6, 0, day] })
+  ], { trainNumber: '3346' }));
+  const none = run('x', [stop('C', { dep: [12, 0] }), stop('B', { arr: [12, 4], dep: [12, 5] }), stop('A', { arr: [12, 8] })], { trainNumber: '3355' });
+  return t3344.concat(t3346, [none]);
+}
+
+test('summarizeTrains: varje tåg mot sin egen tidtabell och vad sträckan tar', () => {
+  const runs = trainFixture();
+  const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
+  const res = AN.summarizeTrains(runs, needs, { tolerance: 1 });
+  assert.deepEqual(res.rows.map(r => r.train), ['3344', '3346'], 'tåg med tillfällen först vid lika många körningar');
+  assert.deepEqual(res.withoutTimetable, { trains: 1, runs: 1 });
+  const a = res.rows[0];
+  assert.deepEqual([a.runCount, a.timetableRuns, a.routeLabel, a.route], [3, 3, 'A → C', ['A', 'B', 'C']]);
+  assert.deepEqual(a.segments.map(s => [s.segment, s.pattern, s.planned, s.need.median, s.need.n, s.margin, s.assessment]),
+    [['A → B', 'SS', 3, 3, 6, 0, 'lagom'], ['B → C', 'SS', 6, 4, 6, 2, 'generos']]);
+  assert.deepEqual([a.margin.sum, a.margin.count, a.margin.of, a.margin.planned, a.margin.need], [2, 2, 2, 9, 7]);
+  assert.deepEqual(a.events.map(e => [e.station, e.type, e.lost, e.date]), [['B', 'stopp', 2.5, '2026-10-15']]);
+  assert.deepEqual([a.eventCount, a.lostMax, a.startDelay.median, a.endDelay.median], [1, 2.5, 0, -2]);
+  assert.deepEqual(a.dwells.map(d => [d.station, d.plannedDwell, d.dwell.median, d.lost.median, d.events]), [['B', 1, 1, 0, 1]]);
+  const b = res.rows[1];
+  assert.deepEqual(b.segments.map(s => [s.planned, s.margin, s.assessment]), [[3, 0, 'lagom'], [2, -2, 'snal']]);
+  assert.deepEqual([b.margin.sum, b.eventCount, b.lostMax, b.endDelay.median], [-2, 0, null, 2]);
+});
+
+test('summarizeTrains: ändrad tidtabell, toleransen och stationstyp', () => {
+  const runs = trainFixture();
+  // Tåg 3346 hade tidigare 3 min B → C (ankomst 10:07 den 13:e och 14:e); den senaste körningen har 2 min
+  runs.filter(r => r.trainNumber === '3346' && r.id !== 'b15').forEach(r => { r.stops[2].scheduledArrival = at(10, 7, 0, Number(r.id.slice(1))); });
+  const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
+  const b = AN.summarizeTrains(runs, needs, { tolerance: 1 }).rows.find(r => r.train === '3346');
+  assert.deepEqual([b.segments[1].planned, b.segments[1].plannedPrev], [2, [3]]);
+  const count = opts => AN.summarizeTrains(runs, needs, opts).rows.find(r => r.train === '3344').eventCount;
+  assert.equal(count({ tolerance: 3 }), 0, 'tolerans 3 min');
+  assert.equal(count({ tolerance: 1, stationType: 'passage' }), 0, 'bara stopp vid passage');
+  assert.equal(count({ tolerance: 1, stationType: 'stopp' }), 1, 'uppehåll och avgång från start');
+});
+
+test('segmentPlans: planerad tid per tåg på samma sträcka och bedömningen Snål och generös', () => {
+  const runs = trainFixture();
+  const obs = AN.segmentObservations(runs, {});
+  const needs = AN.segmentNeeds(obs);
+  const rows = AN.segmentPlans(obs, needs, { tolerance: 1 });
+  assert.deepEqual(rows.map(r => [r.segment, r.pattern, r.assessment, r.spread]), [['B → C', 'SS', 'blandad', 4], ['A → B', 'SS', 'lagom', 0]]);
+  assert.deepEqual(rows[0].plans.map(p => [p.planned, p.trains, p.n, p.margin, p.assessment]),
+    [[2, ['3346'], 3, -2, 'snal'], [6, ['3344'], 3, 2, 'generos']]);
+  assert.deepEqual(rows[1].plans.map(p => [p.planned, p.trains, p.n]), [[3, ['3344', '3346'], 6]]);
+  assert.equal(AN.segmentPlans(obs, needs, { tolerance: 1, stationType: 'passage' }).length, 0, 'inga passager');
+  assert.deepEqual(AN.segmentPlans(obs, needs, { tolerance: 1, train: '3346' }).map(r => r.plans.length), [2, 1], 'alla tågs tider på tågets sträckor');
+  const fewObs = AN.segmentObservations(runs.slice(0, 2), {});
+  const few = AN.segmentPlans(fewObs, AN.segmentNeeds(fewObs), { tolerance: 1 });
+  assert.deepEqual(few.map(r => [r.segment, r.assessment, r.plans[0].margin]), [['A → B', 'fa', null], ['B → C', 'fa', null]]);
+});
+
+test('summarizeTrains: med för få mätningar i tågets stoppmönster används alla mätningar på sträckan', () => {
+  // Tåg 3350 ska stanna i B (behovsstopp) men passerar alltid, så ingen körning har stannat där
+  const runs = [13, 14, 15].map(day => run('c' + day, [
+    stop('A', { dep: [9, 0, 0, day], sDep: [9, 0, 0, day] }),
+    stop('B', { arr: [9, 2, 30, day], dep: [9, 2, 35, day], sArr: [9, 3, 0, day], sDep: [9, 3, 0, day], pass: true }),
+    stop('C', { arr: [9, 6, 35, day], sArr: [9, 7, 0, day] })
+  ], { trainNumber: '3350' }));
+  const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
+  const row = AN.summarizeTrains(runs, needs, { tolerance: 1 }).rows[0];
+  assert.deepEqual(row.segments.map(s => [s.segment, s.pattern, s.need.pattern, s.need.n, s.need.median, s.margin]),
+    [['A → B', 'SS', '*', 3, 2.5, 0.5], ['B → C', 'SS', '*', 3, 4, 0]]);
+});

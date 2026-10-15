@@ -616,6 +616,204 @@
     return out;
   }
 
+  // Marginal = planerad gångtid − vad sträckan tar (median); null utan minst MIN_SAMPLES mätningar
+  function marginFor(planned, need) {
+    return need && need.n >= MIN_SAMPLES && planned != null ? planned - need.median : null;
+  }
+
+  // Exakt ±tolerans räknas som lagom
+  function assessMargin(margin, tol) {
+    if (margin == null) return 'fa';
+    if (margin < -tol) return 'snal';
+    if (margin > tol) return 'generos';
+    return 'lagom';
+  }
+
+  // Tågnummer i nummerordning när båda är tal, annars i bokstavsordning
+  function compareTrain(a, b) {
+    const na = Number(a);
+    const nb = Number(b);
+    return a !== '' && b !== '' && isFinite(na) && isFinite(nb) ? na - nb : String(a).localeCompare(String(b));
+  }
+
+  function latestFirst(a, b) { return String(b.start || '').localeCompare(String(a.start || '')); }
+
+  // Tågets stationer i ordning efter planerat klockslag (median), så att partiella körningar blir en rutt
+  function routeOf(runs) {
+    const clocks = new Map();
+    for (const run of runs || []) {
+      const base = runStart(run);
+      for (const s of run.stops || []) {
+        const c = clockMinutes(plannedArrival(s), base);
+        if (c == null) continue;
+        if (!clocks.has(s.name)) clocks.set(s.name, []);
+        clocks.get(s.name).push(c);
+      }
+    }
+    return Array.from(clocks.entries())
+      .map(([name, values]) => ({ name, clock: stats(values).median }))
+      .sort((a, b) => a.clock - b.clock || a.name.localeCompare(b.name))
+      .map(x => x.name);
+  }
+
+  // Stationstyp i filtret → typer av tillfällen då tåget tappade tid
+  const EVENT_TYPES = { stopp: ['start', 'stopp'], passage: ['passage'] };
+
+  function trainRow(train, runCount, tRuns, needsByKey, tol, stationType) {
+    const obs = segmentObservations(tRuns, { tolerance: tol }).filter(o => o.planned != null);
+    const times = stationTimes(tRuns);
+    const route = routeOf(tRuns);
+
+    const groups = new Map();
+    for (const o of obs) {
+      const key = `${o.key}|${o.plannedPattern}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(o);
+    }
+    const segments = Array.from(groups.entries()).map(([key, list]) => {
+      // Senaste körningens planerade tid gäller; tidigare andra tider visas som "tidigare"
+      const planned = roundSec(list.slice().sort(latestFirst)[0].planned);
+      const need = needFor(needsByKey, list[0].key, list[0].plannedPattern);
+      const margin = marginFor(planned, need);
+      return {
+        key, segment: list[0].key, from: list[0].from, to: list[0].to, pattern: list[0].plannedPattern,
+        planned, plannedPrev: uniqueSorted(list.map(o => roundSec(o.planned))).filter(v => v !== planned),
+        n: list.length, actual: stats(list.map(o => o.actual)),
+        need, margin, assessment: assessMargin(margin, tol),
+        order: stats(list.map(o => o.order)).median
+      };
+    }).sort((a, b) => (a.order == null ? Infinity : a.order) - (b.order == null ? Infinity : b.order) || a.key.localeCompare(b.key));
+
+    const withMargin = segments.filter(s => s.margin != null);
+    const margin = {
+      sum: withMargin.length ? withMargin.reduce((t, s) => t + s.margin, 0) : null,
+      planned: withMargin.reduce((t, s) => t + s.planned, 0),
+      need: withMargin.reduce((t, s) => t + s.need.median, 0),
+      count: withMargin.length,
+      of: segments.length
+    };
+
+    const dwells = Array.from(groupBy(times.filter(t => t.type === 'stopp'), 'station').entries()).map(([station, list]) => {
+      const latest = list.slice().sort(latestFirst)[0];
+      const plannedDwell = latest.plannedDwell != null ? roundSec(latest.plannedDwell) : null;
+      return {
+        station, plannedDwell,
+        plannedPrev: uniqueSorted(list.map(t => (t.plannedDwell != null ? roundSec(t.plannedDwell) : null))).filter(v => v !== plannedDwell),
+        dwell: stats(list.filter(t => t.stopped).map(t => t.dwell)),
+        lost: stats(list.map(t => t.lost)),
+        events: list.filter(t => t.lost > tol).length,
+        n: list.length,
+        order: stats(list.map(t => t.plannedClock)).median
+      };
+    }).sort((a, b) => a.order - b.order || a.station.localeCompare(b.station));
+
+    const allowed = EVENT_TYPES[stationType] || null;
+    const events = times.filter(t => t.lost > tol && (!allowed || allowed.includes(t.type)))
+      .sort((a, b) => b.lost - a.lost || latestFirst(a, b));
+
+    const endDelay = stats(tRuns.map(run => {
+      const last = run.stops[run.stops.length - 1];
+      const a = toDate(last.actualArrival);
+      const p = plannedArrival(last);
+      return a && p ? minutes(p, a) : null;
+    }));
+
+    return {
+      train, runCount, timetableRuns: tRuns.length, period: period(tRuns),
+      route, routeLabel: route.length ? `${route[0]} → ${route[route.length - 1]}` : '',
+      startDelay: stats(times.filter(t => t.type === 'start').map(t => t.departureDev)),
+      endDelay, segments, margin, dwells, events,
+      eventCount: events.length,
+      lostMax: events.length ? Math.max(...events.map(e => e.lost)) : null
+    };
+  }
+
+  /* Per tåg: tågets körningar med tidtabell jämförs med tågets egen tidtabell och med vad sträckorna tar.
+     opts: { tolerance, stationType }. Körningar utan tågnummer räknas inte; tågnummer utan någon körning
+     med tidtabell räknas i withoutTimetable. Flest körningar först, sedan flest tillfällen, sedan tågnummer. */
+  function summarizeTrains(runs, needs, opts) {
+    const tol = opts && opts.tolerance != null ? opts.tolerance : DEFAULT_TOLERANCE;
+    const stationType = (opts && opts.stationType) || '';
+    const needsByKey = needMap(needs);
+    const byTrain = new Map();
+    for (const run of runs || []) {
+      const train = String(run.trainNumber || '').trim();
+      if (!train) continue;
+      if (!byTrain.has(train)) byTrain.set(train, []);
+      byTrain.get(train).push(run);
+    }
+    const rows = [];
+    const withoutTimetable = { trains: 0, runs: 0 };
+    for (const [train, list] of byTrain) {
+      const tRuns = list.filter(hasTimetable);
+      if (!tRuns.length) {
+        withoutTimetable.trains += 1;
+        withoutTimetable.runs += list.length;
+        continue;
+      }
+      rows.push(trainRow(train, list.length, tRuns, needsByKey, tol, stationType));
+    }
+    rows.sort((a, b) => b.timetableRuns - a.timetableRuns || b.eventCount - a.eventCount || compareTrain(a.train, b.train));
+    return { rows, withoutTimetable };
+  }
+
+  /* Sträckor: vad sträckan tar och vilken planerad gångtid varje tåg har där, en rad per sträcka och planerat
+     mönster. opts: { tolerance, stationType ('stopp' = bara SS, 'passage' = mönster med P), train (bara sträckor
+     som tåget kör, med alla tågs tider) }. */
+  function segmentPlans(obs, needs, opts) {
+    const tol = opts && opts.tolerance != null ? opts.tolerance : DEFAULT_TOLERANCE;
+    const stationType = (opts && opts.stationType) || '';
+    const train = opts && opts.train ? String(opts.train) : '';
+    const needsByKey = needMap(needs);
+    const groups = new Map();
+    for (const o of obs || []) {
+      if (o.planned == null) continue;
+      const key = `${o.key}|${o.plannedPattern}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(o);
+    }
+    const rows = [];
+    for (const [key, list] of groups) {
+      const pattern = list[0].plannedPattern;
+      if (stationType === 'stopp' && pattern !== 'SS') continue;
+      if (stationType === 'passage' && pattern === 'SS') continue;
+      if (train && !list.some(o => String(o.trainNumber) === train)) continue;
+      const need = needFor(needsByKey, list[0].key, pattern);
+      const byPlan = new Map();
+      for (const o of list) {
+        const p = roundSec(o.planned);
+        if (!byPlan.has(p)) byPlan.set(p, []);
+        byPlan.get(p).push(o);
+      }
+      const plans = Array.from(byPlan.entries()).sort((a, b) => a[0] - b[0]).map(([planned, items]) => {
+        const margin = marginFor(planned, need);
+        return {
+          planned,
+          trains: Array.from(new Set(items.map(o => String(o.trainNumber || '')))).sort(compareTrain),
+          n: items.length, actual: stats(items.map(o => o.actual)),
+          margin, assessment: assessMargin(margin, tol)
+        };
+      });
+      const kinds = new Set(plans.map(p => p.assessment));
+      let assessment = 'lagom';
+      if (!need || need.n < MIN_SAMPLES) assessment = 'fa';
+      else if (kinds.has('snal') && kinds.has('generos')) assessment = 'blandad';
+      else if (kinds.has('snal')) assessment = 'snal';
+      else if (kinds.has('generos')) assessment = 'generos';
+      const values = plans.map(p => p.planned);
+      const margins = plans.filter(p => p.margin != null).map(p => Math.abs(p.margin));
+      rows.push({
+        key, segment: list[0].key, from: list[0].from, to: list[0].to, pattern, need, plans, assessment,
+        spread: Math.max(...values) - Math.min(...values),
+        maxAbsMargin: margins.length ? Math.max(...margins) : 0
+      });
+    }
+    const fa = r => (r.assessment === 'fa' ? 1 : 0);
+    rows.sort((a, b) => fa(a) - fa(b) || b.spread - a.spread || b.maxAbsMargin - a.maxAbsMargin
+      || (b.need ? b.need.n : 0) - (a.need ? a.need.n : 0) || a.key.localeCompare(b.key));
+    return rows;
+  }
+
   // ── Export ──
 
   // Minuter med decimalkomma, utan "-0,0"
@@ -651,7 +849,7 @@
     canonicalStation, normalizeRuns,
     localDate, clockMinutes, runStart, timeOfDay, dayType, runMatches, period,
     stopType, plannedType, PATTERN_LABELS, classify, segmentObservations, stationObservations, stationLabel,
-    segmentNeeds, stationTimes,
+    segmentNeeds, stationTimes, summarizeTrains, segmentPlans,
     stats, mode, summarizeSegments, summarizeStations,
     directedRuns, sliceRuns, proposeTimetable,
     formatMinutes, csvDocument
