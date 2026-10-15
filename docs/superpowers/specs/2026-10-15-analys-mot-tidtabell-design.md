@@ -126,7 +126,7 @@ Följande räknas fram per station och riktning:
 - **Riktning** är Station 1 → Station 2. Bara körningar som passerar båda stationerna i den ordningen används.
 - **Rutten** hämtas från den körning i urvalet som har flest stationer mellan dem.
 - **Gångtid per sträcka och uppehåll per station** räknas bara på körningar i den riktningen. Tidsbasen är median (förvald), P90 eller medel.
-- **Uppehåll utan väntan:** kom tåget före planerad ankomst räknas uppehållet från den planerade ankomsten. Annars skulle tiden tåget står och väntar på tidtabellen följa med in i förslaget, och en generös sträcka skulle bara flytta sin överskottstid till nästa uppehåll. Lades till 2026-10-15 efter granskning av prototypen.
+- **Uppehåll utan väntan:** kom tåget före planerad ankomst och stod kvar efter den, räknas uppehållet från den planerade ankomsten. Åkte tåget före planerad ankomst räknas hela det verkliga uppehållet. Det sista lades till efter slutgranskningen, eftersom sådana uppehåll annars föll bort helt. Annars skulle tiden tåget står och väntar på tidtabellen följa med in i förslaget, och en generös sträcka skulle bara flytta sin överskottstid till nästa uppehåll. Lades till 2026-10-15 efter granskning av prototypen.
 - **Kryssrutan Stopp** är förvald efter vad som var vanligast i mätningarna. Passage ger inget uppehåll. Gångtiderna räknas inte om vid passage, och en notering säger det.
 - **Tider:**
   - Exakta minuter läggs ihop längs rutten. Varje klockslag avrundas sedan till hela minuter, så att avrundningsfelen inte växer.

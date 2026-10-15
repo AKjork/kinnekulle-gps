@@ -407,8 +407,9 @@
           const a = toDate(s.actualArrival);
           const d = toDate(s.actualDeparture);
           const pa = toDate(s.scheduledArrival);
-          // Kom tåget före planerad ankomst räknas uppehållet därifrån: väntan på tidtabellen ska inte in i förslaget
-          const from = a && pa && pa > a ? pa : a;
+          // Kom tåget före planerad ankomst och stod kvar efter den räknas uppehållet därifrån: väntan på
+          // tidtabellen ska inte in i förslaget. Åkte det före planerad ankomst räknas hela uppehållet.
+          const from = a && d && pa && pa > a && pa < d ? pa : a;
           if (from && d) {
             const m = minutes(from, d);
             if (m > 0.05 && m < 60) push(dwells, s.name, m);

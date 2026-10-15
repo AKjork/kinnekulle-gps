@@ -311,6 +311,18 @@ test('proposeTimetable: väntan på tidtabellen räknas inte in i uppehållet', 
   assert.deepEqual(p.rows.map(r => [r.arrivalRounded, r.departureRounded]), [[null, 0], [6, 6], [7, 8], [11, null]]);
 });
 
+test('proposeTimetable: åkte tåget före planerad ankomst räknas hela uppehållet', () => {
+  // Planerat 07:05/07:05: tåget kommer 07:03:30 och åker 07:04:30 – ingen väntan, uppehållet är 1 min
+  const runs = [0, 1, 2].map(k => run('f' + k, [
+    stop('A', { dep: [7, 0], sDep: [7, 0] }),
+    stop('B', { arr: [7, 3, 30], dep: [7, 4, 30], sArr: [7, 5], sDep: [7, 5] }),
+    stop('C', { arr: [7, 8], sArr: [7, 8] })
+  ]));
+  const p = AN.proposeTimetable(runs, { from: 'A', to: 'C', basis: 'median' });
+  assert.deepEqual(p.missing, [], 'uppehållet i B ska inte falla bort');
+  assert.equal(p.rows[1].dwellValue, 1);
+});
+
 // ── Export ──
 
 test('csvDocument: BOM, citattecken, semikolon, decimalkomma och sektioner', () => {
