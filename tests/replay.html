@@ -579,137 +579,6 @@ test('analys: samma station med två namn slås ihop vid inläsning', async () =
   assert(!options.includes('Herrljunga'), 'det gamla namnet ska inte finnas i stationslistan');
 });
 
-// ── Analys mot tidtabell: fliken Mot tidtabell ──
-
-test('analys: Mot tidtabell visar snål sträcka, generös sträcka och väntan', async () => {
-  const w = await loadAnalysWith(againstRuns());
-  w.__analys.showTab('against');
-  const summary = w.document.getElementById('againstSummary').textContent;
-  assert(summary.includes('Bygger på 4 körningar med tidtabell av 6 i urvalet'), 'sammanfattning: ' + summary);
-  const seg = tableRows(w, 'againstSegments');
-  assertEqual(seg.slice(0, 3).map(r => [r[0], r[10]]),
-    [['Filsbäck → Källby', 'Generös'], ['Lidköping → Filsbäck', 'Snål'], ['Källby → Blomberg', 'Lagom']], 'sträckor och bedömning');
-  const kallby = tableRows(w, 'againstStations').find(r => r[0] === 'Källby (mot Blomberg)');
-  assertEqual([kallby[6], kallby[11]], ['3', 'Tidig – väntan'], 'väntan i Källby');
-});
-
-test('analys: Visa-väljaren visar bara sträckor där tidtabellen är snål', async () => {
-  const w = await loadAnalysWith(againstRuns());
-  const show = w.document.getElementById('againstShow');
-  show.value = 'snal';
-  show.dispatchEvent(new w.Event('change'));
-  assertEqual(tableRows(w, 'againstSegments').map(r => r[0]), ['Lidköping → Filsbäck'], 'sträckor');
-  assertEqual(w.document.getElementById('againstStationsBlock').style.display, 'none', 'stationerna döljs');
-  show.value = 'vantan';
-  show.dispatchEvent(new w.Event('change'));
-  assertEqual(tableRows(w, 'againstStations').map(r => r[0]), ['Källby (mot Blomberg)'], 'stationer med väntan');
-});
-
-test('analys: klick på en sträcka visar de enskilda mätningarna', async () => {
-  const w = await loadAnalysWith(againstRuns());
-  const row = Array.from(w.document.querySelectorAll('#againstSegments tbody tr')).find(tr => tr.cells[0].textContent === 'Lidköping → Filsbäck');
-  row.click();
-  const detail = w.document.getElementById('againstDetail');
-  assertEqual(detail.querySelector('h3').textContent, 'Lidköping → Filsbäck – 4 mätningar', 'rubrik');
-  assertEqual(detail.querySelectorAll('tbody tr').length, 4, 'antal rader');
-});
-
-test('analys: export av avvikelser innehåller urval, antal mätningar och sträckorna', async () => {
-  const w = await loadAnalysWith(againstRuns());
-  const text = w.__analys.exportAgainstCsv();
-  assert(text.charCodeAt(0) === 0xFEFF, 'BOM saknas');
-  for (const part of ['"Bygger på";"4 körningar med tidtabell (av 6 i urvalet)"', '"Tolerans";"±1 min"',
-    '"Lidköping → Filsbäck";"4";"4";"3";"3";"3";"5,3"', '"Källby";"mot Blomberg";"Stopp";"4"']) {
-    assert(text.includes(part), 'saknas i CSV: ' + part);
-  }
-  assert(/^avvikelser_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn');
-});
-
-test('analys: utskriften får rubrik med urval och antal mätningar', async () => {
-  const w = await loadAnalysWith(againstRuns());
-  const header = w.__analys.prepareAgainstPrint();
-  assert(header.includes('RailTimer – Avvikelser mot tidtabell'), 'rubrik');
-  assert(header.includes('Bygger på: 4 körningar med tidtabell (av 6 i urvalet)'), 'antal: ' + header);
-});
-
-test('analys: utskriftshuvudet följer urvalet även vid utskrift med Ctrl+P', async () => {
-  const w = await loadAnalysWith(againstRuns());
-  w.__analys.showTab('against');
-  const header = () => w.document.querySelector('#againstReport .print-header').textContent;
-  w.dispatchEvent(new w.Event('beforeprint'));   // Ctrl+P utan att knappen tryckts
-  assert(header().includes('Bygger på: 4 körningar med tidtabell (av 6 i urvalet)'), 'utan knappen: ' + header());
-  w.__analys.setFilters({ filterTimeOfDay: 'morgon' });
-  w.dispatchEvent(new w.Event('beforeprint'));
-  assert(header().includes('Bygger på: 3 körningar med tidtabell (av 3 i urvalet)'), 'efter filterbyte: ' + header());
-  w.__analys.setFilters({ filterTimeOfDay: '', filterFrom: 'Lidköping', filterTo: 'Blomberg' });
-  w.__analys.showTab('timetable');
-  w.dispatchEvent(new w.Event('beforeprint'));
-  const tt = w.document.querySelector('#ttReport .print-header').textContent;
-  assert(tt.includes('Bygger på: 4 körningar'), 'tidtabell: ' + tt);
-});
-
-test('analys: tidig station utan väntan visas som Tidig och inte bland stationer med väntan', async () => {
-  // Planerat uppehåll 0 i Filsbäck: tåget kommer 1,5 min tidigt och åker före planerad ankomst – ingen väntan
-  const early = (id, s) => ({
-    id, trainNumber: '3344', vehicleType: 'Y31', startedAt: atMin(s), aborted: false, startStation: 'Lidköping', endStation: 'Källby',
-    stops: [
-      ttStop('Lidköping', { dep: s, sDep: s }),
-      ttStop('Filsbäck', { arr: s + 1.5, dep: s + 2.5, sArr: s + 3, sDep: s + 3 }),
-      ttStop('Källby', { arr: s + 8, sArr: s + 8 })
-    ]
-  });
-  const w = await loadAnalysWith([early('e1', 420), early('e2', 450), early('e3', 480)]);
-  w.__analys.showTab('against');
-  const row = tableRows(w, 'againstStations').find(r => r[0] === 'Filsbäck (mot Källby)');
-  assert(row, 'raden för Filsbäck saknas: ' + JSON.stringify(tableRows(w, 'againstStations')));
-  assertEqual(row[row.length - 1], 'Tidig', 'bedömning');
-  const show = w.document.getElementById('againstShow');
-  show.value = 'vantan';
-  show.dispatchEvent(new w.Event('change'));
-  assertEqual(tableRows(w, 'againstStations').filter(r => r[0] === 'Filsbäck (mot Källby)').length, 0, 'ingen väntan');
-});
-
-test('analys: med två stationer valda visar Mot tidtabell bara sträckan mellan dem i den riktningen', async () => {
-  const w = await loadAnalysWith(againstRuns());
-  w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Källby' });
-  const summary = w.document.getElementById('againstSummary').textContent;
-  assert(summary.includes('av 4 i urvalet') && summary.includes('· sträcka Lidköping → Källby'), 'sammanfattning: ' + summary);
-  assertEqual(tableRows(w, 'againstSegments').map(r => r[0]).sort(), ['Filsbäck → Källby', 'Lidköping → Filsbäck'], 'sträckor');
-});
-
-test('analys: urval utan körningar med tidtabell ger ett meddelande', async () => {
-  const w = await loadAnalysWith(againstRuns());
-  w.__analys.setFilters({ filterDayType: 'helg' });
-  assertEqual(w.document.getElementById('againstSummary').textContent, 'Inga körningar med tidtabellstider i urvalet.', 'meddelande');
-  assertEqual(w.document.getElementById('againstContent').style.display, 'none', 'tabellerna döljs');
-});
-
-// ── Analys mot tidtabell: tidtabellsförslag ──
-
-test('analys: tidtabellsförslaget räknar bara vald riktning och visar antal körningar', async () => {
-  const w = await loadAnalysWith(againstRuns());
-  w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Blomberg' });
-  w.__analys.showTab('timetable');
-  const summary = () => w.document.getElementById('ttSummary').textContent;
-  assert(summary().startsWith('Förslag Lidköping → Blomberg · bygger på 4 körningar'), 'sammanfattning: ' + summary());
-  const text = w.__analys.exportTimetableCsv();
-  for (const part of ['"Sträcka";"Lidköping → Blomberg"', '"Bygger på";"4 körningar"', '"Tidsbas";"Median"', '"Blomberg";"Slut";"+11"']) {
-    assert(text.includes(part), 'saknas i CSV: ' + part);
-  }
-  w.__analys.setFilters({ filterFrom: 'Blomberg', filterTo: 'Lidköping' });
-  assert(summary().includes('bygger på 2 körningar'), 'motsatt riktning: ' + summary());
-  w.__analys.setFilters({ filterDayType: 'helg' });
-  assertEqual(summary(), 'Inga körningar går från Blomberg till Lidköping i urvalet.', 'tomt urval');
-});
-
-test('analys: utskriften av tidtabellsförslaget har rubrik och antal körningar', async () => {
-  const w = await loadAnalysWith(againstRuns());
-  w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Blomberg' });
-  const header = w.__analys.prepareTimetablePrint();
-  assert(header.includes('RailTimer – Tidtabellsförslag Lidköping → Blomberg'), 'rubrik: ' + header);
-  assert(header.includes('Bygger på: 4 körningar'), 'antal: ' + header);
-});
-
 // ── Analys per tåg ──
 
 /* Lidköping → Filsbäck → Källby → Blomberg den 13–15 oktober. Tåg 3344 har 6 min Filsbäck → Källby och tåg 3346
@@ -861,6 +730,46 @@ test('analys: export och utskrift av Sträckor', async () => {
   w.dispatchEvent(new w.Event('beforeprint'));
   const printed = w.document.querySelector('#segmentsReport .print-header').textContent;
   assert(printed.includes('RailTimer – Sträckor och planerad tid') && printed.includes('Bygger på: 3 sträckor med tidtabell; vad sträckan tar från 8 körningar (alla tåg i urvalet)'), 'utskrift: ' + printed);
+});
+
+test('analys: Tidtabell föreslår tidtabell för valt tåg utifrån vad sträckorna tar', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  w.__analys.showTab('timetable');
+  const options = Array.from(w.document.querySelectorAll('#ttTrain option')).map(o => o.value);
+  assertEqual(options, ['3344', '3346'], 'tåg att välja');
+  w.__analys.setTimetableTrain('3346');
+  const summary = w.document.getElementById('ttSummary').textContent;
+  assert(summary.startsWith('Förslag för tåg 3346 Lidköping → Blomberg · bygger på 3 körningar av tåget'), 'sammanfattning: ' + summary);
+  assertEqual(tableRows(w, 'ttTable').map(r => r.slice(0, 9)), [
+    ['Lidköping', 'Start', '', '10:00', '', '10:00', '', '', ''],
+    ['Filsbäck', 'Stopp', '10:03', '10:04', '10:03', '10:04', '3', '3', '0'],
+    ['Källby', 'Stopp', '10:06', '10:07', '10:08', '10:09', '2', '4', '+2'],
+    ['Blomberg', 'Slut', '10:10', '', '10:12', '', '3', '3', '0']
+  ], 'tider');
+  assert(w.document.getElementById('ttResult').textContent.includes('Restid nu 10 min · förslag 12 min'), 'restid');
+  const text = w.__analys.exportTimetableCsv();
+  for (const part of ['"Tåg";"3346"', '"Bygger på";"3 körningar av tåget; sträckornas tid på alla tåg i urvalet"', '"Tidsbas";"Median"',
+    '"Källby";"Stopp";"10:06";"10:07";"10:08";"10:09";"2";"4";"2";"1";"1";"6";"3"', '"Restid (min)";"";"";"";"";"";"10";"12";"2"']) {
+    assert(text.includes(part), 'saknas i CSV: ' + part);
+  }
+  assert(/^tidtabell_3346_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn');
+  const header = w.__analys.prepareTimetablePrint();
+  assert(header.includes('RailTimer – Tidtabellsförslag tåg 3346 Lidköping → Blomberg') && header.includes('Bygger på: 3 körningar av tåget'), 'utskrift: ' + header);
+});
+
+test('analys: knappen i tågkortet öppnar tidtabellsförslaget, och Mot tidtabell finns inte längre', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  w.__analys.showTrain('3344');
+  w.document.querySelector('#trainDetail button[data-proposal]').click();
+  assert(w.document.getElementById('tabTimetable').classList.contains('active'), 'Tidtabell visas');
+  assertEqual(w.document.getElementById('ttTrain').value, '3344', 'tåget är valt');
+  const kallby = tableRows(w, 'ttTable').find(r => r[0] === 'Källby');
+  assertEqual(kallby.slice(2, 9), ['07:10', '07:11', '07:08', '07:09', '6', '4', '−2'], 'Källby för 3344: väntan räknas inte i uppehållet');
+  w.dispatchEvent(new w.Event('beforeprint'));
+  assert(w.document.querySelector('#ttReport .print-header').textContent.includes('Tåg: 3344'), 'Ctrl+P');
+  assertEqual(w.document.querySelector('.tab[data-tab="against"]'), null, 'fliken Mot tidtabell är borta');
+  assertEqual(Array.from(w.document.querySelectorAll('.tab')).map(t => t.textContent),
+    ['Per tåg', 'Sträckor', 'Tidtabell', 'Diagram', 'Tabell', 'Avvikare', 'Detaljer'], 'flikarnas ordning');
 });
 
 // ── Körning ──

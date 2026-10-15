@@ -183,12 +183,7 @@
   }
 
   .timetable-setup{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;align-items:flex-end}
-  .station-list{display:flex;flex-direction:column;gap:.25rem;margin-bottom:1rem}
-  .station-item{display:flex;align-items:center;gap:.5rem;padding:.4rem .6rem;border-radius:6px;background:var(--bg);border:1px solid var(--b);font-size:.85rem}
-  .station-item.endpoint{background:var(--pri-glow);border-color:var(--pri)}
-  .station-item label{display:flex;align-items:center;gap:.5rem;flex:1;cursor:pointer}
-  .station-item .station-name{flex:1}
-  .station-item .station-data{color:var(--mut);font-size:.75rem}
+
   .timetable-result table{width:100%}
   .timetable-result .pass{color:var(--mut);font-style:italic}
   .timetable-result .stop-row td{background:var(--bg)}
@@ -196,11 +191,11 @@
   .tt-note{font-size:.85rem;color:var(--ink);margin-top:.75rem}
   .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
   .assess{display:inline-block;padding:.1rem .4rem;border-radius:4px;font-size:.7rem;font-weight:600;white-space:nowrap}
-  .assess.snal,.assess.sen-ankomst,.assess.sen-avgang{background:rgba(239,68,68,0.15);color:var(--err)}
-  .assess.generos,.assess.vantan,.assess.tidig{background:rgba(59,130,246,0.15);color:var(--blue)}
-  .assess.lagom,.assess.itid{background:rgba(34,197,94,0.15);color:var(--pri)}
+  .assess.snal{background:rgba(239,68,68,0.15);color:var(--err)}
+  .assess.generos{background:rgba(59,130,246,0.15);color:var(--blue)}
+  .assess.lagom{background:rgba(34,197,94,0.15);color:var(--pri)}
   .assess.fa{background:var(--bg);color:var(--mut)}
-  .clickable tbody tr[data-key]{cursor:pointer}
+  .clickable tbody tr[data-key],.clickable tbody tr[data-train]{cursor:pointer}
   .clickable tbody tr.selected td{background:var(--pri-glow)}
   .report-actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end;margin:.5rem 0 1rem}
   .few{color:var(--warn);font-size:.7rem;white-space:nowrap}
@@ -213,7 +208,7 @@
   @media print{
     @page{margin:12mm}
     body{background:#fff;color:#000}
-    header,.card,#modeDescription,.stats-row,.tabs,.no-print,.tab-content:not(.active),#ttHint,#againstSummary,#ttSummary,#trainsSummary,#segmentsSummary{display:none !important}
+    header,.card,#modeDescription,.stats-row,.tabs,.no-print,.tab-content:not(.active),#ttSummary,#trainsSummary,#segmentsSummary{display:none !important}
     main{max-width:none;padding:0}
     .print-header{display:block;margin-bottom:.5rem}
     .print-header h2{margin:0 0 .25rem;color:#000;font-size:1.1rem}
@@ -378,12 +373,11 @@
   <div class="tabs">
     <button class="tab active" data-tab="trains">Per tåg</button>
     <button class="tab" data-tab="segments">Sträckor</button>
+    <button class="tab" data-tab="timetable">Tidtabell</button>
     <button class="tab" data-tab="chart">Diagram</button>
     <button class="tab" data-tab="table">Tabell</button>
     <button class="tab" data-tab="outliers">Avvikare</button>
     <button class="tab" data-tab="details">Detaljer</button>
-    <button class="tab" data-tab="timetable">Tidtabell</button>
-    <button class="tab" data-tab="against">Mot tidtabell</button>
   </div>
 
   <div id="tabTrains" class="tab-content active">
@@ -527,18 +521,17 @@
   </div>
 
   <div id="tabTimetable" class="tab-content">
-    <p class="meta" id="ttHint">Välj Station 1 (från) och Station 2 (till) i filtren ovan för att föreslå en tidtabell i den riktningen, baserad på mätdata.</p>
-    <div id="ttSetup" style="display:none">
-      <div class="report" id="ttReport">
-        <div class="print-header"></div>
-        <p class="meta" id="ttSummary"></p>
+    <div class="report" id="ttReport">
+      <div class="print-header"></div>
+      <p class="meta" id="ttSummary">Ladda data för att se analys.</p>
+      <div id="ttContent" style="display:none">
         <div class="timetable-setup no-print" id="ttActions">
           <div class="filter-group">
-            <label>Starttid (valfritt)</label>
-            <input type="time" id="ttStartTime">
+            <label for="ttTrain">Tåg</label>
+            <select id="ttTrain"></select>
           </div>
           <div class="filter-group">
-            <label>Tidsbas</label>
+            <label for="ttTimeBasis">Tidsbas</label>
             <select id="ttTimeBasis">
               <option value="median">Median (realistisk)</option>
               <option value="p90">P90 (med marginal)</option>
@@ -548,81 +541,7 @@
           <button id="btnTtCsv" class="ghost">Exportera till Excel</button>
           <button id="btnTtPrint" class="ghost">Skriv ut / PDF</button>
         </div>
-        <div id="ttStopsBlock" class="no-print">
-          <h3>Mellanstationer – kryssa i för stopp</h3>
-          <div id="ttStationList" class="station-list"></div>
-        </div>
         <div id="ttResult" class="timetable-result"></div>
-      </div>
-    </div>
-  </div>
-
-  <div id="tabAgainst" class="tab-content">
-    <div class="report" id="againstReport">
-      <div class="print-header"></div>
-      <p class="meta" id="againstSummary">Ladda data för att se analys.</p>
-      <div id="againstContent" style="display:none">
-        <div class="report-actions no-print">
-          <div class="filter-group">
-            <label for="againstShow">Visa</label>
-            <select id="againstShow">
-              <option value="alla">Alla sträckor och stationer</option>
-              <option value="snal">Sträckor där tidtabellen är snål</option>
-              <option value="generos">Sträckor där tidtabellen är generös</option>
-              <option value="vantan">Stationer med väntan</option>
-              <option value="sen-ankomst">Stationer med sen ankomst</option>
-              <option value="sen-avgang">Stationer med sen avgång</option>
-            </select>
-          </div>
-          <button id="btnAgainstCsv" class="ghost">Exportera till Excel</button>
-          <button id="btnAgainstPrint" class="ghost">Skriv ut / PDF</button>
-        </div>
-        <div id="againstSegmentsBlock">
-          <h3>Sträckor – gångtid mot tidtabell</h3>
-          <div class="table-wrap">
-            <table id="againstSegments" class="clickable">
-              <thead><tr>
-                <th>Sträcka</th>
-                <th class="num" title="Antal mätta gångtider">Körningar</th>
-                <th class="num" title="Mätningar där tidtabellstider finns">Med tidtabell</th>
-                <th class="num" title="Vanligaste planerade gångtiden (min). Inom parentes: intervallet när den varierar mellan tåg">Planerad</th>
-                <th class="num" title="Verklig gångtid, median (min)">Median</th>
-                <th class="num" title="Verklig gångtid, 90:e percentilen (min)">P90</th>
-                <th class="num" title="Verklig − planerad gångtid, median (min)">Avvikelse</th>
-                <th class="num" title="Gångtiden var längre än planerat, mer än toleransen">För lite tid</th>
-                <th class="num">I tid</th>
-                <th class="num" title="Gångtiden var kortare än planerat, mer än toleransen – tåget får vänta">För mycket tid</th>
-                <th>Bedömning</th>
-                <th class="num" title="Verklig median avrundad till hela minuter. Inom parentes: ändring mot planerad">Förslag</th>
-              </tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
-        <div id="againstStationsBlock">
-          <h3>Stationer – ankomst, väntan och avgång mot tidtabell</h3>
-          <div class="table-wrap">
-            <table id="againstStations" class="clickable">
-              <thead><tr>
-                <th>Station</th>
-                <th>Typ</th>
-                <th class="num">Körningar</th>
-                <th class="num" title="Ankomst senare än planerat">Ank. sen</th>
-                <th class="num">Ank. i tid</th>
-                <th class="num" title="Ankomst tidigare än planerat">Ank. tidig</th>
-                <th class="num" title="Gånger tåget kom tidigt och stod längre än planerat">Väntan</th>
-                <th class="num" title="Väntan, median (min)">Väntan (min)</th>
-                <th class="num" title="Vanligaste planerade uppehållet (min)">Planerat uppehåll</th>
-                <th class="num" title="Verkligt uppehåll, median (min)">Verkligt uppehåll</th>
-                <th class="num" title="Avgång senare än planerat">Avg. sen</th>
-                <th>Bedömning</th>
-              </tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
-        <div id="againstDetail"></div>
-        <p class="meta no-print">Klicka på en rad för att se de enskilda mätningarna. Avvikelse = verkligt − planerat i minuter; inom toleransen räknas som i tid. <strong>Snål</strong>: tåget behöver mer tid än tidtabellen ger. <strong>Generös</strong>: tåget kommer fram tidigt och får vänta. Bedömningen kräver minst 3 mätningar med tidtabell.</p>
       </div>
     </div>
   </div>
@@ -644,11 +563,8 @@
   let currentMode = 'running'; // 'running' or 'dwell'
   let validTrains = new Set();
   let validStations = new Set();
-  let currentRuns = [];          // körningarna i aktuellt urval
-  let ttChoices = {};            // valda stopp i tidtabellsförslaget: { station: true/false }
-  let ttRouteKey = '';
   let lastTimetable = null;      // senaste tidtabellsförslaget
-  let againstState = null;       // senaste analysen i Mot tidtabell
+  let ttTrainChoice = '';        // tåget som senast valdes i Tidtabell
   let lastDownload = null;       // senaste exporten (läses av testerna)
   let tState = null;             // analys per tåg: urval, vad sträckorna tar, tåg och sträckor
   let openTrain = '';            // tåget vars kort visas i Per tåg
@@ -700,23 +616,13 @@
   els.filterDayType.addEventListener('change', runAnalysis);
   els.filterTolerance.addEventListener('change', runAnalysis);
   els.filterStationType.addEventListener('change', runAnalysis);
-  document.getElementById('ttStartTime').addEventListener('input', () => updateTimetable(currentRuns));
-  document.getElementById('ttTimeBasis').addEventListener('change', () => updateTimetable(currentRuns));
+  document.getElementById('ttTrain').addEventListener('change', e => { ttTrainChoice = e.target.value; renderTimetable(); });
+  document.getElementById('ttTimeBasis').addEventListener('change', renderTimetable);
   document.getElementById('btnTtCsv').addEventListener('click', exportTimetableCsv);
   document.getElementById('btnTtPrint').addEventListener('click', printTimetable);
-  document.getElementById('ttStationList').addEventListener('change', e => {
-    if(!e.target.classList.contains('tt-stop-check')) return;
-    ttChoices[e.target.dataset.station] = e.target.checked;
-    updateTimetable(currentRuns);
-  });
-  document.getElementById('againstShow').addEventListener('change', () => renderAgainst(currentRuns));
-  document.getElementById('btnAgainstCsv').addEventListener('click', exportAgainstCsv);
-  document.getElementById('btnAgainstPrint').addEventListener('click', printAgainst);
-  ['againstSegments', 'againstStations'].forEach(id => {
-    document.getElementById(id).addEventListener('click', e => {
-      const tr = e.target.closest('tr[data-key]');
-      if(tr) renderAgainstDetail(tr.dataset.kind, tr.dataset.key);
-    });
+  document.getElementById('trainDetail').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-proposal]');
+    if(btn) openProposal(btn.dataset.proposal);
   });
 
   document.getElementById('btnTrainsCsv').addEventListener('click', exportTrainsCsv);
@@ -1001,7 +907,6 @@
     // Filter logs first – samma urval i alla flikar (datum, tid på dygnet och dag i lokal tid)
     const filter = currentFilter();
     let filteredLogs = allLogs.filter(log => AN.runMatches(log, filter));
-    currentRuns = filteredLogs;
 
     // Build segments based on mode
     if(currentMode === 'running'){
@@ -1038,11 +943,10 @@
     renderSummaryTable(segments);
     renderOutliersTable(segments);
     renderDetailsTable(segments);
-    updateTimetable(filteredLogs);
-    renderAgainst(filteredLogs);
     tState = timetableData();
     renderTrains();
     renderSegments();
+    renderTimetable();
   }
 
   function buildSegmentsBetweenStations(logs, station1, station2, mergeDir){
@@ -1227,15 +1131,14 @@
     els.outliersTable.innerHTML = '<tr><td colspan="7" class="empty">Ladda data för att se analys</td></tr>';
     els.detailsTable.innerHTML = '<tr><td colspan="5" class="empty">Ladda data för att se analys</td></tr>';
     drawEmptyChart();
-    againstState = null;
     lastTimetable = null;
-    document.getElementById('againstSummary').textContent = 'Ladda data för att se analys.';
-    document.getElementById('againstContent').style.display = 'none';
     tState = null;
     document.getElementById('trainsSummary').textContent = 'Ladda data för att se analys.';
     document.getElementById('trainsContent').style.display = 'none';
     document.getElementById('segmentsSummary').textContent = 'Ladda data för att se analys.';
     document.getElementById('segmentsContent').style.display = 'none';
+    document.getElementById('ttSummary').textContent = 'Ladda data för att se analys.';
+    document.getElementById('ttContent').style.display = 'none';
   }
 
   function renderSummaryTable(segs){
@@ -1536,18 +1439,17 @@
     return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
   }
 
-  // ── Gemensamt för Mot tidtabell och Tidtabell ──
+  // ── Gemensamt för Per tåg, Sträckor och Tidtabell ──
 
   const ASSESSMENT_LABELS = {
-    snal: 'Snål', generos: 'Generös', lagom: 'Lagom', fa: 'För få mätningar', blandad: 'Snål och generös',
-    vantan: 'Tidig – väntan', tidig: 'Tidig', 'sen-ankomst': 'Sen ankomst', 'sen-avgang': 'Sen avgång', itid: 'I tid'
+    snal: 'Snål', generos: 'Generös', lagom: 'Lagom', fa: 'För få mätningar', blandad: 'Snål och generös'
   };
   const TIME_OF_DAY_LABELS = { morgon: 'Morgon 05–09', dag: 'Dag 09–15', eftermiddag: 'Eftermiddag 15–18', kvall: 'Kväll 18–05' };
   const DAY_LABELS = { vardag: 'Vardag', helg: 'Helg' };
   const TYPE_LABELS = { stopp: 'Stopp', passage: 'Passage' };
   const BASIS_LABELS = { median: 'Median', p90: 'P90', mean: 'Medelvärde' };
-  const AGAINST_TITLE = 'RailTimer – Avvikelser mot tidtabell';
   const TIMETABLE_TITLE = 'RailTimer – Tidtabellsförslag';
+  const TT_TYPE_LABELS = { start: 'Start', stopp: 'Stopp', passage: 'Passage', slut: 'Slut' };
   const TRAINS_TITLE = 'RailTimer – Analys per tåg';
   const SEGMENTS_TITLE = 'RailTimer – Sträckor och planerad tid';
   const EVENT_LABELS = { start: 'Avgång från start', stopp: 'Uppehåll', passage: 'Stopp vid passage' };
@@ -1564,10 +1466,7 @@
     return v > 0 && s !== AN.formatMinutes(0, decimals) ? '+' + s : s;
   }
   function fmtTol(t){ return '±' + AN.formatMinutes(t, t % 1 ? 1 : 0) + ' min'; }
-  function plannedText(p, min, max){
-    if(p == null) return '–';
-    return min != null && max != null && min !== max ? `${fmtMin(p, 0)} (${fmtMin(min, 0)}–${fmtMin(max, 0)})` : fmtMin(p, 0);
-  }
+
   function periodText(p){ return p ? (p.from === p.to ? p.from : p.from + ' – ' + p.to) : '–'; }
   // Minuter efter midnatt som klockslag TT:MM (tåg över midnatt börjar om på 00:00)
   function fmtClock(min){
@@ -1700,7 +1599,8 @@
     if(!r){ el.innerHTML = ''; return; }
     const tol = tState.tol;
     let html = `<h3>Tåg ${esc(r.train)} · ${esc(r.routeLabel)} · ${r.timetableRuns} körningar med tidtabell` +
-      (r.runCount > r.timetableRuns ? ` (av ${r.runCount})` : '') + ` · period ${esc(periodText(r.period))}</h3>`;
+      (r.runCount > r.timetableRuns ? ` (av ${r.runCount})` : '') + ` · period ${esc(periodText(r.period))}</h3>` +
+      `<div class="report-actions no-print"><button class="ghost" data-proposal="${esc(r.train)}">Tidtabellsförslag för tåget</button></div>`;
 
     html += '<h3>Gångtid mot vad sträckan tar</h3><div class="table-wrap"><table id="trainSegments"><thead><tr>' +
       '<th>Sträcka</th><th>Stopp</th>' +
@@ -1911,340 +1811,139 @@
     if(tState && tState.segments.length) printReport('segmentsReport', SEGMENTS_TITLE, segmentsMeta(tState));
   }
 
-  // ── Mot tidtabell: gångtid per sträcka och klockslag per station ──
+  // ── Tidtabell: förslag för ett tåg ──
 
-  function againstData(runs){
-    const tol = toleranceValue();
-    const from = validStations.has(els.filterFrom.value) ? els.filterFrom.value : '';
-    const to = validStations.has(els.filterTo.value) ? els.filterTo.value : '';
-    const onRoute = from && to && from !== to;
-    // Med två stationer valda: bara körningar i den riktningen, avskurna till sträckan mellan dem
-    const base = onRoute ? AN.sliceRuns(runs, from, to) : runs;
-    const withTimetable = base.filter(r => (r.stops || []).some(s => s.scheduledArrival || s.scheduledDeparture));
-    const segObs = AN.segmentObservations(base, { tolerance: tol });
-    const staObs = AN.stationObservations(base, { tolerance: tol, stationType: els.filterStationType.value });
-    return {
-      tol, route: onRoute ? from + ' → ' + to : '',
-      runCount: base.length, timetableRuns: withTimetable.length,
-      period: AN.period(withTimetable),
-      segObs, staObs,
-      segments: AN.summarizeSegments(segObs, { tolerance: tol }),
-      stations: AN.summarizeStations(staObs, { tolerance: tol })
-    };
+  function timetableTitle(p){ return TIMETABLE_TITLE + ' tåg ' + p.train + ' ' + p.route[0] + ' → ' + p.route[p.route.length - 1]; }
+
+  // Tåget i Tidtabell: senast valda, annars tågnummerfiltret, annars första tåget i Per tåg
+  function chosenTrain(rows){
+    const has = t => !!t && rows.some(r => r.train === t);
+    if(has(ttTrainChoice)) return ttTrainChoice;
+    if(tState && has(tState.filter.train)) return tState.filter.train;
+    return rows.length ? rows[0].train : '';
   }
 
-  function isStationView(show){ return show === 'vantan' || show === 'sen-ankomst' || show === 'sen-avgang'; }
-  function isSegmentView(show){ return show === 'snal' || show === 'generos'; }
-
-  function visibleRows(d, show){
-    if(isSegmentView(show)) return { segments: d.segments.filter(r => r.assessment === show), stations: [] };
-    if(show === 'vantan') return { segments: [], stations: d.stations.filter(r => r.wait.n > 0) };
-    if(isStationView(show)) return { segments: [], stations: d.stations.filter(r => r.assessment === show) };
-    return { segments: d.segments, stations: d.stations };
-  }
-
-  function renderAgainst(runs){
-    const summary = document.getElementById('againstSummary');
-    const content = document.getElementById('againstContent');
-    document.getElementById('againstDetail').innerHTML = '';
-    againstState = againstData(runs);
-    const d = againstState;
-    if(!d.timetableRuns){
-      summary.textContent = 'Inga körningar med tidtabellstider i urvalet.';
+  function renderTimetable(){
+    const summary = document.getElementById('ttSummary');
+    const content = document.getElementById('ttContent');
+    const rows = tState ? tState.trains.rows : [];
+    lastTimetable = null;
+    if(!rows.length){
+      summary.textContent = 'Inga tåg med tidtabell i urvalet.';
       content.style.display = 'none';
       return;
     }
     content.style.display = '';
-    summary.textContent = `Bygger på ${d.timetableRuns} körningar med tidtabell av ${d.runCount} i urvalet · period ${periodText(d.period)} · tolerans ${fmtTol(d.tol)}` +
-      (d.route ? ` · sträcka ${d.route}` : '');
-    const show = document.getElementById('againstShow').value;
-    const v = visibleRows(d, show);
-    document.getElementById('againstSegmentsBlock').style.display = isStationView(show) ? 'none' : '';
-    document.getElementById('againstStationsBlock').style.display = isSegmentView(show) ? 'none' : '';
-    renderAgainstSegments(v.segments);
-    renderAgainstStations(v.stations);
-  }
-
-  function renderAgainstSegments(rows){
-    const tbody = document.querySelector('#againstSegments tbody');
-    if(!rows.length){
-      tbody.innerHTML = '<tr><td colspan="12" class="empty">Inga sträckor med aktuellt urval</td></tr>';
-      return;
-    }
-    tbody.innerHTML = rows.map(r => `<tr data-kind="segment" data-key="${esc(r.key)}">
-      <td>${esc(r.key)}</td>
-      <td class="num">${r.n}</td>
-      <td class="num">${r.nPlanned}</td>
-      <td class="num">${plannedText(r.planned, r.plannedMin, r.plannedMax)}</td>
-      <td class="num">${fmtMin(r.actual.median)}</td>
-      <td class="num">${fmtMin(r.actual.p90)}</td>
-      <td class="num">${fmtSigned(r.deviation.median)}</td>
-      <td class="num">${r.counts.sen}</td>
-      <td class="num">${r.counts.itid}</td>
-      <td class="num">${r.counts.tidig}</td>
-      <td><span class="assess ${r.assessment}">${ASSESSMENT_LABELS[r.assessment]}</span></td>
-      <td class="num">${r.suggestion == null ? '–' : r.suggestion + (r.change ? ' (' + fmtSigned(r.change, 0) + ')' : '')}</td>
-    </tr>`).join('');
-  }
-
-  function renderAgainstStations(rows){
-    const tbody = document.querySelector('#againstStations tbody');
-    if(!rows.length){
-      tbody.innerHTML = '<tr><td colspan="12" class="empty">Inga stationer med aktuellt urval</td></tr>';
-      return;
-    }
-    tbody.innerHTML = rows.map(r => `<tr data-kind="station" data-key="${esc(r.key)}">
-      <td>${esc(r.label)}</td>
-      <td>${TYPE_LABELS[r.type]}</td>
-      <td class="num">${r.n}</td>
-      <td class="num">${r.arrivalCounts.sen}</td>
-      <td class="num">${r.arrivalCounts.itid}</td>
-      <td class="num">${r.arrivalCounts.tidig}</td>
-      <td class="num">${r.wait.n}</td>
-      <td class="num">${fmtMin(r.wait.median)}</td>
-      <td class="num">${fmtMin(r.plannedDwell, 0)}</td>
-      <td class="num">${fmtMin(r.dwell.median)}</td>
-      <td class="num">${r.departureCounts.sen}</td>
-      <td><span class="assess ${r.assessment}">${ASSESSMENT_LABELS[r.assessment]}</span></td>
-    </tr>`).join('');
-  }
-
-  const SEGMENT_CATEGORY = { sen: 'För lite tid', itid: 'I tid', tidig: 'För mycket tid' };
-  const STATION_CATEGORY = { sen: 'Sen', itid: 'I tid', tidig: 'Tidig' };
-
-  // De enskilda mätningarna bakom en rad, nyast först
-  function renderAgainstDetail(kind, key){
-    const el = document.getElementById('againstDetail');
-    const d = againstState;
-    if(!d){ el.innerHTML = ''; return; }
-    document.querySelectorAll('#againstSegments tbody tr, #againstStations tbody tr').forEach(tr => {
-      tr.classList.toggle('selected', tr.dataset.kind === kind && tr.dataset.key === key);
-    });
-    const newestFirst = (a, b) => String(b.start || '').localeCompare(String(a.start || ''));
-    if(kind === 'segment'){
-      const list = d.segObs.filter(o => o.key === key).sort(newestFirst);
-      el.innerHTML = `<h3>${esc(key)} – ${list.length} mätningar</h3><div class="table-wrap"><table><thead><tr>
-        <th>Datum</th><th>Tåg</th><th class="num">Planerad (min)</th><th class="num">Verklig (min)</th><th class="num">Avvikelse</th><th>Kategori</th>
-        </tr></thead><tbody>` + list.map(o => `<tr>
-        <td>${esc(o.date)}</td><td>${esc(o.trainNumber)}</td>
-        <td class="num">${fmtMin(o.planned, 0)}</td><td class="num">${fmtMin(o.actual)}</td>
-        <td class="num">${fmtSigned(o.deviation)}</td><td>${o.category ? SEGMENT_CATEGORY[o.category] : '–'}</td>
-        </tr>`).join('') + '</tbody></table></div>';
-    }else{
-      const list = d.staObs.filter(o => o.key === key).sort(newestFirst);
-      const label = list.length ? AN.stationLabel(list[0]) : key;
-      el.innerHTML = `<h3>${esc(label)} – ${list.length} mätningar</h3><div class="table-wrap"><table><thead><tr>
-        <th>Datum</th><th>Tåg</th><th>Typ</th><th class="num">Ankomst</th><th class="num">Väntan (min)</th><th class="num">Uppehåll (min)</th><th class="num">Avgång</th>
-        </tr></thead><tbody>` + list.map(o => `<tr>
-        <td>${esc(o.date)}</td><td>${esc(o.trainNumber)}</td><td>${TYPE_LABELS[o.type]}</td>
-        <td class="num">${fmtSigned(o.arrivalDev)}${o.arrivalCategory ? ' ' + STATION_CATEGORY[o.arrivalCategory].toLowerCase() : ''}</td>
-        <td class="num">${o.wait ? fmtMin(o.wait) : '–'}</td>
-        <td class="num">${fmtMin(o.dwell)}</td>
-        <td class="num">${fmtSigned(o.departureDev)}${o.departureCategory ? ' ' + STATION_CATEGORY[o.departureCategory].toLowerCase() : ''}</td>
-        </tr>`).join('') + '</tbody></table></div>';
-    }
-  }
-
-  function againstMeta(d){
-    const show = document.getElementById('againstShow');
-    const meta = [
-      ['Bygger på', `${d.timetableRuns} körningar med tidtabell (av ${d.runCount} i urvalet)`],
-      ['Period', periodText(d.period)],
-      ['Urval', describeFilter(d.route ? 'Sträcka: ' + d.route : '')],
-      ['Tolerans', fmtTol(d.tol)]
-    ];
-    if(show.value !== 'alla') meta.push(['Visar', show.options[show.selectedIndex].text]);
-    meta.push(['Skapad', nowText()]);
-    return meta;
-  }
-
-  function exportAgainstCsv(){
-    const d = againstState;
-    if(!d || !d.timetableRuns) return null;
-    const v = visibleRows(d, document.getElementById('againstShow').value);
-    const sections = [];
-    if(v.segments.length) sections.push({
-      title: 'Sträckor – gångtid mot tidtabell',
-      header: ['Sträcka', 'Körningar', 'Med tidtabell', 'Planerad gångtid (min)', 'Planerad min', 'Planerad max',
-        'Verklig median (min)', 'Verklig P90 (min)', 'Avvikelse median (min)', 'För lite tid', 'I tid', 'För mycket tid',
-        'Bedömning', 'Förslag (hela min)', 'Ändring (min)'],
-      rows: v.segments.map(r => [r.key, r.n, r.nPlanned, r.planned, r.plannedMin, r.plannedMax,
-        r.actual.median, r.actual.p90, r.deviation.median, r.counts.sen, r.counts.itid, r.counts.tidig,
-        ASSESSMENT_LABELS[r.assessment], r.suggestion, r.change])
-    });
-    if(v.stations.length) sections.push({
-      title: 'Stationer – ankomst, väntan och avgång mot tidtabell',
-      header: ['Station', 'Riktning', 'Typ', 'Körningar', 'Med tidtabell', 'Ankomst sen', 'Ankomst i tid', 'Ankomst tidig',
-        'Ankomst avvikelse median (min)', 'Väntan antal', 'Väntan median (min)', 'Planerat uppehåll (min)',
-        'Verkligt uppehåll median (min)', 'Avgång sen', 'Avgång i tid', 'Avgång tidig', 'Avgång avvikelse median (min)', 'Bedömning'],
-      rows: v.stations.map(r => [r.station, r.towards ? 'mot ' + r.towards : 'från ' + (r.from || ''), TYPE_LABELS[r.type],
-        r.n, r.nPlanned, r.arrivalCounts.sen, r.arrivalCounts.itid, r.arrivalCounts.tidig, r.arrivalDev.median,
-        r.wait.n, r.wait.median, r.plannedDwell, r.dwell.median,
-        r.departureCounts.sen, r.departureCounts.itid, r.departureCounts.tidig, r.departureDev.median,
-        ASSESSMENT_LABELS[r.assessment]])
-    });
-    const text = AN.csvDocument(AGAINST_TITLE, againstMeta(d), sections);
-    downloadText('avvikelser_' + AN.localDate(new Date()) + '.csv', text);
-    return text;
-  }
-
-  function printAgainst(){
-    if(againstState && againstState.timetableRuns) printReport('againstReport', AGAINST_TITLE, againstMeta(againstState));
-  }
-
-  // ── Tidtabell: förslag i vald riktning ──
-
-  function ttStartMinutes(){
-    const v = document.getElementById('ttStartTime').value;
-    if(!v) return null;
-    const [h, m] = v.split(':').map(Number);
-    return h * 60 + m;
-  }
-
-  // Minuter från start som klockslag (TT:MM) när starttid finns, annars +minuter
-  function ttClock(min, start){
-    if(min == null) return '–';
-    if(start == null) return '+' + min;
-    const total = ((start + min) % 1440 + 1440) % 1440;
-    return String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
-  }
-
-  function timetableTitle(p){ return TIMETABLE_TITLE + ' ' + p.from + ' → ' + p.to; }
-
-  function updateTimetable(runs){
-    const from = validStations.has(els.filterFrom.value) ? els.filterFrom.value : '';
-    const to = validStations.has(els.filterTo.value) ? els.filterTo.value : '';
-    const setup = document.getElementById('ttSetup');
-    const hint = document.getElementById('ttHint');
-    lastTimetable = null;
-    if(!from || !to || from === to){
-      setup.style.display = 'none';
-      hint.style.display = 'block';
-      return;
-    }
-    setup.style.display = 'block';
-    hint.style.display = 'none';
-    const routeKey = from + '|' + to;
-    if(routeKey !== ttRouteKey){ ttRouteKey = routeKey; ttChoices = {}; }
-    const p = AN.proposeTimetable(runs, { from, to, basis: document.getElementById('ttTimeBasis').value, stops: ttChoices });
-    const ok = !p.error;
-    document.getElementById('ttActions').style.display = ok ? '' : 'none';
-    document.getElementById('ttStopsBlock').style.display = ok ? '' : 'none';
-    if(!ok){
-      document.getElementById('ttSummary').textContent = `Inga körningar går från ${from} till ${to} i urvalet.`;
+    const train = chosenTrain(rows);
+    const select = document.getElementById('ttTrain');
+    select.innerHTML = rows.map(r => `<option value="${esc(r.train)}">${esc(r.train)} – ${esc(r.routeLabel)} (${r.timetableRuns} körningar)</option>`).join('');
+    select.value = train;
+    const p = AN.proposeTrainTimetable(tState.trainRuns, tState.needs, train, { basis: document.getElementById('ttTimeBasis').value });
+    if(p.error){
+      summary.textContent = `Tåg ${train} saknar körningar med tidtabell i urvalet.`;
       document.getElementById('ttResult').innerHTML = '';
       return;
     }
     lastTimetable = p;
-    document.getElementById('ttSummary').textContent =
-      `Förslag ${p.from} → ${p.to} · bygger på ${p.runCount} körningar · period ${periodText(p.period)} · tidsbas ${BASIS_LABELS[p.basis]}`;
-    renderTTStationList(p);
+    summary.textContent = `Förslag för tåg ${p.train} ${p.route[0]} → ${p.route[p.route.length - 1]} · bygger på ${p.runCount} körningar av tåget; sträckornas tid på alla tåg i urvalet · period ${periodText(p.period)} · tidsbas ${BASIS_LABELS[p.basis]}`;
     renderTTResult(p);
   }
 
-  function renderTTStationList(p){
-    document.getElementById('ttStationList').innerHTML = p.rows.map(r => {
-      if(r.isFirst || r.isLast){
-        return `<div class="station-item endpoint"><span class="station-name"><strong>${esc(r.station)}</strong></span>` +
-          `<span class="station-data">${r.isFirst ? 'Startstation' : 'Slutstation'}</span></div>`;
-      }
-      return `<div class="station-item"><label>` +
-        `<input type="checkbox" class="tt-stop-check" data-station="${esc(r.station)}"${r.isStop ? ' checked' : ''}>` +
-        `<span class="station-name">${esc(r.station)}</span></label>` +
-        `<span class="station-data">stannade ${r.stopCount} · passerade ${r.passCount}</span></div>`;
-    }).join('');
-  }
-
   function renderTTResult(p){
-    const start = ttStartMinutes();
     const tol = toleranceValue();
-    const few = n => (n && n < AN.MIN_SAMPLES ? ' <span class="few">få mätningar</span>' : '');
-    let html = '<div class="table-wrap"><table><thead><tr>' +
-      '<th>Station</th><th class="num">Ank</th><th class="num">Avg</th>' +
-      '<th class="num" title="Gångtid enligt vald tidsbas (min)">Gångtid</th>' +
-      '<th class="num" title="Vanligaste planerade gångtiden i urvalet (min)">Planerad nu</th>' +
-      '<th class="num" title="Förslagets gångtid i hela minuter − planerad nu">Ändring</th>' +
-      '<th class="num" title="Uppehåll enligt vald tidsbas (min)">Uppehåll</th><th>Mätningar</th>' +
+    let html = '<div class="table-wrap"><table id="ttTable"><thead><tr>' +
+      '<th>Station</th><th>Typ</th><th class="num">Ankomst nu</th><th class="num">Avgång nu</th>' +
+      '<th class="num">Ankomst förslag</th><th class="num">Avgång förslag</th>' +
+      '<th class="num" title="Planerad gångtid nu (min)">Gångtid nu</th>' +
+      '<th class="num" title="Förslagets gångtid i hela minuter">Gångtid förslag</th>' +
+      '<th class="num" title="Förslag − nu (min), färgad när skillnaden är större än toleransen">Skillnad</th>' +
+      '<th class="num" title="Planerat uppehåll nu (min)">Uppehåll nu</th>' +
+      '<th class="num" title="Uppehåll i förslaget (min)">Uppehåll förslag</th><th>Underlag</th>' +
       '</tr></thead><tbody>';
     for(const r of p.rows){
-      const pass = !r.isStop;
-      const cls = r.isFirst || r.isLast ? 'endpoint-row' : pass ? '' : 'stop-row';
-      let changeCls = '';
-      if(r.legValue != null && r.plannedLeg != null && Math.abs(r.legValue - r.plannedLeg) > tol){
-        changeCls = r.legValue > r.plannedLeg ? ' change-up' : ' change-down';
-      }
-      const counts = r.isFirst ? '' : 'gång ' + (r.leg ? r.leg.n : 0) + few(r.leg && r.leg.n) +
-        (r.dwell ? ' · uppeh ' + r.dwell.n + few(r.dwell.n) : '');
+      const pass = r.type === 'passage';
+      const cls = r.type === 'start' || r.type === 'slut' ? 'endpoint-row' : pass ? '' : 'stop-row';
+      let diffCls = '';
+      if(r.legDiff != null && Math.abs(r.legDiff) > tol) diffCls = r.legDiff > 0 ? ' change-up' : ' change-down';
+      const note = r.type === 'start' ? '' : 'gång ' + (r.need ? r.need.n : 0) +
+        (r.few ? ' <span class="few">få mätningar</span>' : '') +
+        (r.need && r.need.pattern === '*' ? ' <span class="few">alla mätningar</span>' : '') +
+        (r.dwellSource === 'matt' ? ' · uppeh ' + r.dwellN + (r.dwellN < AN.MIN_SAMPLES ? ' <span class="few">få mätningar</span>' : '') : '') +
+        (r.dwellSource === 'planerat' ? ' · uppeh planerat' : '');
       html += `<tr class="${cls}">` +
-        `<td${pass ? ' class="pass"' : ''}>${esc(r.station)}${pass ? ' <em>(passerar)</em>' : ''}</td>` +
-        `<td class="num">${r.isFirst ? '' : ttClock(r.arrivalRounded, start)}</td>` +
-        `<td class="num">${r.isLast ? '' : (pass ? '<span class="pass">↓</span>' : ttClock(r.departureRounded, start))}</td>` +
-        `<td class="num">${r.isFirst ? '' : fmtMin(r.legValue)}</td>` +
-        `<td class="num">${r.isFirst ? '' : plannedText(r.plannedLeg, r.plannedLegMin, r.plannedLegMax)}</td>` +
-        `<td class="num${changeCls}">${r.isFirst || r.legChange == null ? '' : fmtSigned(r.legChange, 0)}</td>` +
-        `<td class="num">${r.isStop && !r.isFirst && !r.isLast ? fmtMin(r.dwellValue) : ''}</td>` +
-        `<td style="font-size:.75rem;color:var(--mut)">${counts}</td></tr>`;
+        `<td${pass ? ' class="pass"' : ''}>${esc(r.station)}</td><td>${TT_TYPE_LABELS[r.type]}</td>` +
+        `<td class="num">${r.type === 'start' ? '' : fmtClock(r.currentArr)}</td>` +
+        `<td class="num">${r.type === 'slut' ? '' : pass ? '<span class="pass">↓</span>' : fmtClock(r.currentDep)}</td>` +
+        `<td class="num">${r.type === 'start' ? '' : fmtClock(r.propArr)}</td>` +
+        `<td class="num">${r.type === 'slut' ? '' : pass ? '<span class="pass">↓</span>' : fmtClock(r.propDep)}</td>` +
+        `<td class="num">${r.type === 'start' ? '' : fmtMin(r.plannedLeg, 0)}</td>` +
+        `<td class="num">${r.type === 'start' ? '' : fmtMin(r.legRounded, 0)}</td>` +
+        `<td class="num${diffCls}">${r.legDiff == null ? '' : fmtSigned(r.legDiff, 0)}</td>` +
+        `<td class="num">${r.type === 'stopp' ? fmtMin(r.plannedDwell, 0) : ''}</td>` +
+        `<td class="num">${r.type === 'stopp' ? fmtMin(r.dwellValue) : ''}</td>` +
+        `<td style="font-size:.75rem;color:var(--mut)">${note}</td></tr>`;
     }
     html += '</tbody></table></div>';
-    if(p.totalRounded != null){
-      html += `<p class="tt-note"><strong>Total restid: ${p.totalRounded} min</strong> (exakt ${fmtMin(p.totalMin)} min)`;
-      if(start != null) html += ` · ${ttClock(0, start)} → ${ttClock(p.totalRounded, start)}`;
-      html += '</p>';
+    if(p.totalProposed != null){
+      html += `<p class="tt-note"><strong>Restid nu ${p.totalCurrent == null ? '–' : p.totalCurrent} min · förslag ${p.totalProposed} min</strong> (exakt ${fmtMin(p.totalExact)} min)</p>`;
     }
     if(p.missing.length){
       html += `<p class="tt-note">Saknar mätningar: ${esc(p.missing.join(', '))}. Tiderna efter det kan inte räknas fram.</p>`;
     }
-    if(p.rows.some(r => !r.isFirst && !r.isLast && !r.isStop)){
-      html += '<p class="meta">Vid passage räknas gångtiderna som de mättes. Om tåget oftast stannade där kan verklig tid vid passage bli något kortare.</p>';
-    }
-    html += '<p class="meta">Uppehållen räknas utan väntan: kom tåget före planerad ankomst räknas uppehållet från planerad ankomst. Klockslagen är exakta tider avrundade till hela minuter. Planerad nu är den vanligaste planerade gångtiden i urvalet, med intervall inom parentes när den varierar. Ändring = förslag − planerad nu, färgad när skillnaden är större än toleransen.</p>';
+    html += '<p class="meta">Förslaget utgår från tågets nuvarande avgång från första stationen och tågets egna stopp. Gångtiderna är vad sträckorna tar för alla tåg i urvalet (vald tidsbas); uppehållen är tågets egna, utan väntan på tidtabellen – finns inga mätningar används planerat uppehåll. Klockslagen är exakta tider avrundade till hela minuter. Förslaget tar inte hänsyn till möten och anslutningar.</p>';
     document.getElementById('ttResult').innerHTML = html;
   }
 
   function ttMeta(p){
     const meta = [
-      ['Sträcka', p.from + ' → ' + p.to],
-      ['Bygger på', p.runCount + ' körningar'],
+      ['Tåg', p.train],
+      ['Sträcka', p.route[0] + ' → ' + p.route[p.route.length - 1]],
+      ['Bygger på', `${p.runCount} körningar av tåget; sträckornas tid på alla tåg i urvalet`],
       ['Period', periodText(p.period)],
-      ['Urval', describeFilter()],
-      ['Tidsbas', BASIS_LABELS[p.basis]],
-      ['Tolerans', fmtTol(toleranceValue())]
+      ['Urval', describeFilter(tState && tState.route ? 'Sträcka: ' + tState.route : '')],
+      ['Tidsbas', BASIS_LABELS[p.basis]]
     ];
-    const start = document.getElementById('ttStartTime').value;
-    if(start) meta.push(['Starttid', start]);
     if(p.missing.length) meta.push(['Saknar mätningar', p.missing.join(', ')]);
     meta.push(['Skapad', nowText()]);
     return meta;
   }
 
+  // Klockslag som TT:MM och skillnader som tal, så att Excel aldrig läser "+11" som 11
   function exportTimetableCsv(){
     const p = lastTimetable;
     if(!p) return null;
-    const start = ttStartMinutes();
     const rows = p.rows.map(r => [
-      r.station,
-      r.isFirst ? 'Start' : r.isLast ? 'Slut' : (r.isStop ? 'Stopp' : 'Passage'),
-      r.isFirst ? '' : ttClock(r.arrivalRounded, start),
-      r.isLast ? '' : ttClock(r.departureRounded, start),
-      r.isFirst ? null : r.legValue,
-      r.isFirst ? null : r.plannedLeg,
-      r.isFirst ? null : r.legChange,
-      r.isStop && !r.isFirst && !r.isLast ? r.dwellValue : null,
-      r.isFirst ? null : (r.leg ? r.leg.n : 0),
-      r.dwell ? r.dwell.n : null
+      r.station, TT_TYPE_LABELS[r.type],
+      r.type === 'start' ? '' : fmtClock(r.currentArr),
+      r.type === 'slut' ? '' : fmtClock(r.currentDep),
+      r.type === 'start' ? '' : fmtClock(r.propArr),
+      r.type === 'slut' ? '' : fmtClock(r.propDep),
+      r.plannedLeg, r.legRounded, r.legDiff,
+      r.type === 'stopp' ? r.plannedDwell : null,
+      r.type === 'stopp' ? r.dwellValue : null,
+      r.type === 'start' ? null : (r.need ? r.need.n : 0),
+      r.type === 'stopp' ? (r.dwellSource === 'planerat' ? 'planerat' : r.dwellN) : null
     ]);
-    if(p.totalRounded != null) rows.push(['Total restid (min)', '', '', '', p.totalMin, null, null, null, null, null]);
+    rows.push(['Restid (min)', '', '', '', '', '', p.totalCurrent, p.totalProposed,
+      p.totalCurrent != null && p.totalProposed != null ? p.totalProposed - p.totalCurrent : null, null, null, null, null]);
     const text = AN.csvDocument(TIMETABLE_TITLE, ttMeta(p), [{
-      header: ['Station', 'Typ', 'Ankomst', 'Avgång', 'Gångtid (min)', 'Planerad gångtid nu (min)', 'Ändring (min)',
-        'Uppehåll (min)', 'Mätningar gångtid', 'Mätningar uppehåll'],
+      header: ['Station', 'Typ', 'Ankomst nu', 'Avgång nu', 'Ankomst förslag', 'Avgång förslag', 'Gångtid nu (min)',
+        'Gångtid förslag (min)', 'Skillnad (min)', 'Uppehåll nu (min)', 'Uppehåll förslag (min)', 'Underlag gångtid', 'Underlag uppehåll'],
       rows
     }]);
-    downloadText('tidtabell_' + safeFilePart(p.from) + '-' + safeFilePart(p.to) + '_' + AN.localDate(new Date()) + '.csv', text);
+    downloadText('tidtabell_' + safeFilePart(p.train) + '_' + AN.localDate(new Date()) + '.csv', text);
     return text;
   }
 
   function printTimetable(){
     if(lastTimetable) printReport('ttReport', timetableTitle(lastTimetable), ttMeta(lastTimetable));
+  }
+
+  // Knappen i tågkortet: visa tågets tidtabellsförslag
+  function openProposal(train){
+    ttTrainChoice = String(train || '');
+    renderTimetable();
+    document.querySelector('.tab[data-tab="timetable"]').click();
   }
 
   // Utskrift med Ctrl+P (eller knappen): utskriftshuvudet fylls alltid med det aktuella urvalet,
@@ -2258,12 +1957,9 @@
     }else if(active.id === 'tabSegments'){
       if(tState && tState.segments.length) preparePrint('segmentsReport', SEGMENTS_TITLE, segmentsMeta(tState));
       else preparePrint('segmentsReport', SEGMENTS_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga sträckor med tidtabell i urvalet.']]);
-    }else if(active.id === 'tabAgainst'){
-      if(againstState && againstState.timetableRuns) preparePrint('againstReport', AGAINST_TITLE, againstMeta(againstState));
-      else preparePrint('againstReport', AGAINST_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga körningar med tidtabellstider i urvalet.']]);
     }else if(active.id === 'tabTimetable'){
       if(lastTimetable) preparePrint('ttReport', timetableTitle(lastTimetable), ttMeta(lastTimetable));
-      else document.querySelector('#ttReport .print-header').innerHTML = '';
+      else preparePrint('ttReport', TIMETABLE_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga tåg med tidtabell i urvalet.']]);
     }
   }
   window.addEventListener('beforeprint', fillActivePrintHeader);
@@ -2284,8 +1980,7 @@
       prepareTrainsPrint: () => tState && preparePrint('trainsReport', TRAINS_TITLE, trainsMeta(tState)),
       exportSegmentsCsv,
       prepareSegmentsPrint: () => tState && preparePrint('segmentsReport', SEGMENTS_TITLE, segmentsMeta(tState)),
-      exportAgainstCsv,
-      prepareAgainstPrint: () => againstState && preparePrint('againstReport', AGAINST_TITLE, againstMeta(againstState)),
+      setTimetableTrain(train){ ttTrainChoice = String(train); renderTimetable(); },
       exportTimetableCsv,
       prepareTimetablePrint: () => lastTimetable && preparePrint('ttReport', timetableTitle(lastTimetable), ttMeta(lastTimetable)),
       getLastDownload: () => lastDownload
