@@ -76,7 +76,7 @@
     text-transform:uppercase;
     letter-spacing:.03em;
   }
-  select,input[type="date"],input[type="file"],input[type="text"],input[type="password"]{
+  select,input[type="date"],input[type="file"],input[type="text"],input[type="password"],input[type="time"],input[type="number"]{
     padding:.4rem .6rem;
     border:1px solid var(--b);
     border-radius:6px;
@@ -189,6 +189,7 @@
   .stop-item .stop-name{min-width:9rem}
   .stop-item .station-data{color:var(--mut);font-size:.75rem}
   .stop-item input[type=number]{width:4.5rem}
+  .tt-train-block{margin-top:1.25rem;break-inside:avoid;page-break-inside:avoid}
 
   .timetable-result table{width:100%}
   .timetable-result .pass{color:var(--mut);font-style:italic}
@@ -586,6 +587,7 @@
   let lastTimetable = null;      // senaste tidtabellsförslaget
   let ttTrainChoice = '';        // tåget som senast valdes i Tidtabell
   const NEW_TRAIN = '__nytt__';  // valet Nytt tåg i Tidtabell
+  const ALL_TRAINS = '__alla__'; // valet Alla tåg i Tidtabell (utskrift av alla förslag)
   let ttNewStops = {};           // nytt tåg: valda stopp { station: true/false }
   let ttNewDwells = {};          // nytt tåg: angivna uppehåll { station: minuter }
   let ttNewRouteKey = '';        // stoppen och uppehållen nollställs när Station 1/2 byts
@@ -1859,6 +1861,7 @@
 
   function timetableTitle(p){
     if(p.kind === 'nytt') return TIMETABLE_TITLE + ' nytt tåg ' + p.from + ' → ' + p.to;
+    if(p.kind === 'alla') return TIMETABLE_TITLE + ' alla tåg';
     return TIMETABLE_TITLE + ' tåg ' + p.label + ' ' + p.route[0] + ' → ' + p.route[p.route.length - 1];
   }
 
@@ -1883,9 +1886,11 @@
     content.style.display = '';
     const rows = tState.trains.rows;
     const isNew = ttTrainChoice === NEW_TRAIN;
-    const train = isNew ? NEW_TRAIN : chosenTrain(rows);
+    const isAll = ttTrainChoice === ALL_TRAINS;
+    const train = isNew ? NEW_TRAIN : isAll ? ALL_TRAINS : chosenTrain(rows);
     const select = document.getElementById('ttTrain');
     select.innerHTML = `<option value="${NEW_TRAIN}">Nytt tåg – Station 1 → Station 2</option>` +
+      `<option value="${ALL_TRAINS}">Alla tåg – ett förslag per tåg (för utskrift)</option>` +
       rows.map(r => `<option value="${esc(r.key)}">${esc(r.label)} – ${esc(r.routeLabel)} (${r.timetableRuns} körningar)</option>`).join('');
     select.value = train;
     document.getElementById('ttLegSourceGroup').style.display = isNew ? 'none' : '';
@@ -1897,6 +1902,7 @@
       summary.textContent = 'Inga tåg med tidtabell i urvalet. Välj Nytt tåg för att bygga en tidtabell från mätningarna.';
       return;
     }
+    if(isAll){ renderAllTimetables(); return; }
     const legSource = document.getElementById('ttLegSource').value;
     const p = AN.proposeTrainTimetable(tState.trainRuns, tState.needs, train, { basis: document.getElementById('ttTimeBasis').value, legSource });
     if(p.error){
@@ -1910,9 +1916,10 @@
     renderTTResult(p);
   }
 
-  function renderTTResult(p){
+  // Tabellen för ett tågs förslag, med restid och saknade mätningar (för ett tåg och för Alla tåg)
+  function ttTableHtml(p, id){
     const tol = toleranceValue();
-    let html = '<div class="table-wrap"><table id="ttTable"><thead><tr>' +
+    let html = '<div class="table-wrap"><table' + (id ? ' id="' + id + '"' : '') + '><thead><tr>' +
       '<th>Station</th><th>Typ</th><th class="num">Ankomst nu</th><th class="num">Avgång nu</th>' +
       '<th class="num">Ankomst förslag</th><th class="num">Avgång förslag</th>' +
       '<th class="num" title="Planerad gångtid nu (min)">Gångtid nu</th>' +
@@ -1951,12 +1958,67 @@
     if(p.missing.length){
       html += `<p class="tt-note">Saknar mätningar: ${esc(p.missing.join(', '))}. Tiderna efter det kan inte räknas fram.</p>`;
     }
-    html += '<p class="meta">Förslaget utgår från tågets nuvarande avgång från första stationen och tågets egna stopp. Gångtiderna är vad sträckorna tar för alla tåg i urvalet (vald tidsbas), eller tågets egna körningar där de räcker om du valt det – Underlag visar vilket. Gångtiden skiljer sällan mellan tågen; det gör uppehållen, som därför alltid är tågets egna, utan väntan på tidtabellen – finns inga mätningar används planerat uppehåll. Klockslagen är exakta tider avrundade till hela minuter. Förslaget tar inte hänsyn till möten och anslutningar.</p>';
-    document.getElementById('ttResult').innerHTML = html;
+    return html;
+  }
+
+  const TT_EXPLANATION = '<p class="meta">Förslaget utgår från tågets nuvarande avgång från första stationen och tågets egna stopp. Gångtiderna är vad sträckorna tar för alla tåg i urvalet (vald tidsbas), eller tågets egna körningar där de räcker om du valt det – Underlag visar vilket. Gångtiden skiljer sällan mellan tågen; det gör uppehållen, som därför alltid är tågets egna, utan väntan på tidtabellen – finns inga mätningar används planerat uppehåll. Klockslagen är exakta tider avrundade till hela minuter. Förslaget tar inte hänsyn till möten och anslutningar.</p>';
+
+  function renderTTResult(p){
+    document.getElementById('ttResult').innerHTML = ttTableHtml(p, 'ttTable') + TT_EXPLANATION;
+  }
+
+  // Alla tåg: översikt och ett förslag per tåg, för utskrift (PDF) och export
+  function renderAllTimetables(){
+    const summary = document.getElementById('ttSummary');
+    const basis = document.getElementById('ttTimeBasis').value;
+    const legSource = document.getElementById('ttLegSource').value;
+    const list = tState.trains.rows.map(r => AN.proposeTrainTimetable(tState.trainRuns, tState.needs, r.key, { basis, legSource })).filter(p => !p.error);
+    lastTimetable = { kind: 'alla', basis, legSource, list };
+    summary.textContent = `Förslag för ${list.length} tåg · ` +
+      (legSource === 'egna' ? 'gångtid från tågets egna körningar där de räcker, annars alla tåg' : 'gångtid från alla tåg i urvalet') +
+      `, uppehåll från tågets egna · period ${periodText(tState.period)} · tidsbas ${BASIS_LABELS[basis]}`;
+    let html = '<h3>Översikt</h3><div class="table-wrap"><table id="ttAllTable"><thead><tr><th>Tåg</th><th>Sträcka</th>' +
+      '<th class="num">Körningar</th><th class="num" title="Planerad restid nu (min)">Restid nu</th>' +
+      '<th class="num" title="Restid i förslaget (min)">Förslag</th><th class="num" title="Förslag − nu (min)">Skillnad</th>' +
+      '<th>Saknar mätningar</th></tr></thead><tbody>' +
+      list.map(p => `<tr><td>${esc(p.label)}</td><td>${esc(p.route[0] + ' → ' + p.route[p.route.length - 1])}</td>` +
+        `<td class="num">${p.runCount}</td><td class="num">${p.totalCurrent == null ? '–' : p.totalCurrent}</td>` +
+        `<td class="num">${p.totalProposed == null ? '–' : p.totalProposed}</td>` +
+        `<td class="num">${p.totalCurrent != null && p.totalProposed != null ? fmtSigned(p.totalProposed - p.totalCurrent, 0) : '–'}</td>` +
+        `<td>${esc(p.missing.join(', '))}</td></tr>`).join('') + '</tbody></table></div>';
+    for(const p of list){
+      html += `<div class="tt-train-block"><h3>Tåg ${esc(p.label)} · ${esc(p.route[0])} → ${esc(p.route[p.route.length - 1])} · ` +
+        `${p.runCount} körningar · period ${esc(periodText(p.period))}</h3>` + ttTableHtml(p, '') + '</div>';
+    }
+    document.getElementById('ttResult').innerHTML = html + TT_EXPLANATION;
+  }
+
+  function allTrainsMeta(a){
+    return [
+      ['Tåg', `${a.list.length} tåg`],
+      ['Bygger på', (a.legSource === 'egna' ? 'gångtid från tågets egna körningar där de räcker, annars alla tåg' : 'gångtid från alla tåg i urvalet') + '; uppehåll från tågets egna'],
+      ['Period', periodText(tState && tState.period)],
+      ['Urval', describeFilter(tState && tState.route ? 'Sträcka: ' + tState.route : '')],
+      ['Tidsbas', BASIS_LABELS[a.basis]],
+      ['Skapad', nowText()]
+    ];
+  }
+
+  function exportAllTimetablesCsv(a){
+    const sections = [{
+      title: 'Översikt',
+      header: ['Tåg', 'Sträcka', 'Körningar', 'Restid nu (min)', 'Restid förslag (min)', 'Skillnad (min)', 'Saknar mätningar'],
+      rows: a.list.map(p => [p.label, p.route[0] + ' → ' + p.route[p.route.length - 1], p.runCount, p.totalCurrent, p.totalProposed,
+        p.totalCurrent != null && p.totalProposed != null ? p.totalProposed - p.totalCurrent : null, p.missing.join(', ')])
+    }].concat(a.list.map(p => ({ title: `Tåg ${p.label} – ${p.route[0]} → ${p.route[p.route.length - 1]}`, header: TT_CSV_HEADER, rows: ttCsvRows(p) })));
+    const text = AN.csvDocument(TIMETABLE_TITLE + ' alla tåg', allTrainsMeta(a), sections);
+    downloadText('tidtabell_alla-tag_' + AN.localDate(new Date()) + '.csv', text);
+    return text;
   }
 
   function ttMeta(p){
     if(p.kind === 'nytt') return newTrainMeta(p);
+    if(p.kind === 'alla') return allTrainsMeta(p);
     const meta = [
       ['Tåg', p.label],
       ['Sträcka', p.route[0] + ' → ' + p.route[p.route.length - 1]],
@@ -1971,11 +2033,21 @@
     return meta;
   }
 
-  // Klockslag som TT:MM och skillnader som tal, så att Excel aldrig läser "+11" som 11
+  const TT_CSV_HEADER = ['Station', 'Typ', 'Ankomst nu', 'Avgång nu', 'Ankomst förslag', 'Avgång förslag', 'Gångtid nu (min)',
+    'Gångtid förslag (min)', 'Skillnad (min)', 'Uppehåll nu (min)', 'Uppehåll förslag (min)', 'Underlag gångtid', 'Underlag uppehåll'];
+
   function exportTimetableCsv(){
     const p = lastTimetable;
     if(!p) return null;
     if(p.kind === 'nytt') return exportNewTimetableCsv(p);
+    if(p.kind === 'alla') return exportAllTimetablesCsv(p);
+    const text = AN.csvDocument(TIMETABLE_TITLE, ttMeta(p), [{ header: TT_CSV_HEADER, rows: ttCsvRows(p) }]);
+    downloadText('tidtabell_' + safeFilePart(p.label) + '_' + AN.localDate(new Date()) + '.csv', text);
+    return text;
+  }
+
+  // Raderna för ett tågs förslag. Klockslag som TT:MM och skillnader som tal, så att Excel aldrig läser "+11" som 11.
+  function ttCsvRows(p){
     const rows = p.rows.map(r => [
       r.station, TT_TYPE_LABELS[r.type],
       r.type === 'start' ? '' : fmtClock(r.currentArr),
@@ -1990,13 +2062,7 @@
     ]);
     rows.push(['Restid (min)', '', '', '', '', '', p.totalCurrent, p.totalProposed,
       p.totalCurrent != null && p.totalProposed != null ? p.totalProposed - p.totalCurrent : null, null, null, null, null]);
-    const text = AN.csvDocument(TIMETABLE_TITLE, ttMeta(p), [{
-      header: ['Station', 'Typ', 'Ankomst nu', 'Avgång nu', 'Ankomst förslag', 'Avgång förslag', 'Gångtid nu (min)',
-        'Gångtid förslag (min)', 'Skillnad (min)', 'Uppehåll nu (min)', 'Uppehåll förslag (min)', 'Underlag gångtid', 'Underlag uppehåll'],
-      rows
-    }]);
-    downloadText('tidtabell_' + safeFilePart(p.label) + '_' + AN.localDate(new Date()) + '.csv', text);
-    return text;
+    return rows;
   }
 
   function printTimetable(){

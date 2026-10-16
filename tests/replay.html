@@ -769,7 +769,7 @@ test('analys: Tidtabell föreslår tidtabell för valt tåg utifrån vad sträck
   const w = await loadAnalysWith(trainRuns());
   w.__analys.showTab('timetable');
   const options = Array.from(w.document.querySelectorAll('#ttTrain option')).map(o => o.value);
-  assertEqual(options, ['__nytt__', '3344', '3346'], 'nytt tåg och tågen att välja');
+  assertEqual(options, ['__nytt__', '__alla__', '3344', '3346'], 'nytt tåg, alla tåg och tågen att välja');
   w.__analys.setTimetableTrain('3346');
   const summary = w.document.getElementById('ttSummary').textContent;
   assert(summary.startsWith('Förslag för tåg 3346 Lidköping → Blomberg · bygger på 3 körningar av tåget'), 'sammanfattning: ' + summary);
@@ -884,6 +884,23 @@ test('analys: nytt tåg A → B med valda stopp, eget uppehåll och avgångstid'
   assert(d.querySelector('#ttReport .print-header').textContent.includes('RailTimer – Tidtabellsförslag nytt tåg Lidköping → Blomberg'), 'utskrift');
 });
 
+test('analys: alla tågs tidtabellsförslag på en gång, för utskrift och Excel', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  w.__analys.setTimetableTrain('__alla__');
+  w.__analys.showTab('timetable');
+  assertEqual(tableRows(w, 'ttAllTable').map(r => r.slice(0, 6)), [
+    ['3344', 'Lidköping → Blomberg', '3', '14', '12', '−2'],
+    ['3346', 'Lidköping → Blomberg', '3', '10', '12', '+2']
+  ], 'översikt');
+  assertEqual(w.document.querySelectorAll('#ttResult .tt-train-block').length, 2, 'ett förslag per tåg');
+  const text = w.__analys.exportTimetableCsv();
+  assert(text.includes('"Tåg 3346 – Lidköping → Blomberg"') && text.includes('"Källby";"Stopp";"10:06";"10:07";"10:08";"10:09";"2";"4";"2"'), 'CSV');
+  assert(/^tidtabell_alla-tag_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn: ' + w.__analys.getLastDownload().filename);
+  w.dispatchEvent(new w.Event('beforeprint'));
+  const header = w.document.querySelector('#ttReport .print-header').textContent;
+  assert(header.includes('RailTimer – Tidtabellsförslag alla tåg') && header.includes('Tåg: 2 tåg'), 'utskrift: ' + header);
+});
+
 test('analys: hjälptexten för Stationstyp beskriver de nya flikarna', async () => {
   const w = await loadAnalys();
   const title = w.document.getElementById('filterStationType').title;
@@ -929,6 +946,25 @@ window.prepareShot = async function (name) {
     const w = await loadAnalysWith(trainRuns());
     w.__analys.setTimetableTrain('3346');
     w.__analys.showTab('timetable');
+  } else if (name === 'nytt-tag') {
+    const frame = document.getElementById('app');
+    frame.style.width = '1200px';
+    frame.style.height = '1600px';
+    const w = await loadAnalysWith(trainRuns());
+    w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Blomberg' });
+    w.__analys.setTimetableTrain('__nytt__');
+    w.__analys.showTab('timetable');
+    const start = w.document.getElementById('ttStart');
+    start.value = '07:15';
+    start.dispatchEvent(new w.Event('input'));
+  } else if (name === 'tidtabell-alla-utskrift') {
+    const frame = document.getElementById('app');
+    frame.style.width = '1200px';
+    frame.style.height = '1700px';
+    const w = await loadAnalysWith(trainRuns());
+    w.__analys.setTimetableTrain('__alla__');
+    w.__analys.showTab('timetable');
+    w.dispatchEvent(new w.Event('beforeprint'));
   } else {
     throw new Error('Okänd bild: ' + name);
   }
