@@ -769,7 +769,7 @@ test('analys: Tidtabell föreslår tidtabell för valt tåg utifrån vad sträck
   const w = await loadAnalysWith(trainRuns());
   w.__analys.showTab('timetable');
   const options = Array.from(w.document.querySelectorAll('#ttTrain option')).map(o => o.value);
-  assertEqual(options, ['3344', '3346'], 'tåg att välja');
+  assertEqual(options, ['__nytt__', '3344', '3346'], 'nytt tåg och tågen att välja');
   w.__analys.setTimetableTrain('3346');
   const summary = w.document.getElementById('ttSummary').textContent;
   assert(summary.startsWith('Förslag för tåg 3346 Lidköping → Blomberg · bygger på 3 körningar av tåget'), 'sammanfattning: ' + summary);
@@ -803,6 +803,85 @@ test('analys: knappen i tågkortet öppnar tidtabellsförslaget, och Mot tidtabe
   assertEqual(w.document.querySelector('.tab[data-tab="against"]'), null, 'fliken Mot tidtabell är borta');
   assertEqual(Array.from(w.document.querySelectorAll('.tab')).map(t => t.textContent),
     ['Per tåg', 'Sträckor', 'Tidtabell', 'Diagram', 'Tabell', 'Avvikare', 'Detaljer'], 'flikarnas ordning');
+});
+
+test('analys: repo och token ligger i ett inloggningsformulär som webbläsaren kan spara', async () => {
+  const w = await loadAnalys();
+  w.localStorage.clear();
+  const d = w.document;
+  const form = d.getElementById('ghForm');
+  assert(form && form.tagName === 'FORM', 'formulär saknas');
+  assertEqual([d.getElementById('ghRepo').autocomplete, d.getElementById('ghToken').autocomplete, d.getElementById('btnSaveGithub').type],
+    ['username', 'current-password', 'submit'], 'autocomplete och knapp');
+  d.getElementById('ghRepo').value = 'AKjork/railtimer-data';
+  d.getElementById('ghToken').value = 'github_pat_test';
+  form.requestSubmit();
+  assertEqual(JSON.parse(w.localStorage.getItem('railtimer_github_v1')).token, 'github_pat_test', 'sparad');
+  assertEqual(d.getElementById('ghToken').value, '', 'fältet töms');
+});
+
+test('analys: en token som webbläsaren fyllt i används direkt när inga inställningar är sparade', async () => {
+  const w = await loadAnalys();
+  w.localStorage.clear();
+  await new Promise(resolve => { const req = w.indexedDB.deleteDatabase('railtimer-analys'); req.onsuccess = req.onerror = req.onblocked = () => resolve(); });
+  const fake = browserFakeGitHub(w);
+  trainRuns().forEach(r => fake.put('korningar/2026/' + r.id + '.json', JSON.stringify(r)));
+  w.__analys.setFetchForTest(fake.fetch);
+  w.document.getElementById('ghRepo').value = 'AKjork/railtimer-data';
+  w.document.getElementById('ghToken').value = 'test-token';
+  await w.__analys.loadFromGithub();
+  assertEqual(w.__analys.getLogs().length, 8, 'körningarna hämtas');
+  assertEqual(JSON.parse(w.localStorage.getItem('railtimer_github_v1')).token, 'test-token', 'token sparad');
+});
+
+test('analys: Tidtabell visar varifrån gångtiden kommer och kan ta tågets egna', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  w.__analys.setTimetableTrain('3344');
+  const notes = () => tableRows(w, 'ttTable').map(r => r[11]);
+  assert(notes()[1].startsWith('gång alla 6 · uppeh egna 3'), 'alla tåg: ' + notes()[1]);
+  const src = w.document.getElementById('ttLegSource');
+  src.value = 'egna';
+  src.dispatchEvent(new w.Event('change'));
+  assert(notes()[1].startsWith('gång egna 3 · uppeh egna 3'), 'egna: ' + notes()[1]);
+  assert(w.document.getElementById('ttSummary').textContent.includes('gångtid från tågets egna körningar där de räcker'), 'sammanfattning');
+});
+
+test('analys: nytt tåg A → B med valda stopp, eget uppehåll och avgångstid', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  const d = w.document;
+  w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Blomberg' });
+  w.__analys.setTimetableTrain('__nytt__');
+  w.__analys.showTab('timetable');
+  const start = d.getElementById('ttStart');
+  start.value = '07:15';
+  start.dispatchEvent(new w.Event('input'));
+  const rows = () => tableRows(w, 'ttNewTable').map(r => r.slice(0, 6));
+  assertEqual(rows(), [
+    ['Lidköping', 'Start', '', '07:15', '', ''],
+    ['Filsbäck', 'Stopp', '07:18', '07:19', '3', '1,0'],
+    ['Källby', 'Stopp', '07:23', '07:24', '4', '1,0'],
+    ['Blomberg', 'Slut', '07:27', '', '3', '']
+  ], 'förvalda stopp');
+  assert(d.getElementById('ttSummary').textContent.startsWith('Nytt tåg Lidköping → Blomberg · gångtider från 6 körningar'), 'sammanfattning: ' + d.getElementById('ttSummary').textContent);
+  const kallby = d.querySelector('#ttStops input.tt-stop[data-station="Källby"]');
+  kallby.checked = false;
+  kallby.dispatchEvent(new w.Event('change', { bubbles: true }));
+  const dwell = d.querySelector('#ttStops input.tt-dwell[data-station="Filsbäck"]');
+  dwell.value = '2';
+  dwell.dispatchEvent(new w.Event('change', { bubbles: true }));
+  assertEqual(rows(), [
+    ['Lidköping', 'Start', '', '07:15', '', ''],
+    ['Filsbäck', 'Stopp', '07:18', '07:20', '3', '2,0'],
+    ['Källby', 'Passage', '07:24', '↓', '4', ''],
+    ['Blomberg', 'Slut', '07:27', '', '3', '']
+  ], 'passage i Källby och 2 min i Filsbäck');
+  const text = w.__analys.exportTimetableCsv();
+  for (const part of ['"Sträcka";"Lidköping → Blomberg"', '"Avgång";"07:15"', '"Stopp";"Filsbäck"', '"Filsbäck";"Stopp";"07:18";"07:20";"3";"2";"angivet"']) {
+    assert(text.includes(part), 'saknas i CSV: ' + part);
+  }
+  assert(/^tidtabell_nytt_Lidköping-Blomberg_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn: ' + w.__analys.getLastDownload().filename);
+  w.dispatchEvent(new w.Event('beforeprint'));
+  assert(d.querySelector('#ttReport .print-header').textContent.includes('RailTimer – Tidtabellsförslag nytt tåg Lidköping → Blomberg'), 'utskrift');
 });
 
 test('analys: hjälptexten för Stationstyp beskriver de nya flikarna', async () => {

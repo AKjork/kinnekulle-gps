@@ -183,6 +183,12 @@
   }
 
   .timetable-setup{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;align-items:flex-end}
+  .stop-list{display:flex;flex-direction:column;gap:.25rem;margin-bottom:1rem}
+  .stop-item{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;padding:.35rem .6rem;border-radius:6px;background:var(--bg);border:1px solid var(--b);font-size:.85rem}
+  .stop-item label{display:flex;align-items:center;gap:.4rem;cursor:pointer}
+  .stop-item .stop-name{min-width:9rem}
+  .stop-item .station-data{color:var(--mut);font-size:.75rem}
+  .stop-item input[type=number]{width:4.5rem}
 
   .timetable-result table{width:100%}
   .timetable-result .pass{color:var(--mut);font-style:italic}
@@ -251,21 +257,23 @@
     <div id="loadStatus" class="meta"></div>
     <details id="ghSettings" class="gh-settings">
       <summary>GitHub-inställningar</summary>
-      <div class="filters" style="margin-top:.5rem">
+      <!-- Ett riktigt inloggningsformulär: webbläsaren erbjuder att spara token som lösenord och fyller i den igen,
+           även när den har rensat sparade data (privat fönster eller rensning när fönstret stängs) -->
+      <form id="ghForm" class="filters" style="margin-top:.5rem" autocomplete="on">
         <div class="filter-group">
           <label for="ghRepo">Repo</label>
-          <input type="text" id="ghRepo" placeholder="AKjork/railtimer-data" autocomplete="off" spellcheck="false">
+          <input type="text" id="ghRepo" name="username" placeholder="AKjork/railtimer-data" autocomplete="username" spellcheck="false">
         </div>
         <div class="filter-group">
           <label for="ghToken">Token</label>
-          <input type="password" id="ghToken" placeholder="github_pat_…" autocomplete="off">
+          <input type="password" id="ghToken" name="password" placeholder="github_pat_…" autocomplete="current-password">
         </div>
         <div class="filter-group">
           <label>&nbsp;</label>
-          <button id="btnSaveGithub" class="ghost">Spara</button>
+          <button id="btnSaveGithub" type="submit" class="ghost">Spara</button>
         </div>
-      </div>
-      <p class="meta">Token sparas bara i den här webbläsaren. Samma token som i appen fungerar.</p>
+      </form>
+      <p class="meta">Token sparas i den här webbläsaren. Låt webbläsaren spara den som lösenord när den frågar – då fylls den i igen om webbläsaren har rensat sparade data, till exempel i ett privat fönster eller när den rensar vid stängning. Samma token som i appen fungerar.</p>
     </details>
   </div>
 
@@ -530,6 +538,17 @@
             <label for="ttTrain">Tåg</label>
             <select id="ttTrain"></select>
           </div>
+          <div class="filter-group" id="ttLegSourceGroup">
+            <label for="ttLegSource">Gångtid från</label>
+            <select id="ttLegSource">
+              <option value="alla">Alla tåg</option>
+              <option value="egna">Tågets egna (där de räcker)</option>
+            </select>
+          </div>
+          <div class="filter-group" id="ttStartGroup" style="display:none">
+            <label for="ttStart">Avgång</label>
+            <input type="time" id="ttStart">
+          </div>
           <div class="filter-group">
             <label for="ttTimeBasis">Tidsbas</label>
             <select id="ttTimeBasis">
@@ -541,6 +560,7 @@
           <button id="btnTtCsv" class="ghost">Exportera till Excel</button>
           <button id="btnTtPrint" class="ghost">Skriv ut / PDF</button>
         </div>
+        <div id="ttStops" class="stop-list no-print"></div>
         <div id="ttResult" class="timetable-result"></div>
       </div>
     </div>
@@ -565,6 +585,10 @@
   let validStations = new Set();
   let lastTimetable = null;      // senaste tidtabellsförslaget
   let ttTrainChoice = '';        // tåget som senast valdes i Tidtabell
+  const NEW_TRAIN = '__nytt__';  // valet Nytt tåg i Tidtabell
+  let ttNewStops = {};           // nytt tåg: valda stopp { station: true/false }
+  let ttNewDwells = {};          // nytt tåg: angivna uppehåll { station: minuter }
+  let ttNewRouteKey = '';        // stoppen och uppehållen nollställs när Station 1/2 byts
   let lastDownload = null;       // senaste exporten (läses av testerna)
   let tState = null;             // analys per tåg: urval, vad sträckorna tar, tåg och sträckor
   let openTrain = '';            // tåget vars kort visas i Per tåg
@@ -601,7 +625,7 @@
 
   // Event listeners
   document.getElementById('btnLoadGithub').addEventListener('click', loadFromGithub);
-  document.getElementById('btnSaveGithub').addEventListener('click', saveGithubSettings);
+  document.getElementById('ghForm').addEventListener('submit', e => { e.preventDefault(); saveGithubSettings(); });
   els.btnLoadLocal.addEventListener('click', loadFromLocalStorage);
   els.fileInput.addEventListener('change', loadFromFile);
   els.btnClearFilters.addEventListener('click', clearFilters);
@@ -618,6 +642,18 @@
   els.filterStationType.addEventListener('change', runAnalysis);
   document.getElementById('ttTrain').addEventListener('change', e => { ttTrainChoice = e.target.value; renderTimetable(); });
   document.getElementById('ttTimeBasis').addEventListener('change', renderTimetable);
+  document.getElementById('ttLegSource').addEventListener('change', renderTimetable);
+  document.getElementById('ttStart').addEventListener('input', renderTimetable);
+  document.getElementById('ttStops').addEventListener('change', e => {
+    const station = e.target.dataset.station;
+    if(!station) return;
+    if(e.target.classList.contains('tt-stop')) ttNewStops[station] = e.target.checked;
+    else if(e.target.classList.contains('tt-dwell')){
+      const v = parseFloat(String(e.target.value).replace(',', '.'));
+      if(isFinite(v) && v >= 0) ttNewDwells[station] = v; else delete ttNewDwells[station];
+    }
+    renderTimetable();
+  });
   document.getElementById('btnTtCsv').addEventListener('click', exportTimetableCsv);
   document.getElementById('btnTtPrint').addEventListener('click', printTimetable);
   document.getElementById('trainDetail').addEventListener('click', e => {
@@ -707,6 +743,8 @@
     const token = document.getElementById('ghToken').value.trim() || (existing && existing.token) || '';
     if(!token){ els.loadStatus.textContent = 'Klistra in din token.'; return; }
     localStorage.setItem(GH_KEY, JSON.stringify({ repo: `${repo.owner}/${repo.repo}`, token, branch: 'main' }));
+    // Be webbläsaren att inte rensa sparade data vid lagringsbrist (rensning vid stängning stoppas inte av det här)
+    try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); }catch(e){ /* utan stöd */ }
     document.getElementById('ghToken').value = '';
     document.getElementById('ghSettings').open = false;
     els.loadStatus.textContent = 'GitHub-inställningarna är sparade.';
@@ -754,6 +792,8 @@
   })();
 
   async function loadFromGithub(){
+    // En token som webbläsaren fyllt i (eller som skrivits in) men inte sparats används direkt
+    if(!loadGithubSettings() && document.getElementById('ghToken').value.trim()) saveGithubSettings();
     const s = loadGithubSettings();
     if(!s){
       document.getElementById('ghRepo').value = RailTimerGitHub.DEFAULT_REPO;
@@ -1537,7 +1577,7 @@
     const stationType = els.filterStationType.value;
     return {
       tol, filter, stationType, route: onRoute ? from + ' → ' + to : '',
-      base, obs, needs, trainRuns,
+      all, base, obs, needs, trainRuns,
       runCount: trainRuns.length, timetableRuns: withTimetable.length, period: AN.period(withTimetable),
       trains: AN.summarizeTrains(trainRuns, needs, { tolerance: tol, stationType }),
       // Sträckor visar tidtabellens namn ("13346 söndag") när samma tågnummer har flera tidtabeller
@@ -1817,7 +1857,10 @@
 
   // ── Tidtabell: förslag för ett tåg ──
 
-  function timetableTitle(p){ return TIMETABLE_TITLE + ' tåg ' + p.label + ' ' + p.route[0] + ' → ' + p.route[p.route.length - 1]; }
+  function timetableTitle(p){
+    if(p.kind === 'nytt') return TIMETABLE_TITLE + ' nytt tåg ' + p.from + ' → ' + p.to;
+    return TIMETABLE_TITLE + ' tåg ' + p.label + ' ' + p.route[0] + ' → ' + p.route[p.route.length - 1];
+  }
 
   // Tåget i Tidtabell (tidtabellens nyckel): senast valda, annars tågnummerfiltrets första tidtabell, annars
   // första tåget i Per tåg
@@ -1831,26 +1874,39 @@
   function renderTimetable(){
     const summary = document.getElementById('ttSummary');
     const content = document.getElementById('ttContent');
-    const rows = tState ? tState.trains.rows : [];
     lastTimetable = null;
-    if(!rows.length){
-      summary.textContent = 'Inga tåg med tidtabell i urvalet.';
+    if(!tState){
+      summary.textContent = 'Ladda data för att se analys.';
       content.style.display = 'none';
       return;
     }
     content.style.display = '';
-    const train = chosenTrain(rows);
+    const rows = tState.trains.rows;
+    const isNew = ttTrainChoice === NEW_TRAIN;
+    const train = isNew ? NEW_TRAIN : chosenTrain(rows);
     const select = document.getElementById('ttTrain');
-    select.innerHTML = rows.map(r => `<option value="${esc(r.key)}">${esc(r.label)} – ${esc(r.routeLabel)} (${r.timetableRuns} körningar)</option>`).join('');
+    select.innerHTML = `<option value="${NEW_TRAIN}">Nytt tåg – Station 1 → Station 2</option>` +
+      rows.map(r => `<option value="${esc(r.key)}">${esc(r.label)} – ${esc(r.routeLabel)} (${r.timetableRuns} körningar)</option>`).join('');
     select.value = train;
-    const p = AN.proposeTrainTimetable(tState.trainRuns, tState.needs, train, { basis: document.getElementById('ttTimeBasis').value });
+    document.getElementById('ttLegSourceGroup').style.display = isNew ? 'none' : '';
+    document.getElementById('ttStartGroup').style.display = isNew ? '' : 'none';
+    document.getElementById('ttStops').innerHTML = '';
+    document.getElementById('ttResult').innerHTML = '';
+    if(isNew){ renderNewTimetable(); return; }
+    if(!rows.length){
+      summary.textContent = 'Inga tåg med tidtabell i urvalet. Välj Nytt tåg för att bygga en tidtabell från mätningarna.';
+      return;
+    }
+    const legSource = document.getElementById('ttLegSource').value;
+    const p = AN.proposeTrainTimetable(tState.trainRuns, tState.needs, train, { basis: document.getElementById('ttTimeBasis').value, legSource });
     if(p.error){
       summary.textContent = `Tåg ${train} saknar körningar med tidtabell i urvalet.`;
-      document.getElementById('ttResult').innerHTML = '';
       return;
     }
     lastTimetable = p;
-    summary.textContent = `Förslag för tåg ${p.label} ${p.route[0]} → ${p.route[p.route.length - 1]} · bygger på ${p.runCount} körningar av tåget; sträckornas tid på alla tåg i urvalet · period ${periodText(p.period)} · tidsbas ${BASIS_LABELS[p.basis]}`;
+    summary.textContent = `Förslag för tåg ${p.label} ${p.route[0]} → ${p.route[p.route.length - 1]} · bygger på ${p.runCount} körningar av tåget; ` +
+      (p.legSource === 'egna' ? 'gångtid från tågets egna körningar där de räcker, annars alla tåg' : 'gångtid från alla tåg i urvalet') +
+      `, uppehåll från tågets egna · period ${periodText(p.period)} · tidsbas ${BASIS_LABELS[p.basis]}`;
     renderTTResult(p);
   }
 
@@ -1860,20 +1916,20 @@
       '<th>Station</th><th>Typ</th><th class="num">Ankomst nu</th><th class="num">Avgång nu</th>' +
       '<th class="num">Ankomst förslag</th><th class="num">Avgång förslag</th>' +
       '<th class="num" title="Planerad gångtid nu (min)">Gångtid nu</th>' +
-      '<th class="num" title="Förslagets gångtid i hela minuter">Gångtid förslag</th>' +
+      '<th class="num" title="Förslagets gångtid i hela minuter: alla tågs, eller tågets egna där de räcker (se Underlag)">Gångtid förslag</th>' +
       '<th class="num" title="Förslag − nu (min), färgad när skillnaden är större än toleransen">Skillnad</th>' +
       '<th class="num" title="Planerat uppehåll nu (min)">Uppehåll nu</th>' +
-      '<th class="num" title="Uppehåll i förslaget (min)">Uppehåll förslag</th><th>Underlag</th>' +
+      '<th class="num" title="Tågets egna uppehåll utan väntan på tidtabellen (min)">Uppehåll förslag</th><th>Underlag</th>' +
       '</tr></thead><tbody>';
     for(const r of p.rows){
       const pass = r.type === 'passage';
       const cls = r.type === 'start' || r.type === 'slut' ? 'endpoint-row' : pass ? '' : 'stop-row';
       let diffCls = '';
       if(r.legDiff != null && Math.abs(r.legDiff) > tol) diffCls = r.legDiff > 0 ? ' change-up' : ' change-down';
-      const note = r.type === 'start' ? '' : 'gång ' + (r.need ? r.need.n : 0) +
+      const note = r.type === 'start' ? '' : 'gång ' + (r.legSource === 'egna' ? 'egna ' : 'alla ') + (r.need ? r.need.n : 0) +
         (r.few ? ' <span class="few">få mätningar</span>' : '') +
         (r.need && r.need.pattern === '*' ? ' <span class="few">alla mätningar</span>' : '') +
-        (r.dwellSource === 'matt' ? ' · uppeh ' + r.dwellN + (r.dwellN < AN.MIN_SAMPLES ? ' <span class="few">få mätningar</span>' : '') : '') +
+        (r.dwellSource === 'matt' ? ' · uppeh egna ' + r.dwellN + (r.dwellN < AN.MIN_SAMPLES ? ' <span class="few">få mätningar</span>' : '') : '') +
         (r.dwellSource === 'planerat' ? ' · uppeh planerat' : '');
       html += `<tr class="${cls}">` +
         `<td${pass ? ' class="pass"' : ''}>${esc(r.station)}</td><td>${TT_TYPE_LABELS[r.type]}</td>` +
@@ -1895,15 +1951,17 @@
     if(p.missing.length){
       html += `<p class="tt-note">Saknar mätningar: ${esc(p.missing.join(', '))}. Tiderna efter det kan inte räknas fram.</p>`;
     }
-    html += '<p class="meta">Förslaget utgår från tågets nuvarande avgång från första stationen och tågets egna stopp. Gångtiderna är vad sträckorna tar för alla tåg i urvalet (vald tidsbas); uppehållen är tågets egna, utan väntan på tidtabellen – finns inga mätningar används planerat uppehåll. Klockslagen är exakta tider avrundade till hela minuter. Förslaget tar inte hänsyn till möten och anslutningar.</p>';
+    html += '<p class="meta">Förslaget utgår från tågets nuvarande avgång från första stationen och tågets egna stopp. Gångtiderna är vad sträckorna tar för alla tåg i urvalet (vald tidsbas), eller tågets egna körningar där de räcker om du valt det – Underlag visar vilket. Gångtiden skiljer sällan mellan tågen; det gör uppehållen, som därför alltid är tågets egna, utan väntan på tidtabellen – finns inga mätningar används planerat uppehåll. Klockslagen är exakta tider avrundade till hela minuter. Förslaget tar inte hänsyn till möten och anslutningar.</p>';
     document.getElementById('ttResult').innerHTML = html;
   }
 
   function ttMeta(p){
+    if(p.kind === 'nytt') return newTrainMeta(p);
     const meta = [
       ['Tåg', p.label],
       ['Sträcka', p.route[0] + ' → ' + p.route[p.route.length - 1]],
-      ['Bygger på', `${p.runCount} körningar av tåget; sträckornas tid på alla tåg i urvalet`],
+      ['Bygger på', `${p.runCount} körningar av tåget; ` + (p.legSource === 'egna'
+        ? 'gångtid från tågets egna körningar där de räcker, annars alla tåg' : 'sträckornas tid på alla tåg i urvalet')],
       ['Period', periodText(p.period)],
       ['Urval', describeFilter(tState && tState.route ? 'Sträcka: ' + tState.route : '')],
       ['Tidsbas', BASIS_LABELS[p.basis]]
@@ -1917,6 +1975,7 @@
   function exportTimetableCsv(){
     const p = lastTimetable;
     if(!p) return null;
+    if(p.kind === 'nytt') return exportNewTimetableCsv(p);
     const rows = p.rows.map(r => [
       r.station, TT_TYPE_LABELS[r.type],
       r.type === 'start' ? '' : fmtClock(r.currentArr),
@@ -1942,6 +2001,132 @@
 
   function printTimetable(){
     if(lastTimetable) printReport('ttReport', timetableTitle(lastTimetable), ttMeta(lastTimetable));
+  }
+
+  // ── Tidtabell: nytt tåg från Station 1 till Station 2 ──
+
+  const DWELL_SOURCE_LABELS = { matt: 'mätt', angivet: 'angivet', schablon: 'schablon', planerat: 'planerat' };
+
+  function ttStartMinutes(){
+    const v = document.getElementById('ttStart').value;
+    if(!v) return null;
+    const [h, m] = v.split(':').map(Number);
+    return isFinite(h) && isFinite(m) ? h * 60 + m : null;
+  }
+
+  // Minuter från avgången som klockslag när avgångstid finns, annars +minuter
+  function newClock(min, start){
+    if(min == null) return '–';
+    return start == null ? '+' + min : fmtClock(start + min);
+  }
+
+  function renderNewTimetable(){
+    const summary = document.getElementById('ttSummary');
+    const from = validStations.has(els.filterFrom.value) ? els.filterFrom.value : '';
+    const to = validStations.has(els.filterTo.value) ? els.filterTo.value : '';
+    if(!from || !to || from === to){
+      summary.textContent = 'Nytt tåg: välj Station 1 (från) och Station 2 (till) i filtren ovan.';
+      return;
+    }
+    if(from + '|' + to !== ttNewRouteKey){ ttNewRouteKey = from + '|' + to; ttNewStops = {}; ttNewDwells = {}; }
+    // Alla tåg i urvalet, inte avskurna vid Station 1/2, så att rutten kan pusslas ihop av olika körningar
+    if(!tState.allNeeds) tState.allNeeds = AN.segmentNeeds(AN.segmentObservations(tState.all, { tolerance: tState.tol }));
+    const p = AN.proposeNewTimetable(tState.all, tState.allNeeds, {
+      from, to, basis: document.getElementById('ttTimeBasis').value, stops: ttNewStops, dwells: ttNewDwells
+    });
+    if(p.error){
+      summary.textContent = `Ingen körning i urvalet går från ${from} mot ${to}.`;
+      return;
+    }
+    p.kind = 'nytt';
+    p.start = ttStartMinutes();
+    lastTimetable = p;
+    summary.textContent = `Nytt tåg ${from} → ${to} · gångtider från ${p.runCount} körningar (alla tåg i urvalet) · period ${periodText(p.period)} · tidsbas ${BASIS_LABELS[p.basis]}`;
+    renderNewStops(p);
+    renderNewResult(p);
+  }
+
+  // Mellanstationerna: kryssa i stopp och ändra uppehållet (förifyllt med det som används)
+  function renderNewStops(p){
+    document.getElementById('ttStops').innerHTML = '<h3>Stopp och uppehåll</h3>' + p.rows.slice(1, -1).map(r => {
+      const stop = r.type === 'stopp';
+      const value = stop && r.dwellValue != null ? String(Math.round(r.dwellValue * 10) / 10) : '';
+      const source = stop ? DWELL_SOURCE_LABELS[r.dwellSource] + (r.dwellSource === 'matt' ? ' (' + r.dwellN + ')' : '') : '';
+      return `<div class="stop-item"><label class="stop-name"><input type="checkbox" class="tt-stop" data-station="${esc(r.station)}"${stop ? ' checked' : ''}> ${esc(r.station)}</label>` +
+        `<span class="station-data">stannade ${r.stopCount} · passerade ${r.passCount}</span>` +
+        `<label>Uppehåll <input type="number" class="tt-dwell" data-station="${esc(r.station)}" min="0" max="60" step="0.1" value="${value}"${stop ? '' : ' disabled'}> min</label>` +
+        `<span class="station-data">${esc(source)}</span></div>`;
+    }).join('');
+  }
+
+  function renderNewResult(p){
+    const start = p.start;
+    let html = '<div class="table-wrap"><table id="ttNewTable"><thead><tr>' +
+      '<th>Station</th><th>Typ</th><th class="num">Ankomst</th><th class="num">Avgång</th>' +
+      '<th class="num" title="Vad sträckan tar för alla tåg i urvalet, i hela minuter">Gångtid</th>' +
+      '<th class="num" title="Uppehåll (min)">Uppehåll</th><th>Underlag</th></tr></thead><tbody>';
+    for(const r of p.rows){
+      const pass = r.type === 'passage';
+      const cls = r.type === 'start' || r.type === 'slut' ? 'endpoint-row' : pass ? '' : 'stop-row';
+      const note = r.type === 'start' ? '' : 'gång ' + (r.need ? r.need.n : 0) +
+        (r.few ? ' <span class="few">få mätningar</span>' : '') +
+        (r.need && r.need.pattern === '*' ? ' <span class="few">alla mätningar</span>' : '') +
+        (r.type === 'stopp' ? ' · uppeh ' + (r.dwellSource === 'matt' ? r.dwellN : DWELL_SOURCE_LABELS[r.dwellSource] || '–') : '');
+      html += `<tr class="${cls}">` +
+        `<td${pass ? ' class="pass"' : ''}>${esc(r.station)}</td><td>${TT_TYPE_LABELS[r.type]}</td>` +
+        `<td class="num">${r.type === 'start' ? '' : newClock(r.arrRounded, start)}</td>` +
+        `<td class="num">${r.type === 'slut' ? '' : pass ? '<span class="pass">↓</span>' : newClock(r.depRounded, start)}</td>` +
+        `<td class="num">${r.type === 'start' ? '' : fmtMin(r.legRounded, 0)}</td>` +
+        `<td class="num">${r.type === 'stopp' ? fmtMin(r.dwellValue) : ''}</td>` +
+        `<td style="font-size:.75rem;color:var(--mut)">${note}</td></tr>`;
+    }
+    html += '</tbody></table></div>';
+    if(p.totalRounded != null){
+      html += `<p class="tt-note"><strong>Restid ${p.totalRounded} min</strong> (exakt ${fmtMin(p.totalExact)} min)` +
+        (start != null ? ` · ${fmtClock(start)} → ${fmtClock(start + p.totalRounded)}` : '') + '</p>';
+    }
+    if(p.missing.length){
+      html += `<p class="tt-note">Saknar mätningar: ${esc(p.missing.join(', '))}. Tiderna efter det kan inte räknas fram.</p>`;
+    }
+    html += '<p class="meta">Gångtiderna är vad sträckorna tar för alla tåg i urvalet (vald tidsbas), med stopp och passage som du valt. Uppehållen är vad tåg med vanligt kort planerat uppehåll (högst 2 min) står vid stationen, utan väntan på tidtabellen – eller det du skrivit in. Saknas mätningar används ett vanligt uppehåll vid banans stationer (schablon). Välj Tid på dygnet och Dag i filtren för att bygga på till exempel morgontrafiken. Klockslagen är exakta tider avrundade till hela minuter. Möten och anslutningar ingår inte.</p>';
+    document.getElementById('ttResult').innerHTML = html;
+  }
+
+  function newTrainMeta(p){
+    const stops = p.rows.filter(r => r.type === 'stopp').map(r => r.station);
+    const meta = [['Sträcka', p.from + ' → ' + p.to]];
+    if(p.start != null) meta.push(['Avgång', fmtClock(p.start)]);
+    meta.push(
+      ['Stopp', stops.length ? stops.join(', ') : 'inga'],
+      ['Bygger på', `${p.runCount} körningar på sträckorna (alla tåg i urvalet)`],
+      ['Period', periodText(p.period)],
+      ['Urval', describeFilter()],
+      ['Tidsbas', BASIS_LABELS[p.basis]]
+    );
+    if(p.missing.length) meta.push(['Saknar mätningar', p.missing.join(', ')]);
+    meta.push(['Skapad', nowText()]);
+    return meta;
+  }
+
+  function exportNewTimetableCsv(p){
+    const start = p.start;
+    const rows = p.rows.map(r => [
+      r.station, TT_TYPE_LABELS[r.type],
+      r.type === 'start' ? '' : newClock(r.arrRounded, start),
+      r.type === 'slut' || r.type === 'passage' ? '' : newClock(r.depRounded, start),
+      r.type === 'start' ? null : r.legRounded,
+      r.type === 'stopp' ? r.dwellValue : null,
+      r.type === 'stopp' ? DWELL_SOURCE_LABELS[r.dwellSource] || '' : '',
+      r.type === 'start' ? null : (r.need ? r.need.n : 0),
+      r.type === 'stopp' ? r.dwellN : null
+    ]);
+    if(p.totalRounded != null) rows.push(['Restid (min)', '', '', '', p.totalRounded, null, '', null, null]);
+    const text = AN.csvDocument(TIMETABLE_TITLE + ' nytt tåg', newTrainMeta(p), [{
+      header: ['Station', 'Typ', 'Ankomst', 'Avgång', 'Gångtid (min)', 'Uppehåll (min)', 'Uppehåll från', 'Underlag gångtid', 'Underlag uppehåll'],
+      rows
+    }]);
+    downloadText('tidtabell_nytt_' + safeFilePart(p.from) + '-' + safeFilePart(p.to) + '_' + AN.localDate(new Date()) + '.csv', text);
+    return text;
   }
 
   // Knappen i tågkortet: visa tågets tidtabellsförslag
