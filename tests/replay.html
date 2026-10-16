@@ -813,6 +813,7 @@ test('analys: repo och token ligger i ett inloggningsformulär som webbläsaren 
   assert(form && form.tagName === 'FORM', 'formulär saknas');
   assertEqual([d.getElementById('ghRepo').autocomplete, d.getElementById('ghToken').autocomplete, d.getElementById('btnSaveGithub').type],
     ['username', 'current-password', 'submit'], 'autocomplete och knapp');
+  assertEqual([...new w.FormData(form).keys()], [], 'fälten saknar namn, så token kan inte hamna i adressfältet om formuläret skickas förbi skriptet');
   d.getElementById('ghRepo').value = 'AKjork/railtimer-data';
   d.getElementById('ghToken').value = 'github_pat_test';
   form.requestSubmit();
@@ -882,6 +883,31 @@ test('analys: nytt tåg A → B med valda stopp, eget uppehåll och avgångstid'
   assert(/^tidtabell_nytt_Lidköping-Blomberg_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn: ' + w.__analys.getLastDownload().filename);
   w.dispatchEvent(new w.Event('beforeprint'));
   assert(d.querySelector('#ttReport .print-header').textContent.includes('RailTimer – Tidtabellsförslag nytt tåg Lidköping → Blomberg'), 'utskrift');
+});
+
+test('analys: stopplistan för nytt tåg byggs inte om vid ändringar, så att fokus och nästa klick finns kvar', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  const d = w.document;
+  w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Blomberg' });
+  w.__analys.setTimetableTrain('__nytt__');
+  w.__analys.showTab('timetable');
+  const source = name => d.querySelector(`#ttStops .stop-item[data-station="${name}"] .dwell-source`).textContent;
+  assertEqual([source('Filsbäck'), source('Källby')], ['mätt 6, 6 väntade in avgångstiden', 'mätt 6, 2 väntade in avgångstiden'], 'källa');
+  const dwell = d.querySelector('#ttStops input.tt-dwell[data-station="Filsbäck"]');
+  const kallby = d.querySelector('#ttStops input.tt-stop[data-station="Källby"]');
+  dwell.focus();
+  dwell.value = '1.5';
+  dwell.dispatchEvent(new w.Event('change', { bubbles: true }));
+  assert(d.contains(dwell) && d.activeElement === dwell, 'uppehållsfältet finns kvar och har fokus');
+  assertEqual(source('Filsbäck'), 'angivet', 'källa efter ändring');
+  assert(d.contains(kallby), 'kryssrutan byttes inte ut, så klicket når fram');
+  kallby.click();
+  assertEqual([kallby.checked, d.querySelector('#ttStops input.tt-dwell[data-station="Källby"]').disabled], [false, true], 'Källby blir passage');
+  assertEqual(tableRows(w, 'ttNewTable').map(r => [r[0], r[1], r[5]]),
+    [['Lidköping', 'Start', ''], ['Filsbäck', 'Stopp', '1,5'], ['Källby', 'Passage', ''], ['Blomberg', 'Slut', '']], 'resultatet');
+  dwell.value = '999';
+  dwell.dispatchEvent(new w.Event('change', { bubbles: true }));
+  assertEqual([dwell.value, source('Filsbäck')], ['1', 'mätt 6, 6 väntade in avgångstiden'], 'över 60 min räknas inte: det mätta används');
 });
 
 test('analys: alla tågs tidtabellsförslag på en gång, för utskrift och Excel', async () => {

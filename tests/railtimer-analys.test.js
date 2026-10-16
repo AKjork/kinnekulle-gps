@@ -404,6 +404,17 @@ test('proposeTrainTimetable: gångtid från tågets egna körningar där de räc
   assert.deepEqual(few.rows.slice(1).map(r => r.legSource), ['alla', 'alla'], 'färre än 3 egna mätningar: alla tåg');
 });
 
+test('proposeTrainTimetable: tågets egna gångtider bara med samma stoppmönster, annars alla tågs', () => {
+  // 3344 passerade B (behovsstopp) en av tre gånger: två egna mätningar med stopp i B räcker inte, och tågets
+  // mätningar med passage ska inte blandas in – då används alla tågs med stopp i B (3346:s tre och 3344:s två)
+  const runs = trainFixture().map(r => r.id !== 'a14' ? r : Object.assign({}, r, {
+    stops: [r.stops[0], Object.assign({}, r.stops[1], { departSource: 'gps-pass' }), r.stops[2]]
+  }));
+  const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
+  const own = AN.proposeTrainTimetable(runs, needs, '3344', { basis: 'median', legSource: 'egna' });
+  assert.deepEqual(own.rows.slice(1).map(r => [r.legSource, r.need.pattern, r.need.n]), [['alla', 'SS', 5], ['alla', 'SS', 5]]);
+});
+
 /* Nytt tåg. Tåg 1 (tre körningar) A → B → C → D: stannar i B (1 min), passerar C. Tåg 2 (tre körningar): stannar
    även i C (1 min). Tåg 3 (tre körningar) kör D → E – ingen körning går hela A → E. Tåg 4 står 10 min i B enligt
    tidtabell (möte) och räknas inte som vanligt uppehåll. */
@@ -453,4 +464,55 @@ test('proposeNewTimetable: rutten pusslas ihop, förvalda stopp, stopp och passa
   const gap = AN.proposeNewTimetable(runs, needs.filter(n => n.segment !== 'D → E'), { from: 'A', to: 'E' });
   assert.deepEqual([gap.missing, gap.totalRounded], [['D → E'], null]);
   assert.equal(AN.proposeNewTimetable(runs, needs, { from: 'E', to: 'A' }).error, 'ingen-vag');
+});
+
+test('routeBetween: vänder inte tillbaka för att ta en genväg som en körning utan mellanstationer ger', () => {
+  // Linjen A – B – C – D. Nedtåg D, C, B, A läses in först, sedan upptåg A, B, C, D och ett tåg som bara har A och D
+  // (som Vara → Järpås förbi Håkantorp och Stora Levene i datan). Vägen B → A → D är lika kort som B → C → D.
+  const runs = [];
+  [13, 14, 15].forEach(day => runs.push(run('d' + day, [stop('D', { dep: [8, 0, 0, day] }), stop('C', { arr: [8, 3, 0, day], dep: [8, 4, 0, day] }),
+    stop('B', { arr: [8, 7, 0, day], dep: [8, 8, 0, day] }), stop('A', { arr: [8, 11, 0, day] })], { trainNumber: '2' })));
+  [13, 14, 15].forEach(day => runs.push(run('u' + day, [stop('A', { dep: [7, 0, 0, day] }), stop('B', { arr: [7, 3, 0, day], dep: [7, 4, 0, day] }),
+    stop('C', { arr: [7, 7, 0, day], dep: [7, 8, 0, day] }), stop('D', { arr: [7, 11, 0, day] })], { trainNumber: '1' })));
+  runs.push(run('x', [stop('A', { dep: [9, 0] }), stop('D', { arr: [9, 9] })], { trainNumber: '' }));
+  assert.deepEqual(AN.routeBetween(runs, 'B', 'D'), ['B', 'C', 'D']);
+  assert.deepEqual(AN.routeBetween(runs, 'C', 'A'), ['C', 'B', 'A'], 'åt andra hållet');
+  assert.deepEqual(AN.routeBetween(runs, 'A', 'D'), ['A', 'B', 'C', 'D'], 'genvägen fylls i med mellanstationerna');
+  const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
+  assert.equal(AN.proposeNewTimetable(runs, needs, { from: 'B', to: 'D', stops: { C: false } }).totalRounded, 6);
+});
+
+test('proposeNewTimetable: hur många uppehåll som väntade in avgångstiden, och verkliga uppehåll utan tidtabell före schablonen', () => {
+  const runs = newTrainFixture();
+  // Tåg 6 kommer 30 s sent till B och avgår 1,5 min sent: väntade inte in avgångstiden (tåg 1 och 2 gjorde det)
+  [13, 14, 15].forEach(day => runs.push(run('t6-' + day, [
+    stop('A', { dep: [12, 0, 0, day], sDep: [12, 0, 0, day] }),
+    stop('B', { arr: [12, 3, 30, day], dep: [12, 5, 30, day], sArr: [12, 3, 0, day], sDep: [12, 4, 0, day] }),
+    stop('D', { arr: [12, 9, 0, day], sArr: [12, 9, 0, day] })
+  ], { trainNumber: '6' })));
+  // Tåg 5 saknar tidtabell och stannar i D 2, 2,5 och 3 min – och en gång 8 min, som räknas som möte eller vändning
+  [[13, 5, 0], [14, 5, 30], [15, 6, 0], [16, 11, 0]].forEach(([day, m, s]) => runs.push(run('t5-' + day, [
+    stop('C', { dep: [11, 0, 0, day] }),
+    stop('D', { arr: [11, 3, 0, day], dep: [11, m, s, day] }),
+    stop('E', { arr: [11, 9, 0, day] })
+  ], { trainNumber: '5' })));
+  const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
+  const p = AN.proposeNewTimetable(runs, needs, { from: 'A', to: 'E', stops: { D: true } });
+  const at = name => p.rows.find(r => r.station === name);
+  assert.deepEqual([at('B').dwellValue, at('B').dwellSource, at('B').dwellN, at('B').dwellWaited], [1, 'matt', 9, 6]);
+  assert.deepEqual([at('D').dwellValue, at('D').dwellSource, at('D').dwellN], [2.5, 'utan-tidtabell', 3]);
+});
+
+test('proposeNewTimetable: utan tidtabell i urvalet räknas uppehållen och schablonen från verkliga uppehåll', () => {
+  // Körningar utan tidtabell som stannar 0,5, 0,6 och 0,7 min i B och passerar C
+  const runs = [30, 36, 42].map((sec, k) => run('u' + k, [
+    stop('A', { dep: [7, 0, 0, 13 + k] }),
+    stop('B', { arr: [7, 3, 0, 13 + k], dep: [7, 3, sec, 13 + k] }),
+    stop('C', { arr: [7, 6, 0, 13 + k], dep: [7, 6, 0, 13 + k], pass: true, shouldStop: false }),
+    stop('D', { arr: [7, 9, 0, 13 + k] })
+  ], { trainNumber: '' }));
+  const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
+  const p = AN.proposeNewTimetable(runs, needs, { from: 'A', to: 'D', stops: { C: true } });
+  assert.deepEqual(p.rows.slice(1, 3).map(r => [r.station, r.dwellValue, r.dwellSource]), [['B', 0.6, 'utan-tidtabell'], ['C', 0.6, 'schablon']]);
+  assert.deepEqual(p.missing, []);
 });

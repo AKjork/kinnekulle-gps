@@ -672,7 +672,7 @@
     // `train` är tidtabellens nyckel från trainVariants: tågnumret, eller "<tåg> <dagar>" när tåget har flera
     const key = String(train == null ? '' : train).trim();
     const v = trainVariants(runs).find(x => x.key === key);
-    // legSource 'egna': tågets egna gångtider där det har minst MIN_SAMPLES mätningar, annars alla tågs
+    // legSource 'egna': tågets egna gångtider där det har minst MIN_SAMPLES mätningar med samma stoppmönster, annars alla tågs
     const legSource = opts && opts.legSource === 'egna' ? 'egna' : 'alla';
     const own = v && legSource === 'egna' ? needMap(segmentNeeds(segmentObservations(v.runs, {}))) : null;
     const head = { train: v ? v.train : key, key, label: v ? v.label : key, basis, legSource };
@@ -680,7 +680,8 @@
   }
 
   // Förslaget för en tidtabells körningar (se proposeTrainTimetable); ger också Tid över i Per tåg.
-  // ownNeedsByKey: tågets egna gångtider (valfritt), som används där de har minst MIN_SAMPLES mätningar.
+  // ownNeedsByKey: tågets egna gångtider (valfritt), som används där de har minst MIN_SAMPLES mätningar med det planerade
+  // stoppmönstret – tågets mätningar med annat mönster (t.ex. passage vid ett behovsstopp) blandas inte in.
   function proposeFor(tRuns, needsByKey, basis, ownNeedsByKey) {
     const route = routeOf(tRuns);
     if (route.length < 2) return { error: 'inga-korningar', route: [], rows: [], missing: [], runCount: tRuns.length };
@@ -749,7 +750,7 @@
       const prevName = route[i - 1];
       const prev = current.get(prevName);
       const pattern = (prev.type === 'stopp' ? 'S' : 'P') + (c.type === 'stopp' ? 'S' : 'P');
-      const own = ownNeedsByKey ? needFor(ownNeedsByKey, `${prevName} → ${name}`, pattern) : null;
+      const own = ownNeedsByKey ? ownNeedsByKey.get(`${prevName} → ${name}|${pattern}`) : null;
       const useOwn = !!own && own.n >= MIN_SAMPLES;
       row.need = useOwn ? own : needFor(needsByKey, `${prevName} → ${name}`, pattern);
       row.legSource = useOwn ? 'egna' : 'alla';
@@ -798,31 +799,51 @@
   // Ett uppehåll räknas som vanligt (resandeutbyte) när det planerade uppehållet är högst så här många minuter;
   // längre planerade uppehåll är oftast möten eller vändningar och säger inget om vad ett nytt tåg behöver
   const NORMAL_DWELL = 2;
+  // Längsta verkliga uppehåll som räknas vid stopp utan tidtabell; längre är oftast möten eller vändningar
+  const MAX_UNTIMED_DWELL = 5;
 
   /* Rutten för ett nytt tåg från `from` till `to`: först en väg genom körningarnas stationsföljder (bredden först),
      sedan fylls stationer i som någon körning har mellan två intilliggande stationer i vägen. Fungerar även när ingen
-     körning har gått hela vägen. null när vägen saknas. */
+     körning har gått hela vägen. null när vägen saknas.
+     Körningar åt båda hållen och körningar som saknar mellanstationer (t.ex. utan tågnummer: bara start och slut) ger
+     genvägar. Vägen får därför aldrig vända: steget p → u → v förbjuds när någon körning har alla tre och u inte ligger
+     mellan p och v – annars kan vägen gå bakåt ett steg och ta en genväg förbi startstationen. */
   function routeBetween(runs, from, to) {
+    const lists = (runs || []).map(r => (r.stops || []).map(s => s.name));
     const next = new Map();
-    for (const run of runs || []) {
-      const s = run.stops || [];
+    for (const s of lists) {
       for (let i = 0; i < s.length - 1; i++) {
-        if (!next.has(s[i].name)) next.set(s[i].name, new Set());
-        next.get(s[i].name).add(s[i + 1].name);
+        if (!next.has(s[i])) next.set(s[i], new Set());
+        next.get(s[i]).add(s[i + 1]);
       }
     }
     if (!from || !to || from === to || !next.has(from)) return null;
-    const prev = new Map([[from, null]]);
-    const queue = [from];
-    while (queue.length && !prev.has(to)) {
-      const u = queue.shift();
-      for (const v of next.get(u) || []) {
-        if (!prev.has(v)) { prev.set(v, u); queue.push(v); }
+    const positions = lists.map(s => new Map(s.map((n, i) => [n, i])));
+    const turns = (p, u, v) => positions.some(pos => {
+      const a = pos.get(p);
+      const b = pos.get(u);
+      const c = pos.get(v);
+      return a != null && b != null && c != null && !((a < b && b < c) || (c < b && b < a));
+    });
+    // Bredden först över steg (u → v), så att varje steg kan prövas mot steget före
+    const prev = new Map();
+    const queue = [];
+    for (const v of next.get(from)) { prev.set(`${from}|${v}`, null); queue.push([from, v]); }
+    let goal = null;
+    while (queue.length && !goal) {
+      const [u, v] = queue.shift();
+      if (v === to) { goal = [u, v]; break; }
+      for (const w of next.get(v) || []) {
+        const key = `${v}|${w}`;
+        if (prev.has(key) || w === from || turns(u, v, w)) continue;
+        prev.set(key, [u, v]);
+        queue.push([v, w]);
       }
     }
-    if (!prev.has(to)) return null;
-    let chain = [];
-    for (let x = to; x != null; x = prev.get(x)) chain.unshift(x);
+    if (!goal) return null;
+    let chain = [goal[1]];
+    for (let step = goal; step; step = prev.get(`${step[0]}|${step[1]}`)) chain.unshift(step[0]);
+    if (new Set(chain).size !== chain.length) return null;
     for (let changed = true; changed;) {
       changed = false;
       const out = [chain[0]];
@@ -830,8 +851,7 @@
         const a = chain[i];
         const b = chain[i + 1];
         let best = [];
-        for (const run of runs || []) {
-          const names = (run.stops || []).map(s => s.name);
+        for (const names of lists) {
           const ia = names.indexOf(a);
           const ib = names.indexOf(b);
           if (ia < 0 || ib <= ia + 1 || ib - ia - 1 <= best.length) continue;
@@ -851,7 +871,11 @@
      - Stopp där opts.stops säger, annars där tågen oftast stannat mitt på en körning.
      - Gångtider: vad sträckorna tar för alla tåg (needs), med stopp och passage som valt (reserv: alla mätningar).
      - Uppehåll: angivet i opts.dwells, annars vad tåg med vanligt kort planerat uppehåll (högst NORMAL_DWELL) står vid
-       stationen, utan väntan på tidtabellen, annars medianen för vanliga uppehåll vid alla stationer ('schablon').
+       stationen, utan väntan på tidtabellen ('matt'), annars verkliga uppehåll vid stopp utan tidtabell (högst
+       MAX_UNTIMED_DWELL, 'utan-tidtabell'), annars medianen för vanliga uppehåll vid alla stationer ('schablon' – utan
+       tidtabell i urvalet: för alla uppehåll utan tidtabell).
+       dwellWaited: hur många av de mätta som kom före planerad avgång och avgick inom avgångsminuten. De väntade in
+       avgångstiden, så mätningen visar bara att uppehållet räckte – tåget kan ha behövt kortare tid.
      - Tider i minuter från avgången; exakta tider läggs ihop och varje klockslag avrundas till hela minuter, så att
        felen inte växer. Möten och anslutningar ingår inte. */
   function proposeNewTimetable(runs, needs, opts) {
@@ -864,10 +888,13 @@
     if (!route) return { from, to, basis, error: 'ingen-vag', route: [], rows: [], missing: [], runCount: 0 };
     const needsByKey = needMap(needs);
 
-    // Hur ofta tågen stannat och passerat mitt på en körning, och vanliga uppehåll per station
+    // Hur ofta tågen stannat och passerat mitt på en körning, vanliga uppehåll och uppehåll utan tidtabell per station
     const counts = new Map();
     const dwells = new Map();
+    const untimed = new Map();
     const normalAll = [];
+    const untimedAll = [];
+    const add = (map, name, value) => { if (!map.has(name)) map.set(name, []); map.get(name).push(value); };
     for (const run of runs || []) {
       const stops = run.stops || [];
       for (let k = 1; k < stops.length - 1; k++) {
@@ -877,18 +904,23 @@
         if (stopType(s) !== 'stopp') continue;
         const a = toDate(s.actualArrival);
         const d = toDate(s.actualDeparture);
+        if (!a || !d) continue;
         const pa = toDate(s.scheduledArrival);
         const pd = toDate(s.scheduledDeparture);
-        if (!a || !d || !pa || !pd || minutes(pa, pd) > NORMAL_DWELL) continue;
+        if (!pa && !pd) {
+          const m = minutes(a, d);
+          if (m > 0.05 && m <= MAX_UNTIMED_DWELL) { add(untimed, s.name, m); untimedAll.push(m); }
+          continue;
+        }
+        if (!pa || !pd || minutes(pa, pd) > NORMAL_DWELL) continue;
         const begin = pa > a && pa < d ? pa : a;
         const m = minutes(begin, d);
         if (!(m > 0.05 && m < 15)) continue;
-        if (!dwells.has(s.name)) dwells.set(s.name, []);
-        dwells.get(s.name).push(m);
+        add(dwells, s.name, { m, waited: a < pd && minutes(pd, d) < 1 });
         normalAll.push(m);
       }
     }
-    const generic = stats(normalAll)[basis];
+    const generic = stats(normalAll.length ? normalAll : untimedAll)[basis];
 
     const missing = [];
     const rows = [];
@@ -907,7 +939,7 @@
         stopCount: c.stopp, passCount: c.passage, defaultStop,
         arr: null, dep: null, arrRounded: null, depRounded: null,
         need: null, legValue: null, legRounded: null, few: false,
-        dwellValue: null, dwellN: 0, dwellSource: null
+        dwellValue: null, dwellN: 0, dwellWaited: 0, dwellSource: null
       };
       if (!isFirst) {
         const prev = rows[i - 1];
@@ -928,14 +960,20 @@
       }
       if (!isLast) {
         if (row.type === 'stopp') {
-          const own = stats(dwells.get(name) || []);
-          row.dwellN = own.n;
+          const own = dwells.get(name) || [];
+          const free = untimed.get(name) || [];
           if (manual[name] != null && manual[name] !== '' && isFinite(manual[name])) {
             row.dwellValue = Number(manual[name]);
             row.dwellSource = 'angivet';
-          } else if (own.n) {
-            row.dwellValue = own[basis];
+          } else if (own.length) {
+            row.dwellValue = stats(own.map(o => o.m))[basis];
             row.dwellSource = 'matt';
+            row.dwellN = own.length;
+            row.dwellWaited = own.filter(o => o.waited).length;
+          } else if (free.length) {
+            row.dwellValue = stats(free)[basis];
+            row.dwellSource = 'utan-tidtabell';
+            row.dwellN = free.length;
           } else if (generic != null) {
             row.dwellValue = generic;
             row.dwellSource = 'schablon';
