@@ -520,3 +520,27 @@ André 2026-10-15: väntan vid en station är ointressant, eftersom den följer 
 ### Tester
 - `node --test "tests/*.test.js"` och `node tests/run-browser-tests.mjs analys`.
 - Bilder tas med `--shot=per-tag|stracker|tidtabell|per-tag-utskrift`.
+
+## Uppdatering (2026-10-16): nytt tåg, alla tåg, egna gångtider och token (Analys.html)
+
+André 2026-10-16:
+- Han vill kunna föreslå tidtabell för ett helt nytt tåg, A–B via valda stationer.
+- Han vill kunna skriva ut förslag för alla mätta tåg som en PDF.
+- Varje tåg ska kunna jämföras med sig självt, eftersom resandemönstret skiljer.
+- Token försvann när fönstret stängdes.
+
+### Tidtabell
+- **Nytt tåg** (`proposeNewTimetable`, `routeBetween`):
+  - Välj Station 1 och 2, kryssa i stopp och ange avgång. Uppehållet kan ändras per station.
+  - **Rutten:** pusslas ihop av körningarna, bredden först. Stationer som någon körning har däremellan fylls i. Det fungerar även när ingen körning gått hela vägen.
+  - **Gångtider:** vad sträckorna tar för alla tåg, med stopp och passage som valt.
+  - **Uppehåll:** vad tåg med vanligt kort planerat uppehåll (högst 2 min, `NORMAL_DWELL`) står vid stationen, utan väntan. Saknas mätningar används medianen för vanliga uppehåll ("schablon").
+- **Alla tåg:** en översikt (restid nu och i förslaget per tåg) och ett förslag per tåg. Allt skrivs ut i en PDF och exporteras i en Excelfil.
+- **Gångtid från: alla tåg / tågets egna** (`legSource`). Med egna används tågets median där det har minst 3 mätningar, annars alla tågs. Underlag visar vilket.
+  - Datan 2026-10-16: gångtiden skiljer i median 0,1 min mellan tågen på samma sträcka. Uppehållen skiljer upp till 14 min och är därför alltid tågets egna.
+
+### Token
+GitHub-inställningarna är ett inloggningsformulär (`autocomplete` username/current-password). Därför kan webbläsaren spara token som lösenord och fylla i den igen när webbplatsdatan rensats. En ifylld token som inte sparats används direkt av Hämta från GitHub.
+
+### Bilder
+`--shot=nytt-tag` och `--shot=tidtabell-alla-utskrift`.
