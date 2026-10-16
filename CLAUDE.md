@@ -531,16 +531,27 @@ André 2026-10-16:
 
 ### Tidtabell
 - **Nytt tåg** (`proposeNewTimetable`, `routeBetween`):
-  - Välj Station 1 och 2, kryssa i stopp och ange avgång. Uppehållet kan ändras per station.
-  - **Rutten:** pusslas ihop av körningarna, bredden först. Stationer som någon körning har däremellan fylls i. Det fungerar även när ingen körning gått hela vägen.
+  - Välj Station 1 och 2, kryssa i stopp och ange avgång. Uppehållet kan ändras per station (0–60 min). Stopplistan byggs bara om när rutten ändras, så att fokus och klick inte försvinner.
+  - **Rutten:** pusslas ihop av körningarna, bredden först över steg. Stationer som någon körning har däremellan fylls i. Det fungerar även när ingen körning gått hela vägen.
+    - Vägen får aldrig vända: steget p → u → v förbjuds när någon körning har alla tre och u inte ligger mellan p och v.
+    - Annars ger körningar åt andra hållet plus körningar utan mellanstationer (utan tågnummer: bara start och slut) genvägar förbi startstationen. Före rättelsen blev 107 av 993 stationspar fel, till exempel Håkantorp → Mariestad 80 min i stället för 73.
   - **Gångtider:** vad sträckorna tar för alla tåg, med stopp och passage som valt.
-  - **Uppehåll:** vad tåg med vanligt kort planerat uppehåll (högst 2 min, `NORMAL_DWELL`) står vid stationen, utan väntan. Saknas mätningar används medianen för vanliga uppehåll ("schablon").
+  - **Uppehåll**, i den här ordningen:
+    1. Angivet.
+    2. Vad tåg med vanligt kort planerat uppehåll (högst 2 min, `NORMAL_DWELL`) står vid stationen, utan väntan ("mätt").
+    3. Verkliga uppehåll vid stopp utan tidtabell, högst 5 min (`MAX_UNTIMED_DWELL`, "mätt utan tidtabell"). Exempel: Hallsberg 2,6, Kumla 1,4 och Örebro Södra 0,8.
+    4. Medianen för vanliga uppehåll ("schablon"). Utan tidtabell i urvalet används i stället medianen för uppehållen utan tidtabell.
+  - **Väntade in avgångstiden** (`dwellWaited`): hur många av de mätta tågen som kom före planerad avgång och avgick inom avgångsminuten. Sådana mätningar visar bara att uppehållet räckte.
+    - Lidköping: 14 av 14 och Mariestad: 5 av 7 väntade in avgångstiden. Uppehållet 2,1 min speglar alltså tidtabellen.
+    - Tåg som inte styrdes av tidtabellen är för få där (2 per station) och stod längre, inte kortare. Därför räknas värdet som förut, och antalet visas.
 - **Alla tåg:** en översikt (restid nu och i förslaget per tåg) och ett förslag per tåg. Allt skrivs ut i en PDF och exporteras i en Excelfil.
-- **Gångtid från: alla tåg / tågets egna** (`legSource`). Med egna används tågets median där det har minst 3 mätningar, annars alla tågs. Underlag visar vilket.
+- **Gångtid från: alla tåg / tågets egna** (`legSource`). Med egna används tågets median där det har minst 3 mätningar med samma stoppmönster, annars alla tågs. Tågets mätningar med annat mönster, till exempel passage vid ett behovsstopp, blandas inte in. Underlag visar vilket.
   - Datan 2026-10-16: gångtiden skiljer i median 0,1 min mellan tågen på samma sträcka. Uppehållen skiljer upp till 14 min och är därför alltid tågets egna.
 
 ### Token
 GitHub-inställningarna är ett inloggningsformulär (`autocomplete` username/current-password). Därför kan webbläsaren spara token som lösenord och fylla i den igen när webbplatsdatan rensats. En ifylld token som inte sparats används direkt av Hämta från GitHub.
+- Fälten har **inget `name`**. Skickas formuläret förbi skriptet, till exempel om skriptet stoppat, hamnar token då aldrig i adressfältet eller i historiken.
+- Det är inte provat att webbläsarna faktiskt frågar om att spara. Chrome utan fönster saknar lösenordshanterare. Om frågan uteblir kan `PasswordCredential` och `navigator.credentials.store` läggas till för Chrome och Edge.
 
 ### Bilder
 `--shot=nytt-tag` och `--shot=tidtabell-alla-utskrift`.
