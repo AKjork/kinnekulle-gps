@@ -386,3 +386,20 @@ test('summarizeTrains: sen avgång från första stationen räknas inte bland ti
   assert.deepEqual(row.events.map(e => [e.station, e.type, e.lost]), [['A', 'start', 3]], 'tillfället syns i tågkortet');
   assert.deepEqual([row.eventCount, row.lostMax, row.startDelay.median], [0, null, 3], 'men inte i listans Tappat tid; Avgång start visar det');
 });
+
+test('proposeTrainTimetable: gångtid från tågets egna körningar där de räcker, annars alla tåg', () => {
+  // 3344 kör B → C på 5 min (tre egna mätningar), 3346 på 4 min; A → B tar 3 min för båda
+  const runs = trainFixture().map(r => {
+    if (r.trainNumber !== '3344') return r;
+    const day = Number(r.id.slice(1));
+    const c = Object.assign({}, r.stops[2], { actualArrival: at(7, day === 15 ? 11 : 9, day === 15 ? 30 : 0, day) });
+    return Object.assign({}, r, { stops: [r.stops[0], r.stops[1], c] });
+  });
+  const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
+  const all = AN.proposeTrainTimetable(runs, needs, '3344', { basis: 'median' });
+  const own = AN.proposeTrainTimetable(runs, needs, '3344', { basis: 'median', legSource: 'egna' });
+  assert.deepEqual(all.rows.slice(1).map(r => [r.legValue, r.legSource]), [[3, 'alla'], [4.5, 'alla']], 'alla tåg: medianen av 4, 4, 4, 5, 5, 5');
+  assert.deepEqual(own.rows.slice(1).map(r => [r.legValue, r.legSource, r.need.n]), [[3, 'egna', 3], [5, 'egna', 3]]);
+  const few = AN.proposeTrainTimetable(runs.filter(r => r.id !== 'a15'), needs, '3344', { basis: 'median', legSource: 'egna' });
+  assert.deepEqual(few.rows.slice(1).map(r => r.legSource), ['alla', 'alla'], 'färre än 3 egna mätningar: alla tåg');
+});

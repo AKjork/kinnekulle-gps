@@ -672,12 +672,16 @@
     // `train` är tidtabellens nyckel från trainVariants: tågnumret, eller "<tåg> <dagar>" när tåget har flera
     const key = String(train == null ? '' : train).trim();
     const v = trainVariants(runs).find(x => x.key === key);
-    const head = { train: v ? v.train : key, key, label: v ? v.label : key, basis };
-    return Object.assign(head, proposeFor(v ? v.runs : [], needMap(needs), basis));
+    // legSource 'egna': tågets egna gångtider där det har minst MIN_SAMPLES mätningar, annars alla tågs
+    const legSource = opts && opts.legSource === 'egna' ? 'egna' : 'alla';
+    const own = v && legSource === 'egna' ? needMap(segmentNeeds(segmentObservations(v.runs, {}))) : null;
+    const head = { train: v ? v.train : key, key, label: v ? v.label : key, basis, legSource };
+    return Object.assign(head, proposeFor(v ? v.runs : [], needMap(needs), basis, own));
   }
 
-  // Förslaget för en tidtabells körningar (se proposeTrainTimetable); ger också Tid över i Per tåg
-  function proposeFor(tRuns, needsByKey, basis) {
+  // Förslaget för en tidtabells körningar (se proposeTrainTimetable); ger också Tid över i Per tåg.
+  // ownNeedsByKey: tågets egna gångtider (valfritt), som används där de har minst MIN_SAMPLES mätningar.
+  function proposeFor(tRuns, needsByKey, basis, ownNeedsByKey) {
     const route = routeOf(tRuns);
     if (route.length < 2) return { error: 'inga-korningar', route: [], rows: [], missing: [], runCount: tRuns.length };
     const startOf = r => { const d = runStart(r); return d ? d.getTime() : 0; };
@@ -735,7 +739,7 @@
         station: name, type: isFirst ? 'start' : isLast ? 'slut' : c.type,
         currentArr: isFirst ? null : c.arr, currentDep: isLast ? null : c.dep,
         propArr: null, propDep: null,
-        plannedLeg: null, need: null, legValue: null, legRounded: null, legDiff: null, few: false,
+        plannedLeg: null, need: null, legSource: null, legValue: null, legRounded: null, legDiff: null, few: false,
         plannedDwell: null, dwellValue: null, dwellN: 0, dwellSource: null
       };
       if (isFirst) {
@@ -745,7 +749,10 @@
       const prevName = route[i - 1];
       const prev = current.get(prevName);
       const pattern = (prev.type === 'stopp' ? 'S' : 'P') + (c.type === 'stopp' ? 'S' : 'P');
-      row.need = needFor(needsByKey, `${prevName} → ${name}`, pattern);
+      const own = ownNeedsByKey ? needFor(ownNeedsByKey, `${prevName} → ${name}`, pattern) : null;
+      const useOwn = !!own && own.n >= MIN_SAMPLES;
+      row.need = useOwn ? own : needFor(needsByKey, `${prevName} → ${name}`, pattern);
+      row.legSource = useOwn ? 'egna' : 'alla';
       row.plannedLeg = prev.dep != null && c.arr != null ? c.arr - prev.dep : null;
       row.legValue = row.need && row.need.n ? row.need[basis] : null;
       row.few = !!row.need && row.need.n < MIN_SAMPLES;
