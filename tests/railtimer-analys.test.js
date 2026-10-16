@@ -403,3 +403,54 @@ test('proposeTrainTimetable: gångtid från tågets egna körningar där de räc
   const few = AN.proposeTrainTimetable(runs.filter(r => r.id !== 'a15'), needs, '3344', { basis: 'median', legSource: 'egna' });
   assert.deepEqual(few.rows.slice(1).map(r => r.legSource), ['alla', 'alla'], 'färre än 3 egna mätningar: alla tåg');
 });
+
+/* Nytt tåg. Tåg 1 (tre körningar) A → B → C → D: stannar i B (1 min), passerar C. Tåg 2 (tre körningar): stannar
+   även i C (1 min). Tåg 3 (tre körningar) kör D → E – ingen körning går hela A → E. Tåg 4 står 10 min i B enligt
+   tidtabell (möte) och räknas inte som vanligt uppehåll. */
+function newTrainFixture() {
+  const out = [];
+  [13, 14, 15].forEach(day => {
+    out.push(run('t1-' + day, [
+      stop('A', { dep: [7, 0, 0, day], sDep: [7, 0, 0, day] }),
+      stop('B', { arr: [7, 3, 0, day], dep: [7, 4, 0, day], sArr: [7, 3, 0, day], sDep: [7, 4, 0, day] }),
+      stop('C', { arr: [7, 6, 0, day], dep: [7, 6, 0, day], sDep: [7, 6, 0, day], pass: true, shouldStop: false }),
+      stop('D', { arr: [7, 9, 0, day], sArr: [7, 9, 0, day] })
+    ], { trainNumber: '1' }));
+    out.push(run('t2-' + day, [
+      stop('A', { dep: [8, 0, 0, day], sDep: [8, 0, 0, day] }),
+      stop('B', { arr: [8, 3, 0, day], dep: [8, 4, 0, day], sArr: [8, 3, 0, day], sDep: [8, 4, 0, day] }),
+      stop('C', { arr: [8, 6, 30, day], dep: [8, 7, 30, day], sArr: [8, 6, 0, day], sDep: [8, 7, 0, day] }),
+      stop('D', { arr: [8, 10, 30, day], sArr: [8, 10, 0, day] })
+    ], { trainNumber: '2' }));
+    out.push(run('t3-' + day, [
+      stop('D', { dep: [9, 0, 0, day], sDep: [9, 0, 0, day] }),
+      stop('E', { arr: [9, 5, 0, day], sArr: [9, 5, 0, day] })
+    ], { trainNumber: '3' }));
+  });
+  out.push(run('t4', [
+    stop('A', { dep: [10, 0], sDep: [10, 0] }),
+    stop('B', { arr: [10, 3], dep: [10, 13], sArr: [10, 3], sDep: [10, 13] }),
+    stop('D', { arr: [10, 18], sArr: [10, 18] })
+  ], { trainNumber: '4' }));
+  return out;
+}
+
+test('proposeNewTimetable: rutten pusslas ihop, förvalda stopp, stopp och passage, uppehåll och avrundning', () => {
+  const runs = newTrainFixture();
+  const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
+  const p = AN.proposeNewTimetable(runs, needs, { from: 'A', to: 'E', basis: 'median' });
+  assert.deepEqual(p.route, ['A', 'B', 'C', 'D', 'E'], 'ingen körning går hela vägen');
+  assert.deepEqual(p.rows.map(r => [r.station, r.type, r.defaultStop]),
+    [['A', 'start', false], ['B', 'stopp', true], ['C', 'stopp', true], ['D', 'passage', false], ['E', 'slut', false]], 'förvalt: där tågen oftast stannat');
+  assert.deepEqual(p.rows.map(r => [r.arrRounded, r.depRounded]), [[null, 0], [3, 4], [7, 8], [11, 11], [16, null]]);
+  assert.deepEqual([p.rows[1].dwellValue, p.rows[1].dwellSource, p.rows[1].dwellN], [1, 'matt', 6], 'mötet i B (10 min) räknas inte');
+  assert.deepEqual([p.rows[3].type, p.rows[3].dwellValue], ['passage', null], 'D passeras: ingen stannade där mitt på en körning');
+  assert.deepEqual([p.totalExact, p.totalRounded, p.missing], [15.5, 16, []]);
+  const stopAtD = AN.proposeNewTimetable(runs, needs, { from: 'A', to: 'E', stops: { C: false, D: true }, dwells: { B: 2 } });
+  assert.deepEqual(stopAtD.rows.map(r => [r.type, r.legValue, r.dwellValue, r.dwellSource]), [
+    ['start', null, null, null], ['stopp', 3, 2, 'angivet'], ['passage', 2, null, null], ['stopp', 3, 1, 'schablon'], ['slut', 5, null, null]
+  ], 'passage i C ger passagetiderna; stopp i D utan mätningar ger schablonen');
+  const gap = AN.proposeNewTimetable(runs, needs.filter(n => n.segment !== 'D → E'), { from: 'A', to: 'E' });
+  assert.deepEqual([gap.missing, gap.totalRounded], [['D → E'], null]);
+  assert.equal(AN.proposeNewTimetable(runs, needs, { from: 'E', to: 'A' }).error, 'ingen-vag');
+});

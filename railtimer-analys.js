@@ -793,6 +793,177 @@
     };
   }
 
+  // ── Nytt tåg ──
+
+  // Ett uppehåll räknas som vanligt (resandeutbyte) när det planerade uppehållet är högst så här många minuter;
+  // längre planerade uppehåll är oftast möten eller vändningar och säger inget om vad ett nytt tåg behöver
+  const NORMAL_DWELL = 2;
+
+  /* Rutten för ett nytt tåg från `from` till `to`: först en väg genom körningarnas stationsföljder (bredden först),
+     sedan fylls stationer i som någon körning har mellan två intilliggande stationer i vägen. Fungerar även när ingen
+     körning har gått hela vägen. null när vägen saknas. */
+  function routeBetween(runs, from, to) {
+    const next = new Map();
+    for (const run of runs || []) {
+      const s = run.stops || [];
+      for (let i = 0; i < s.length - 1; i++) {
+        if (!next.has(s[i].name)) next.set(s[i].name, new Set());
+        next.get(s[i].name).add(s[i + 1].name);
+      }
+    }
+    if (!from || !to || from === to || !next.has(from)) return null;
+    const prev = new Map([[from, null]]);
+    const queue = [from];
+    while (queue.length && !prev.has(to)) {
+      const u = queue.shift();
+      for (const v of next.get(u) || []) {
+        if (!prev.has(v)) { prev.set(v, u); queue.push(v); }
+      }
+    }
+    if (!prev.has(to)) return null;
+    let chain = [];
+    for (let x = to; x != null; x = prev.get(x)) chain.unshift(x);
+    for (let changed = true; changed;) {
+      changed = false;
+      const out = [chain[0]];
+      for (let i = 0; i < chain.length - 1; i++) {
+        const a = chain[i];
+        const b = chain[i + 1];
+        let best = [];
+        for (const run of runs || []) {
+          const names = (run.stops || []).map(s => s.name);
+          const ia = names.indexOf(a);
+          const ib = names.indexOf(b);
+          if (ia < 0 || ib <= ia + 1 || ib - ia - 1 <= best.length) continue;
+          const mid = names.slice(ia + 1, ib);
+          if (!mid.some(n => chain.includes(n) || out.includes(n))) best = mid;
+        }
+        if (best.length) { out.push(...best); changed = true; }
+        out.push(b);
+      }
+      chain = out;
+    }
+    return chain;
+  }
+
+  /* Tidtabellsförslag för ett nytt tåg från opts.from till opts.to. opts: { from, to, basis, stops: { station: true/false },
+     dwells: { station: minuter } }.
+     - Stopp där opts.stops säger, annars där tågen oftast stannat mitt på en körning.
+     - Gångtider: vad sträckorna tar för alla tåg (needs), med stopp och passage som valt (reserv: alla mätningar).
+     - Uppehåll: angivet i opts.dwells, annars vad tåg med vanligt kort planerat uppehåll (högst NORMAL_DWELL) står vid
+       stationen, utan väntan på tidtabellen, annars medianen för vanliga uppehåll vid alla stationer ('schablon').
+     - Tider i minuter från avgången; exakta tider läggs ihop och varje klockslag avrundas till hela minuter, så att
+       felen inte växer. Möten och anslutningar ingår inte. */
+  function proposeNewTimetable(runs, needs, opts) {
+    const from = opts && opts.from;
+    const to = opts && opts.to;
+    const basis = (opts && opts.basis) || 'median';
+    const chosen = (opts && opts.stops) || {};
+    const manual = (opts && opts.dwells) || {};
+    const route = routeBetween(runs, from, to);
+    if (!route) return { from, to, basis, error: 'ingen-vag', route: [], rows: [], missing: [], runCount: 0 };
+    const needsByKey = needMap(needs);
+
+    // Hur ofta tågen stannat och passerat mitt på en körning, och vanliga uppehåll per station
+    const counts = new Map();
+    const dwells = new Map();
+    const normalAll = [];
+    for (const run of runs || []) {
+      const stops = run.stops || [];
+      for (let k = 1; k < stops.length - 1; k++) {
+        const s = stops[k];
+        if (!counts.has(s.name)) counts.set(s.name, { stopp: 0, passage: 0 });
+        counts.get(s.name)[stopType(s)] += 1;
+        if (stopType(s) !== 'stopp') continue;
+        const a = toDate(s.actualArrival);
+        const d = toDate(s.actualDeparture);
+        const pa = toDate(s.scheduledArrival);
+        const pd = toDate(s.scheduledDeparture);
+        if (!a || !d || !pa || !pd || minutes(pa, pd) > NORMAL_DWELL) continue;
+        const begin = pa > a && pa < d ? pa : a;
+        const m = minutes(begin, d);
+        if (!(m > 0.05 && m < 15)) continue;
+        if (!dwells.has(s.name)) dwells.set(s.name, []);
+        dwells.get(s.name).push(m);
+        normalAll.push(m);
+      }
+    }
+    const generic = stats(normalAll)[basis];
+
+    const missing = [];
+    const rows = [];
+    let known = true;
+    let cum = 0;
+    let prevDep = 0;
+    for (let i = 0; i < route.length; i++) {
+      const name = route[i];
+      const isFirst = i === 0;
+      const isLast = i === route.length - 1;
+      const c = counts.get(name) || { stopp: 0, passage: 0 };
+      const defaultStop = c.stopp > 0 && c.stopp >= c.passage;
+      const isStop = isFirst || isLast || (chosen[name] != null ? !!chosen[name] : defaultStop);
+      const row = {
+        station: name, type: isFirst ? 'start' : isLast ? 'slut' : isStop ? 'stopp' : 'passage',
+        stopCount: c.stopp, passCount: c.passage, defaultStop,
+        arr: null, dep: null, arrRounded: null, depRounded: null,
+        need: null, legValue: null, legRounded: null, few: false,
+        dwellValue: null, dwellN: 0, dwellSource: null
+      };
+      if (!isFirst) {
+        const prev = rows[i - 1];
+        const pattern = (prev.type === 'passage' ? 'P' : 'S') + (row.type === 'passage' ? 'P' : 'S');
+        row.need = needFor(needsByKey, `${prev.station} → ${name}`, pattern);
+        row.legValue = row.need && row.need.n ? row.need[basis] : null;
+        row.few = !!row.need && row.need.n < MIN_SAMPLES;
+        if (row.legValue == null) {
+          missing.push(`${prev.station} → ${name}`);
+          known = false;
+        }
+        if (known) {
+          cum += row.legValue;
+          row.arr = cum;
+          row.arrRounded = Math.round(cum);
+          row.legRounded = row.arrRounded - prevDep;
+        }
+      }
+      if (!isLast) {
+        if (row.type === 'stopp') {
+          const own = stats(dwells.get(name) || []);
+          row.dwellN = own.n;
+          if (manual[name] != null && manual[name] !== '' && isFinite(manual[name])) {
+            row.dwellValue = Number(manual[name]);
+            row.dwellSource = 'angivet';
+          } else if (own.n) {
+            row.dwellValue = own[basis];
+            row.dwellSource = 'matt';
+          } else if (generic != null) {
+            row.dwellValue = generic;
+            row.dwellSource = 'schablon';
+          } else {
+            missing.push(`uppehåll i ${name}`);
+            known = false;
+          }
+        }
+        if (known) {
+          cum += row.type === 'stopp' ? row.dwellValue : 0;
+          row.dep = cum;
+          row.depRounded = Math.round(cum);
+          prevDep = row.depRounded;
+        }
+      }
+      rows.push(row);
+    }
+    const pairs = new Set(route.slice(0, -1).map((n, i) => `${n}|${route[i + 1]}`));
+    const used = (runs || []).filter(r => (r.stops || []).some((s, k, arr) => k < arr.length - 1 && pairs.has(`${s.name}|${arr[k + 1].name}`)));
+    const last = rows[rows.length - 1];
+    return {
+      from, to, basis, route, rows, missing,
+      runCount: used.length, period: period(used), generic,
+      totalExact: known ? last.arr : null,
+      totalRounded: known ? last.arrRounded : null
+    };
+  }
+
   // ── Export ──
 
   // Minuter med decimalkomma, utan "-0,0"
@@ -829,6 +1000,7 @@
     localDate, clockMinutes, runStart, timeOfDay, dayType, runMatches, period,
     stopType, plannedType, PATTERN_LABELS, classify, segmentObservations,
     segmentNeeds, stationTimes, trainVariants, summarizeTrains, segmentPlans, proposeTrainTimetable,
+    routeBetween, proposeNewTimetable,
     stats, directedRuns, sliceRuns,
     formatMinutes, csvDocument
   };
