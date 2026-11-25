@@ -2313,6 +2313,34 @@ test('gångprofil: GPS-spåren från GitHub ger beräknad ankomst från där tå
   assertEqual(fake.calls.filter(c => /\/git\/blobs\//.test(c.path)).length, before, 'spåren hämtas inte igen');
 });
 
+test('längs banan: GPS-spåren ger linjen längs banan – 3347 ute på enkelspåret mot oss enligt sin position, vi väntar i Blomberg', async () => {
+  const { r } = await journeyWithProfiles();
+  const axis = r.rt.infoAxis();
+  const route = r.rt.state.route;
+  assert(axis && axis.measuredLegs === route.length - 1, 'alla sträckor uppmätta: ' + (axis && axis.measuredLegs));
+  const ds = route.map(s => axis.stations[s.sig]);
+  assert(ds.every((d, k) => k === 0 || d > ds[k - 1]), 'stationerna i ordning längs banan: ' + ds.join(', '));
+  // 3347 i tid, inte rapporterat från Råbäck, men 30 s sedan mitt mellan Råbäck och Blomberg i 80 km/h. Blomberg är en mötesplats.
+  const now = r.w.Date.now();
+  const lat = (STATIONS[4][1] + STATIONS[3][1]) / 2, lon = (STATIONS[4][2] + STATIONS[3][2]) / 2;
+  const positions = [{ Train: { OperationalTrainNumber: '3347' }, Position: { WGS84: `POINT (${lon} ${lat})` }, TimeStamp: new Date(now - 30000).toISOString(), Speed: 80 }];
+  r.w.localStorage.setItem('railtimer_info_v1', JSON.stringify({ double: [], meet: ['Bmb'] }));
+  r.trv = fakeTrafikverketInfo(route, { meetLateMin: 0, positions });
+  r.w.fetch = r.trv.fetch;
+  await r.rt.refreshInfo();
+  const mt = r.rt.infoModel().meetings[0];
+  assertEqual([mt.sig, mt.at, mt.move, mt.moveVia], ['Rbk', 'Bmb', 'rapporterat', 'position'], 'mötet i Blomberg enligt positionen');
+  r.rt.setInfoTab('info');
+  const pane = r.w.document.getElementById('infoPane').textContent;
+  assert(pane.includes('flyttat hit från Råbäck – 3347 är ute på enkelspåret mot oss enligt tågets position'), pane);
+  assert(/km längs banan från Blomberg · 80 km\/h/.test(pane), pane);
+  assert(pane.includes('jämförs med mötesplatserna längs banan'), 'förklaringen');
+  // Körningen sparar att flytten kom från positionen
+  r.rt.stopJourney(false, 'Avslutad manuellt');
+  const saved = r.rt.loadLogs().pop().info.meetings[0];
+  assertEqual([saved.at, saved.move, saved.via, saved.position.along], ['Bmb', 'rapporterat', 'position', true], 'i körningen');
+});
+
 test('info: utan tågnummer förklarar fliken varför den är tom', async () => {
   const fixes = buildJourney();
   const r = await runJourney(fixes, { drop: f => f.t > fixes[40].t, afterStart: rt => { rt.state.trainNumber = ''; } });

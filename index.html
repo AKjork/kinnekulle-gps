@@ -1039,7 +1039,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25zg'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25zh'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1225,7 +1225,7 @@
       removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog,
       setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; },
       refreshInfo, updateInfo, setInfoTab, startInfo, infoModel: () => infoState.model,
-      nextArrivalEstimate, updateNextStopUI, legProfilesInfo: () => legProfilesInfo,
+      nextArrivalEstimate, updateNextStopUI, legProfilesInfo: () => legProfilesInfo, infoAxis: () => infoAxis(),
       purpose, setPurpose, loadInfoTrips, tourRuns,
       refreshBuses, connSettings, saveConnSettings, markedConnections, toggleConnMark, infoLogEntry, showVtSettings, showVtStatus, saveAndTestVt, removeVtSettings, busTargets, vtState: () => ({ buses: infoState.buses, error: infoState.vtError, at: infoState.vtFetchedAt }),
       applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
@@ -4023,7 +4023,7 @@
           line:infoState.line, trains:infoState.trains, ourKey:infoState.ourKey, known, now:Date.now(),
           knownDouble:loadInfoSettings().double, knownMeetPlaces:loadInfoSettings().meet,
           history:infoState.history, routeNames, messages:infoState.messages,
-          positions:infoState.positions, coords:lineCoords(), ourPos,
+          positions:infoState.positions, coords:lineCoords(), ourPos, axis:infoAxis(),
           buses:infoState.buses, names:lineNames(), connMode:connSettings().mode, connAlerts:connSettings().alerts,
           marked:markedConnections(), own:loadOwnConnections(),
           posAt: est && est.sig ? { sig:est.sig, t:est.t } : null
@@ -4060,7 +4060,8 @@
         waitMin:m.waitMin, single:m.single, canceled:m.canceled, moved:m.moved,
         ...(m.at && m.at!==m.sig ? { at:m.at, atName:sigName(m.at) } : {}),
         ...(m.move ? { move:m.move } : {}), ...(m.onLine ? { onLine:true } : {}),
-        ...(m.position ? { position:{ distM:m.position.distM, side:m.position.side, ageS:m.position.ageS, speedKmh:m.position.speedKmh } } : {})
+        ...(m.moveVia || (m.moved && m.movedVia) ? { via:m.moveVia || m.movedVia } : {}),
+        ...(m.position ? { position:{ distM:m.position.distM, side:m.position.side, ageS:m.position.ageS, speedKmh:m.position.speedKmh, ...(m.position.along ? { along:true } : {}) } } : {})
       });
     }
   }
@@ -4197,14 +4198,16 @@
     return { 'faktisk':'rapporterat', 'trafikverket':'enligt Trafikverket', 'senast':'räknat från senaste rapporten', 'plan':'enligt tidtabell',
       'position':'räknat från tågets position' }[src] || '';
   }
-  // "4,2 km från Vara · 85 km/h · 30 s sedan", "vid Vara" eller "har passerat Vara mot oss"
+  /* "4,2 km från Vara · 85 km/h · 30 s sedan", "vid Vara" eller "har passerat Vara mot oss". along: räknat längs
+     banan (gångprofilernas GPS-spår), annars fågelvägen. */
   function positionText(p, place){
     if(!p) return '';
     const age = p.ageS<90 ? `${p.ageS} s sedan` : `${Math.round(p.ageS/60)} min sedan`;
     const speed = p.speedKmh!=null ? ` · ${Math.round(p.speedKmh)} km/h` : '';
     if(p.side==='at') return `vid ${place}${speed} · ${age}`;
-    if(p.side==='passed') return `har passerat ${place} mot oss · ${age}`;
-    return `${formatDistance(p.distM)} från ${place}${speed} · ${age}`;
+    if(p.side==='passed') return `har passerat ${place} mot oss${p.along ? ` (${formatDistance(p.distM)} längs banan)` : ''} · ${age}`;
+    if(p.side==='behind') return `har passerat oss · ${age}`;
+    return `${formatDistance(p.distM)} ${p.along ? 'längs banan ' : ''}från ${place}${speed} · ${age}`;
   }
 
   /* Ett möte. m.sig är tidtabellens mötesplats, m.at där mötet blir: flyttat närmare oss när det mötande tåget
@@ -4218,9 +4221,14 @@
     const their = m.canceled ? 'inställt' : (m.theirDelayMin>0 ? `${m.theirDelayMin} min sent` : 'i tid');
     let moved='';
     if(m.onLine) moved=`möts på dubbelspåret efter ${sigName(at)} (enligt plan i ${sigName(m.sig)})`;
-    else if(at!==m.sig) moved = m.move==='rapporterat' ? `flyttat hit från ${sigName(m.sig)} – ${train} har passerat ${sigName(m.sig)}`
-      : `troligen hit i stället för ${sigName(m.sig)} – ${train} hinner först till enkelspåret`;
-    else if(m.moved) moved='mötet flyttat närmare oss';
+    else if(at!==m.sig){
+      const byPos = m.moveVia==='position';
+      moved = m.move==='rapporterat'
+        ? (byPos ? `flyttat hit från ${sigName(m.sig)} – ${train} är ute på enkelspåret mot oss enligt tågets position`
+                 : `flyttat hit från ${sigName(m.sig)} – ${train} har passerat ${sigName(m.sig)}`)
+        : `troligen hit i stället för ${sigName(m.sig)} – ${train} hinner först till enkelspåret`;
+    }
+    else if(m.moved) moved = m.movedVia==='position' ? `mötet flyttat närmare oss – ${train} har passerat ${sigName(m.sig)} enligt tågets position` : 'mötet flyttat närmare oss';
     const sub=[
       `${escapeHtml(train)} ${their}${m.canceled?'':' ('+sourceText(m.their.source)+')'}`,
       escapeHtml(moved),
@@ -4441,7 +4449,7 @@
       (mode!=='tag' ? `Bussarna kommer från Västtrafik (hållplatser inom ${VT ? VT.DEFAULTS.stopRadiusM : 350} m från stationen), tågen från Trafikverket. ` : '');
     // Felet syns alltid. Förklaringen av reglerna är ihopfälld: den behövs sällan under resan.
     if(infoState.error) html+=`<p class="info-hint err">Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).</p>`;
-    html+=`<details class="info-foot"${infoFootOpen?' open':''}><summary>Så räknas det</summary>${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Är vi sena räknar appen med att tågklareraren flyttar mötet närmare oss när det ger minst väntan sammanlagt (troligen), till en plats där tåg enligt tidtabell kan mötas. Är det mötande tåget sent räknas med mötet enligt tidtabell.</details>`;
+    html+=`<details class="info-foot"${infoFootOpen?' open':''}><summary>Så räknas det</summary>${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Är vi sena räknar appen med att tågklareraren flyttar mötet närmare oss när det ger minst väntan sammanlagt (troligen), till en plats där tåg enligt tidtabell kan mötas. Är det mötande tåget sent räknas med mötet enligt tidtabell.${infoAxis() ? ' Mötande tågs position jämförs med mötesplatserna längs banan, efter tidigare GPS-spår: är tåget ute på enkelspåret mot oss väntar vi på mötesplatsen före, och har det passerat oss är mötet klart. Där banan inte är uppmätt räknas fågelvägen, och positionen används bara som undre gräns.' : ''}</details>`;
     return html;
   }
 
@@ -5483,6 +5491,20 @@
     legProfiles=new Map(profiles.map(p=>[p.key, p]));
     legProfilesInfo={ at, tracks:used, profiles:profiles.length };
     return { fetched, used, profiles:profiles.length };
+  }
+  /* Vår rutt längs banan (INFO.buildAxis) ur gångprofilernas referenslinjer: mötande tågs position jämförs med
+     mötesplatserna längs spåret i stället för fågelvägen. Byggs om när rutten eller profilerna ändras. */
+  let axisCache={ key:null, axis:null };
+  function infoAxis(){
+    if(!INFO || !INFO.buildAxis || !legProfiles.size || !state.route || state.route.length<2) return null;
+    const key=state.route.map(s=>`${s.sig||''}:${s.name}:${s.lat},${s.lon}`).join('|')+'#'+(legProfilesInfo ? legProfilesInfo.at : '')+'#'+legProfiles.size;
+    if(axisCache.key!==key){
+      let axis=null;
+      try{ axis=INFO.buildAxis(state.route.map(s=>({ name:s.name, sig:s.sig, lat:s.lat, lon:s.lon })), legProfiles); }
+      catch(e){ console.error('Linjen längs banan', e); }
+      axisCache={ key, axis };
+    }
+    return axisCache.axis;
   }
   /* Beräknad ankomst till nästa station från där vi är (gångprofilerna): { t, sec, n, exact, idx, sig } eller
      null – vid station, utan färsk och säker GPS-position, när föregående station saknar avgång, eller utan

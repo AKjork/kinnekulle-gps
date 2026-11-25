@@ -41,7 +41,7 @@ function setup(rows, opts) {
   return I.compute({
     line, trains, ourKey: our.key, known, now: o.now != null ? o.now : at('10:55'),
     knownDouble: o.knownDouble, knownMeetPlaces: o.knownMeet, history: o.history, routeNames: ROUTE, opts: o.opts,
-    messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos,
+    messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos, axis: o.axis,
     buses: o.buses, names: o.names, connMode: o.connMode, connAlerts: o.connAlerts, marked: o.marked, posAt: o.posAt, own: o.own
   });
 }
@@ -455,6 +455,151 @@ test('position: mötande tåg som redan passerat mötesplatsen mot oss visas, me
   assert.ok(I.queryNames(['Vr']).includes('<INCLUDE>Geometry.WGS84</INCLUDE>'));
 });
 
+/* Linjen längs banan: gångprofiler (referenslinjer ur GPS-spår) för sträckorna i rutten, här raka linjer mellan
+   stationerna med en punkt ungefär var 100:e meter. */
+function legProfile(from, to, a, b, opts) {
+  const o = opts || {};
+  const len = I.haversine(a.lat, a.lon, b.lat, b.lon), steps = Math.max(2, Math.round(len / 100));
+  const pts = [];
+  for (let k = 0; k <= steps; k++) {
+    const f = k / steps;
+    pts.push([a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f, Math.round((1 - f) * len / 25), 5]);
+  }
+  return { key: I.legKey(from, to, true, true), from, to, stopA: true, stopB: true, n: o.n || 5, legSec: Math.round(len / 25), pts };
+}
+const SIGS = ['Lkp', 'Jp', 'Vr', 'Vdm', 'Hr'];
+const STOPS = SIGS.map(s => ({ sig: s, name: ROUTE.get(s), lat: COORDS.get(s).lat, lon: COORDS.get(s).lon }));
+function profilesFor(legs) {
+  const out = new Map();
+  for (const [x, y] of legs) {
+    const A = STOPS.find(s => s.sig === x), B = STOPS.find(s => s.sig === y);
+    const p = legProfile(A.name, B.name, A, B);
+    out.set(p.key, p);
+  }
+  return out;
+}
+const AXIS_ALL = () => I.buildAxis(STOPS, profilesFor([['Lkp', 'Jp'], ['Jp', 'Vr'], ['Vr', 'Vdm'], ['Vdm', 'Hr']]));
+const pos24360 = (lat, lon, hhmm, speed) => I.parsePositions([{ Train: { OperationalTrainNumber: '24360' },
+  Position: { WGS84: `POINT (${lon} ${lat})` }, TimeStamp: T(hhmm), ...(speed != null ? { Speed: speed } : {}) }]);
+const between = (x, y, f) => ({ lat: COORDS.get(x).lat + (COORDS.get(y).lat - COORDS.get(x).lat) * f, lon: COORDS.get(x).lon + (COORDS.get(y).lon - COORDS.get(x).lon) * f });
+
+test('linjen längs banan: profilerna i rutten blir en axel med meter längs banan, och profilen åt andra hållet duger', () => {
+  // Järpås–Vara bara åt andra hållet (Vara → Järpås)
+  const profiles = profilesFor([['Lkp', 'Jp'], ['Vr', 'Jp'], ['Vr', 'Vdm'], ['Vdm', 'Hr']]);
+  const axis = I.buildAxis(STOPS, profiles);
+  assert.ok(axis);
+  assert.equal(axis.measuredLegs, 4);
+  const d = s => axis.stations[s];
+  assert.equal(d('Lkp'), 0);
+  const lkpJp = I.haversine(COORDS.get('Lkp').lat, COORDS.get('Lkp').lon, COORDS.get('Jp').lat, COORDS.get('Jp').lon);
+  assert.ok(Math.abs(d('Jp') - lkpJp) < 5, `${d('Jp')} ~ ${Math.round(lkpJp)}`);
+  assert.ok(d('Jp') < d('Vr') && d('Vr') < d('Vdm') && d('Vdm') < d('Hr'));
+  assert.ok(Math.abs(d('Hr') - axis.len) < 5);
+  // Ett läge mitt mellan Järpås och Vara ligger mitt mellan dem längs banan, nära linjen och på uppmätt bana
+  const loc = I.axisLocate(axis, between('Jp', 'Vr', 0.5));
+  assert.ok(Math.abs(loc.d - (d('Jp') + d('Vr')) / 2) < 10);
+  assert.ok(loc.off < 5);
+  assert.equal(I.axisMeasured(axis, d('Lkp'), d('Hr')), true);
+  // Utan profil för Järpås–Vara: rak linje, inte uppmätt där
+  const partial = I.buildAxis(STOPS, profilesFor([['Lkp', 'Jp'], ['Vr', 'Vdm'], ['Vdm', 'Hr']]));
+  assert.equal(partial.measuredLegs, 3);
+  assert.equal(I.axisMeasured(partial, partial.stations.Jp + 500, partial.stations.Vr - 500), false);
+  assert.equal(I.axisMeasured(partial, partial.stations.Vr, partial.stations.Hr), true);
+  // En profil som inte börjar vid A (fel namn) används inte, och utan någon profil blir det ingen axel
+  const wrong = profilesFor([['Vdm', 'Hr']]);
+  const p = wrong.get(I.legKey('Vedum', 'Herrljunga C', true, true));
+  wrong.set(I.legKey('Lidköping', 'Järpås', true, true), Object.assign({}, p, { key: I.legKey('Lidköping', 'Järpås', true, true) }));
+  assert.equal(I.buildAxis(STOPS, wrong).measuredLegs, 1);
+  assert.equal(I.buildAxis(STOPS, new Map()), null);
+});
+
+test('längs banan: 24360 är ute på enkelspåret mellan Vara och Järpås enligt sin position – vi väntar i Järpås', () => {
+  // 14 min sena från Lidköping, ingen rapport från Vara. 11:23 är 24360 mitt mellan Vara och Järpås i 90 km/h.
+  const p = between('Vr', 'Jp', 0.5);
+  const positions = pos24360(p.lat, p.lon, '11:23', 90);
+  const o = { now: at('11:23'), known: LATE14, knownMeet: ['Jp'], positions, coords: COORDS, opts: { predictMoves: false } };
+  const m = setup(MEET(), Object.assign({ axis: AXIS_ALL() }, o));
+  const mt = m.meetings[0];
+  assert.equal(mt.moved, true, 'har passerat Vara mot oss');
+  assert.equal(mt.movedVia, 'position');
+  assert.equal(mt.at, 'Jp');
+  assert.equal(mt.move, 'rapporterat');
+  assert.equal(mt.moveVia, 'position');
+  assert.equal(mt.ourDep, at('11:31'), '24360 i Järpås 11:30 + 1 min');
+  assert.equal(m.end.delayMin, 19);
+  assert.equal(mt.position.along, true);
+  assert.ok(mt.position.distM > 6000 && mt.position.distM < 7500, String(mt.position.distM));
+  // Med fågelvägen (utan axel) visas positionen bara: mötet enligt tidtabell i Vara, utan väntan
+  const crow = setup(MEET(), o);
+  assert.equal(crow.meetings[0].at, 'Vr');
+  assert.equal(crow.meetings[0].waitMin, 0);
+  assert.equal(crow.meetings[0].position.along, undefined);
+  assert.equal(crow.end.delayMin, 13);
+  // Loggen säger att flytten kom från positionen, och var tåget är i förhållande till Järpås (på andra sidan)
+  const log = I.trvLogNew(at('11:00'), ['Lkp', 'Jp', 'Vr', 'Vdm', 'Hr']);
+  I.trvLogModel(log, m, at('11:23'));
+  const row = log.rows.find(r => r[0] === 'm');
+  assert.deepEqual(row.slice(-2), ['position', 'beyond']);
+});
+
+test('längs banan: står 24360 still nära Vara kan det vänta vid utfartssignalen – inte ute på sträckan', () => {
+  const p = between('Vr', 'Jp', 900 / 13700); // ca 900 m från Vara mot Järpås
+  const o = { now: at('11:23'), known: LATE14, knownMeet: ['Jp'], coords: COORDS, axis: AXIS_ALL(), opts: { predictMoves: false } };
+  const still = setup(MEET(), Object.assign({ positions: pos24360(p.lat, p.lon, '11:23', 0) }, o));
+  assert.equal(still.meetings[0].moved, false);
+  assert.equal(still.meetings[0].position.side, 'at');
+  assert.equal(still.meetings[0].at, 'Vr');
+  const unknown = setup(MEET(), Object.assign({ positions: pos24360(p.lat, p.lon, '11:23') }, o));
+  assert.equal(unknown.meetings[0].at, 'Vr', 'utan fart: samma sak');
+  // I 80 km/h har det lämnat Vara
+  const moving = setup(MEET(), Object.assign({ positions: pos24360(p.lat, p.lon, '11:23', 80) }, o));
+  assert.equal(moving.meetings[0].movedVia, 'position', 'har lämnat Vara mot oss');
+  assert.equal(moving.meetings[0].at, 'Jp');
+  assert.equal(moving.meetings[0].moveVia, 'position');
+});
+
+test('längs banan: har 24360 passerat oss är mötet klart – fågelvägen trodde att det var på andra sidan Vara', () => {
+  // Vi står i Vara (i tid), 24360 rapporteras inte där men är 11:22 mitt mellan Vara och Järpås: det har passerat oss
+  const p = between('Vr', 'Jp', 0.5);
+  const known = { Lkp: { dep: at('11:00') }, Jp: { arr: at('11:10'), dep: at('11:11') }, Vr: { arr: at('11:20') } };
+  const o = { now: at('11:23'), known, positions: pos24360(p.lat, p.lon, '11:22', 90), coords: COORDS };
+  const m = setup(MEET(), Object.assign({ axis: AXIS_ALL() }, o));
+  assert.equal(m.meetings.length, 0, 'mötet är avklarat');
+  assert.equal(m.preds[2].dep, at('11:23'), 'vi kan åka nu');
+  // Med fågelvägen från Vara: 7 km bort räknades som på andra sidan, och vi väntade
+  const crow = setup(MEET(), o);
+  assert.equal(crow.meetings[0].position.side, 'beyond');
+  assert.ok(crow.meetings[0].waitMin >= 1);
+});
+
+test('längs banan: där banan inte är uppmätt räknas fågelvägen som förut', () => {
+  const p = between('Vr', 'Jp', 0.5);
+  const partial = I.buildAxis(STOPS, profilesFor([['Lkp', 'Jp'], ['Vr', 'Vdm'], ['Vdm', 'Hr']]));
+  const o = { now: at('11:23'), known: LATE14, knownMeet: ['Jp'], positions: pos24360(p.lat, p.lon, '11:23', 90), coords: COORDS, opts: { predictMoves: false } };
+  const m = setup(MEET(), Object.assign({ axis: partial }, o));
+  assert.equal(m.meetings[0].position.along, undefined);
+  assert.equal(m.meetings[0].at, 'Vr');
+  assert.equal(m.meetings[0].moved, false);
+  // Långt från linjen (annan bana): inte på vår linje
+  const off = setup(MEET(), Object.assign({ axis: AXIS_ALL() }, o, { positions: pos24360(p.lat, p.lon + 0.02, '11:23', 90) }));
+  assert.equal(off.meetings[0].position.along, undefined);
+  assert.equal(off.meetings[0].moved, false);
+});
+
+test('längs banan: långt bort på andra sidan Vara – undre gränsen räknas på avståndet längs banan', () => {
+  const known = { Lkp: { dep: at('11:00') }, Jp: { arr: at('11:10'), dep: at('11:11') } };
+  const o = { now: at('11:19'), known, positions: pos24360(COORDS.get('Hr').lat, COORDS.get('Hr').lon, '11:19', 0), coords: COORDS };
+  const m = setup(MEET(), Object.assign({ axis: AXIS_ALL() }, o));
+  const mt = m.meetings[0];
+  assert.equal(mt.position.along, true);
+  assert.equal(mt.position.side, 'beyond');
+  const axis = AXIS_ALL();
+  assert.ok(Math.abs(mt.position.distM - (axis.stations.Hr - axis.stations.Vr)) < 50);
+  assert.equal(mt.their.source, 'position');
+  const crow = setup(MEET(), o);
+  assert.ok(mt.waitMs >= crow.meetings[0].waitMs, 'längs banan är det minst lika långt som fågelvägen');
+});
+
 test('anslutningar längs vägen: tåg från Vara åt annat håll efter vår ankomst, och tåg som kommer dit före vår avgång', () => {
   const to = sig => ({ ToLocation: [{ LocationName: sig, Priority: 1, Order: 0 }] });
   const rows = [
@@ -700,7 +845,7 @@ test('loggen över Trafikverkets svar: bara ändringar, mötande tågs position 
   const m = setup(MEET(), { now: at('11:14'), known: LATE14, knownMeet: ['Jp'] });
   I.trvLogModel(log, m, at('11:14'));
   I.trvLogModel(log, m, at('11:14') + 5000);
-  assert.deepEqual(log.rows.filter(r => r[0] === 'm'), [['m', 840, '24360', 'Vr', 'Jp', 'beräknat', 7, 0, 'plan']]);
+  assert.deepEqual(log.rows.filter(r => r[0] === 'm'), [['m', 840, '24360', 'Vr', 'Jp', 'beräknat', 7, 0, 'plan', '', '']]);
   assert.deepEqual(log.rows.filter(r => r[0] === 'e'), [['e', 840, 3540, 19]]);
   // Till körningen: utan det som bara håller reda på vad som sparats
   const out = I.trvLogOut(log);

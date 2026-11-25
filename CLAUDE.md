@@ -1205,7 +1205,7 @@ André 2026-11-25: fortsättning på "Gör allt" (se 2026-11-25r). Appversion `2
   - *passed*: mellan oss och mötesplatsen.
   - Positioner äldre än 5 min används inte (`positionMaxAgeMs`).
 - **Undre gräns för ankomsten**: är tåget på andra sidan kan det inte vara framme förrän tidigast efter avståndet i 200 km/h (`maxSpeedMs`). Är det senare än Trafikverkets tid gäller gränsen, med källan *räknat från tågets position*.
-  - Gränsen gör aldrig prognosen för tidig. *passed* ändrar inte prognosen, eftersom fågelvägen kan lura nära stationer; det visas bara.
+  - Gränsen gör aldrig prognosen för tidig. *passed* ändrar inte prognosen, eftersom fågelvägen kan lura nära stationer; det visas bara. *Sedan 2026-11-25zh räknas läget längs banan där den är uppmätt, och då flyttar passed mötet.*
 - **Visas** i mötesraden: *3,9 km från Råbäck · 0 km/h · 30 s sedan*, *vid Råbäck* eller *har passerat Råbäck mot oss*. Positionen sparas med mötet i körningen (`info.meetings[].position`).
 - **Lägen för driftplatser**: namnfrågan hämtar även `Geometry.WGS84` (`queryNames`). Läget sparas i `railtimer_sig_coords_v1` (0 = okänt, frågas inte igen).
 
@@ -1802,3 +1802,62 @@ Utvecklingsmiljön når inte Trafikverket, så provet körs i GitHub Actions: `t
 - `node --test "tests/*.test.js"` (207), nya: *pickTrain: …* (4), *fetchRunAnnouncements: frågar OTN eller ATN …*, *vårt tåg i flera delar …* och *tågnummer: filtret gäller …*.
 - `node tests/run-browser-tests.mjs` (129), nya: *tågnummer: ATN fungerar som OTN – …* (tipset, valet mellan två tåg, resan, rubriken, körningen, rapporten och CSV) och *tågnummer: startade resan med ATN utan svar från Trafikverket …* (Info). Det simulerade Trafikverket (`fakeTrafikverketInfo`) skiljer nu Mina anslutningars fråga (station + ATN) från vårt tågs fråga, som också har AdvertisedTrainIdent.
 - Bild: `--shot=startformular-tagnummer`.
+
+## Uppdatering (2026-11-25zh): mötande tågs position längs banan
+
+André 2026-11-25: "Gör det du rekommenderar." Rekommendationen efter 2026-11-25zd var att använda gångprofilernas referenslinjer för det mötande tågets position, i stället för fågelvägen, så att *har passerat mötesplatsen* kan räknas som säkert och flytta mötet i prognosen. Appversion `2026-11-25zh`. Logiken för ankomst och avgång är oförändrad.
+
+### Förut
+- Tågets position (TrainPosition, 2026-11-25s) jämfördes med mötesplatsen fågelvägen, från vår position eller senaste stationen. Därför användes den bara som undre gräns för när tåget kan vara framme, och *har passerat mötesplatsen mot oss* visades men ändrade inget.
+- Fågelvägen kan inte skilja sidorna åt när vi står på mötesplatsen: ett tåg som passerat oss räknades som *på andra sidan*, och vi väntade på det.
+- Vid stationer som inte rapporterar till Trafikverket (de flesta mellan Gårdsjö och Håkantorp, se 2026-11-25j) syntes ett flyttat möte först när tåget rapporterades någonstans.
+
+### Linjen längs banan (`railtimer-info.js`)
+- `buildAxis(stops, profiles)`: gångprofilernas referenslinjer (2026-11-25zd) för varje sträcka i rutten, lagda efter varandra, ger en axel med meter längs banan.
+  - Profilen med flest spår gäller, och profilen åt andra hållet duger (punkterna vänds). Den ska börja inom 1,5 km från A och sluta inom 1,5 km från B (`AXIS.endM`).
+  - En sträcka utan profil blir en rak linje mellan stationerna och räknas inte som uppmätt. Glapp över 400 m i en profil räknas inte heller.
+  - Stationernas läge (`stations`) är deras koordinat projicerad nära skarven mellan sträckorna. Utan någon uppmätt sträcka blir det ingen axel.
+- `axisLocate(axis, p)`: läget längs banan och avståndet från linjen. `axisMeasured(axis, d1, d2)`: är linjen uppmätt hela vägen däremellan.
+- **I `compute`** (`input.axis`): linjens platser, vi (GPS-positionen, annars senaste platsen) och de mötande tågen får ett läge i meter längs banan. Platser vars läge inte följer linjens ordning räknas inte.
+- Tågets läge räknas bara när det är högst 150 m från linjen (`axisSureOffM`) och linjen är uppmätt mellan tåget, platsen och oss. Annars gäller fågelvägen som förut.
+- **Vid mötesplatsen** räknas 600 m från stationens mitt (`axisAtM`), eftersom mötesspåren är långa. Står tåget still, eller saknas farten (ungefär hälften av positionerna), krävs 1 200 m på vår sida (`axisStandM`), eftersom det kan stå vid utfartssignalen.
+- **Det ändrar:**
+  - *har passerat mötesplatsen mot oss* (`side: 'passed'`) gör mötet flyttat (`moved`, `movedVia: 'position'`).
+  - *har passerat oss* (`side: 'behind'`): mötet är avklarat och visas inte. Förut väntade vi på det.
+  - Ute på enkelspåret mellan nästa mötesplats och oss: vi väntar på platsen före (`move: 'rapporterat'`, `moveVia: 'position'`), som när tåget rapporterats därifrån. Det gäller även när förutsägelsen är avstängd (`predictMoves: false`).
+  - Fortfarande på andra sidan nästa mötesplats: tidigast därifrån efter avståndet i 200 km/h. Den undre gränsen för ankomsten räknas på avståndet längs banan.
+  - Mellan oss och nästa plats (dubbelspår, eller fel i uppgifterna): vi möts på sträckan utan väntan.
+- En position är högst 5 min gammal, och tåget kör bara mot oss. Därför är *ute på enkelspåret* och *har passerat* sanna även när positionen är några minuter gammal.
+
+### I appen
+- `infoAxis()` bygger axeln ur rutten och gångprofilerna, och bygger om den när någon av dem ändras.
+- Mötesraden: *6,9 km längs banan från Råbäck*, *har passerat Råbäck mot oss (2,1 km längs banan)*, och vid flytt *flyttat hit från Råbäck – 3347 är ute på enkelspåret mot oss enligt tågets position*.
+- *Så räknas det* förklarar regeln när axeln finns.
+- Körningen sparar `via` (`rapport` eller `position`) och `position.along` med mötet (`info.meetings`). Loggen över Trafikverkets svar (`info.trv`, rad `m`) får två fält sist: `via` och tågets sida om mötesplatsen längs banan (`beyond`, `at`, `passed`, `behind` eller tomt). Se `docs/railtimer-data-README.md`.
+
+### Provat mot riktiga spår
+`railtimer-data`, 55 spår, 65 profiler. Axeln byggdes för de sex längsta rutterna, och körningarna åt andra hållet användes som mötande tåg.
+
+| Prov | Längs banan | Fågelvägen |
+|---|---|---|
+| Läget vid stationen mot stationens läge (901 passager) | median 19 m, 90 % inom 48 m, högst 351 m | – |
+| Åt rätt håll över tiden (10 568 steg) | 10 567 | – |
+| Rätt sida om mötesplatsen, 0,6–2 km bort, sett från stationen före (4 538 lägen) | alla | 290 fel eller oavgjorda (6 %) |
+| Samma, när vi står på mötesplatsen, 0,6–5 km bort (13 524 lägen) | alla | 5 921 fel eller oavgjorda (44 %) |
+
+- Sträckorna är uppmätta: Mariestad–Herrljunga C 19 av 19, Lidköping–Laxå 15 av 16 och Hallsberg–Lidköping 14 av 18.
+- Spåren ligger i median 2 m från axeln, högst 68 m.
+
+### Inte provat
+- Mot riktiga mötande tåg och TrainPosition under en resa. Positionen är tågets egen, men det är okänt hur ofta den kommer och hur exakt den är.
+- Tåg som står vid en mötesplats som inte är känd: då räknas tåget som ute på sträckan, och vi väntar på platsen före. Det gör prognosen senare, aldrig tidigare.
+
+### Tester
+- `node --test "tests/*.test.js"` (213), nya i `tests/railtimer-info.test.js`:
+  - *linjen längs banan: …*: axeln, profilen åt andra hållet, raka sträckor och fel profil;
+  - *längs banan: 24360 är ute på enkelspåret …*: väntan i Järpås, mot fågelvägen, och loggen;
+  - *längs banan: står 24360 still nära Vara …*: still, utan fart och i fart;
+  - *längs banan: har 24360 passerat oss …*: mötet klart, där fågelvägen fick oss att vänta;
+  - *längs banan: där banan inte är uppmätt …*: även en position långt från linjen;
+  - *längs banan: långt bort på andra sidan Vara …*.
+- `node tests/run-browser-tests.mjs` (130), nytt: *längs banan: GPS-spåren ger linjen längs banan – 3347 ute på enkelspåret mot oss …* (axeln ur tre spår från GitHub, mötet i Blomberg, fliken och körningen).

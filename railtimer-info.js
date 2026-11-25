@@ -38,6 +38,11 @@
     ownIncomingWindowMin: 60, // … och till oss högst så här länge före vår avgång, vid alla stationer framför oss
     positionMaxAgeMs: 5 * 60000, // tågpositioner äldre än så används inte
     maxSpeedMs: 200 / 3.6,    // inget tåg kör fortare: det mötande tåget kan inte vara framme tidigare än så
+    axisAtM: 600,             // längs banan: så här nära en plats räknas ett tåg som vid platsen (stationens mitt, långa mötesspår)
+    axisSureOffM: 150,        // ett tågs position räknas som på vår linje bara så här nära den uppmätta linjen
+    axisOurOffM: 300,         // vår egen GPS-position: högst så här långt från linjen
+    axisStandKmh: 5,          // står det mötande tåget still …
+    axisStandM: 1200,         // … så här nära nästa mötesplats kan det stå kvar vid utfartssignalen: inte ute på sträckan
     predictMoves: true,       // möten flyttas närmare oss när vi är sena och det ger minst väntan sammanlagt
     trvLogMax: 600,           // högst så många rader i loggen över Trafikverkets svar under resan
     trvLogPosM: 200,          // mötande tågs position loggas när tåget flyttat sig så här långt …
@@ -675,6 +680,96 @@
     return { t: Math.max(at + r.sec * 1000, q.now != null ? q.now : at), sec: Math.round(r.sec), key: p.key, n: r.n, exact: isExact, distM: r.distM };
   }
 
+  /* ── Linjen längs banan ──
+     Referenslinjerna i gångprofilerna följer spåret. Lagda efter varandra längs vår rutt (stops: [{ name, sig,
+     lat, lon }] i ordning) blir de en axel med meter längs banan, så att ett tågs position kan jämföras med
+     mötesplatserna längs spåret i stället för fågelvägen – som lurar där banan svänger. En sträcka utan profil
+     blir en rak linje mellan stationerna och räknas inte som uppmätt; där används fågelvägen som förut.
+     Profilen åt andra hållet duger (punkterna vänds). Ger { pts: [[lat, lon, d]], meas: [uppmätt per delsträcka],
+     len, stations: { sig: d }, measuredLegs } eller null utan någon uppmätt sträcka. */
+  const AXIS = { gapM: 400, endM: 1500 };
+  function buildAxis(stops, profiles) {
+    const list = (Array.isArray(stops) ? stops : []).filter(s => s && s.name);
+    if (list.length < 2 || !profiles) return null;
+    const all = profiles instanceof Map ? Array.from(profiles.values()) : Object.values(profiles);
+    const has = s => Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lon)) && s.lat != null && s.lon != null;
+    const pts = [], meas = [];
+    let measuredLegs = 0, prevMeasured = false;
+    const push = (lat, lon, measured) => {
+      const last = pts[pts.length - 1];
+      if (!last) { pts.push([lat, lon, 0]); return; }
+      const dd = haversine(last[0], last[1], lat, lon);
+      if (dd < 1) return;
+      meas.push(!!measured && dd <= AXIS.gapM);
+      pts.push([lat, lon, last[2] + dd]);
+    };
+    const bounds = [];   // index i axeln där varje sträcka börjar
+    for (let s = 0; s + 1 < list.length; s++) {
+      const A = list[s], B = list[s + 1];
+      const fw = `${nameKey(A.name)}>${nameKey(B.name)}|`, bw = `${nameKey(B.name)}>${nameKey(A.name)}|`;
+      const pick = pre => all.filter(p => p && String(p.key || '').startsWith(pre) && Array.isArray(p.pts) && p.pts.length >= 2)
+        .sort((a, b) => (b.n || 0) - (a.n || 0))[0] || null;
+      let prof = pick(fw), path = prof ? prof.pts.map(p => [p[0], p[1]]) : null;
+      if (!prof) { prof = pick(bw); path = prof ? prof.pts.map(p => [p[0], p[1]]).reverse() : null; }
+      // Profilen ska börja vid A och sluta vid B
+      if (path && ((has(A) && haversine(path[0][0], path[0][1], A.lat, A.lon) > AXIS.endM) ||
+                   (has(B) && haversine(path[path.length - 1][0], path[path.length - 1][1], B.lat, B.lon) > AXIS.endM))) path = null;
+      bounds.push(Math.max(pts.length - 1, 0));
+      if (path) {
+        path.forEach((p, k) => push(p[0], p[1], k === 0 ? prevMeasured : true));
+        measuredLegs++;
+        prevMeasured = true;
+      } else {
+        if (!has(A) || !has(B)) return null; // utan läge går sträckan inte att rita
+        push(Number(A.lat), Number(A.lon), false);
+        push(Number(B.lat), Number(B.lon), false);
+        prevMeasured = false;
+      }
+    }
+    bounds.push(pts.length - 1);
+    if (!measuredLegs || pts.length < 2) return null;
+    const axis = { pts, meas, len: pts[pts.length - 1][2], stations: {}, measuredLegs };
+    // Stationernas läge längs banan: deras koordinat projicerad nära skarven mellan sträckorna
+    list.forEach((s, k) => {
+      if (!s.sig) return;
+      const joint = pts[bounds[k]][2];
+      let d = joint;
+      if (has(s)) {
+        const loc = axisLocate(axis, { lat: Number(s.lat), lon: Number(s.lon) }, { from: pts[bounds[Math.max(k - 1, 0)]][2], to: pts[bounds[Math.min(k + 1, bounds.length - 1)]][2] });
+        if (loc && loc.off <= 1000) d = loc.d;
+      }
+      axis.stations[s.sig] = Math.round(d);
+    });
+    return axis;
+  }
+  /* Läget p ({ lat, lon }) längs axeln: { d (meter längs banan), off (meter från linjen), k (delsträcka) } eller
+     null. range { from, to } (meter) begränsar sökningen. */
+  function axisLocate(axis, p, range) {
+    const pts = axis && axis.pts;
+    if (!Array.isArray(pts) || pts.length < 2 || !p || !Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lon))) return null;
+    const q = { lat: Number(p.lat), lon: Number(p.lon) };
+    let best = null;
+    for (let k = 0; k + 1 < pts.length; k++) {
+      if (range && (pts[k + 1][2] < range.from || pts[k][2] > range.to)) continue;
+      const pr = project(q, pts[k], pts[k + 1]);
+      if (!best || pr.d < best.off) best = { k, off: pr.d, f: pr.f };
+    }
+    if (!best) return null;
+    const a = pts[best.k], b = pts[best.k + 1];
+    return { d: a[2] + (b[2] - a[2]) * best.f, off: Math.round(best.off), k: best.k };
+  }
+  // Följer axeln uppmätta spår hela vägen mellan d1 och d2?
+  function axisMeasured(axis, d1, d2) {
+    if (!axis || !Array.isArray(axis.pts)) return false;
+    const lo = Math.min(d1, d2), hi = Math.max(d1, d2);
+    if (lo < -AXIS.gapM || hi > axis.len + AXIS.gapM) return false;
+    for (let k = 0; k + 1 < axis.pts.length; k++) {
+      if (axis.pts[k + 1][2] < lo || axis.pts[k][2] > hi) continue;
+      if (!axis.meas[k]) return false;
+    }
+    return true;
+  }
+
   /* Faktor per sträcka i linjen (≤ 1): så mycket kortare än planerat vi brukar köra mellan två stationer
      i vår rutt. Gäller alla delsträckor mellan stationerna. */
   function recoveryRatios(line, routeNames, history, opts) {
@@ -738,7 +833,7 @@
     for (let i = 0; i < n; i++) if (known[i] && (known[i].arr != null || known[i].dep != null)) f = i;
     const preds = [];
     const list = (meets || []).slice().sort((a, b) => a.i - b.i);
-    for (const m of list) Object.assign(m, { atI: m.i, waitMs: 0, ourDep: null, need: null, move: null, theirAt: null, onLine: false, resolved: false });
+    for (const m of list) Object.assign(m, { atI: m.i, waitMs: 0, ourDep: null, need: null, move: null, moveVia: null, theirAt: null, onLine: false, resolved: false });
     for (let i = 0; i < n; i++) {
       const L = line[i], K = known[i] || {};
       const p = { arr: null, dep: null, base: null, waitMs: 0 };
@@ -783,8 +878,8 @@
                 const r = move(m, i, dep, c => travel(line, ratios, i, d0, c, now, opts));
                 if (!r) continue;
                 m.resolved = true;
-                if (r.done) { m.onLine = !!r.onLine; m.atI = i; continue; }
-                Object.assign(m, { atI: i, move: r.kind, need: r.need, theirAt: r.their || null });
+                if (r.done) { m.onLine = !!r.onLine; m.atI = i; m.moveVia = r.via || null; continue; }
+                Object.assign(m, { atI: i, move: r.kind, moveVia: r.via || null, need: r.need, theirAt: r.their || null });
                 here.push(m);
                 if (r.need > dep) { dep = r.need; again = true; }
               }
@@ -1145,10 +1240,74 @@
     // mötesplatsen), 'at' (inom 500 m) eller 'passed' (mellan oss och mötesplatsen)
     const positions = input.positions || new Map();
     const coords = input.coords || new Map();
+
+    /* Längs banan (input.axis, buildAxis): platserna, vi och de mötande tågen i meter längs vår linje. Ett tågs
+       läge räknas bara där linjen är uppmätt (GPS-spår) mellan tåget och platsen, och tåget är högst axisSureOffM
+       från den. Platser vars läge inte följer linjens ordning räknas inte. */
+    const axis = input.axis && Array.isArray(input.axis.pts) && input.axis.pts.length >= 2 ? input.axis : null;
+    const lineD = line.map(() => null);
+    if (axis) {
+      for (let i = 0; i < n; i++) {
+        const sig = line[i].sig;
+        if (axis.stations && axis.stations[sig] != null) { lineD[i] = axis.stations[sig]; continue; }
+        const st = coords.get(sig);
+        const loc = st ? axisLocate(axis, st) : null;
+        if (loc && loc.off <= 1000) lineD[i] = loc.d;
+      }
+      let hi = -Infinity;
+      for (let i = 0; i < n; i++) {
+        if (lineD[i] == null) continue;
+        if (lineD[i] < hi - 300) lineD[i] = null; else hi = Math.max(hi, lineD[i]);
+      }
+    }
+    let usD;
+    function ourD() {
+      if (usD !== undefined) return usD;
+      usD = null;
+      if (!axis) return usD;
+      if (input.ourPos) {
+        const loc = axisLocate(axis, input.ourPos);
+        if (loc && loc.off <= o.axisOurOffM) usD = loc.d;
+      }
+      if (usD == null) for (let k = Math.max(frontier, 0); k >= 0 && usD == null; k--) usD = lineD[k];
+      return usD;
+    }
+    const alongCache = new Map();
+    // Det mötande tågets läge längs banan: { d, off, t, speedKmh } eller null (ingen färsk position, långt från linjen)
+    function trainAlong(otn) {
+      const key = String(otn);
+      if (alongCache.has(key)) return alongCache.get(key);
+      let r = null;
+      const pos = positions.get(key);
+      if (axis && pos && now - pos.t <= o.positionMaxAgeMs) {
+        const loc = axisLocate(axis, pos);
+        if (loc && loc.off <= o.axisSureOffM) r = { d: loc.d, off: loc.off, t: pos.t, speedKmh: pos.speedKmh };
+      }
+      alongCache.set(key, r);
+      return r;
+    }
+    // Läget säkert längs banan mellan d1 och d2 (uppmätt linje hela vägen)
+    const sureBetween = (d1, d2) => d1 != null && d2 != null && axisMeasured(axis, d1, d2);
+    /* Hur långt på vår sida om en plats tåget måste vara för att ha lämnat den mot oss: står det still, eller vet vi
+       inte farten, kan det stå kvar vid utfartssignalen i ett långt mötesspår. */
+    const leftM = T => T.speedKmh != null && T.speedKmh > o.axisStandKmh ? o.axisAtM : o.axisStandM;
+
     function positionAt(otn, sig, i) {
       const pos = positions.get(String(otn));
       const st = coords.get(sig);
-      if (!pos || !st || now - pos.t > o.positionMaxAgeMs) return null;
+      if (!pos || now - pos.t > o.positionMaxAgeMs) return null;
+      // Längs banan, när linjen är uppmätt mellan tåget, platsen och oss
+      const T = trainAlong(otn), dS = lineD[i];
+      if (T && dS != null) {
+        const dU = ourD();
+        if (sureBetween(Math.min(T.d, dS, dU != null ? dU : dS), Math.max(T.d, dS))) {
+          const alongM = Math.abs(T.d - dS);
+          const side = dU != null && T.d < dU - o.axisAtM ? 'behind'
+            : (T.d > dS + o.axisAtM ? 'beyond' : (dS - T.d > leftM(T) ? 'passed' : 'at'));
+          return { distM: Math.round(alongM), along: true, rel: Math.round(T.d - dS), speedKmh: pos.speedKmh, ageS: Math.max(0, Math.round((now - pos.t) / 1000)), t: pos.t, side };
+        }
+      }
+      if (!st) return null;
       const distM = haversine(pos.lat, pos.lon, st.lat, st.lon);
       let ref = input.ourPos || null;
       if (!ref) for (let k = Math.min(Math.max(frontier, 0), i); k >= 0 && !ref; k--) ref = coords.get(line[k].sig) || null;
@@ -1182,11 +1341,16 @@
         const l2 = tr.at.get(line[k].sig);
         if (l2 && ((l2.arr && l2.arr.actual != null) || (l2.dep && l2.dep.actual != null))) moved = true;
       }
-      if (their.departed && !(known[i].arr != null)) moved = true;
+      let movedVia = moved ? 'rapport' : null;
+      if (their.departed && !(known[i].arr != null)) { moved = true; movedVia = movedVia || 'rapport'; }
       // Tågets senaste position (TrainPosition): avstånd till mötesplatsen, och var det är i förhållande till den.
       // Är det fortfarande på andra sidan mötesplatsen kan det inte vara framme tidigare än avståndet i högsta
-      // fart – en undre gräns som aldrig gör prognosen för tidig. Annars används positionen bara för att visa.
+      // fart – en undre gräns som aldrig gör prognosen för tidig. Längs uppmätt bana (along) är läget säkert:
+      // har tåget passerat mötesplatsen mot oss är mötet flyttat, och har det passerat oss är mötet avklarat.
+      // Med fågelvägen används positionen annars bara för att visa.
       const position = positionAt(tr.otn, line[i].sig, i);
+      if (position && position.along && position.side === 'behind') continue;
+      if (position && position.along && position.side === 'passed' && !moved) { moved = true; movedVia = 'position'; }
       if (position && position.side === 'beyond' && !their.arrived) {
         const earliest = position.t + position.distM / o.maxSpeedMs * 1000;
         if (earliest > their.t) { their.t = earliest; their.source = 'position'; }
@@ -1195,7 +1359,7 @@
         key: `${tr.key}|${i}`, trainKey: tr.key,
         i, sig: line[i].sig, otn: tr.otn, ident: tr.ident, product: tr.product, position,
         their, theirDelayMin: roundMin(their.t - their.planned),
-        single, canceled, moved,
+        single, canceled, moved, movedVia,
         dependent: single && !canceled && !moved && c.maxIdx > i,
         minIdx: c.minIdx != null ? c.minIdx : 0, prog,
         waitMs: 0, ourDep: null
@@ -1221,7 +1385,7 @@
       if (m.prog && m.prog.k <= i) {
         // Rapporterat här: står det här möts vi här; har det redan åkt härifrån är mötet avklarat
         if (m.prog.k === i && here && here.arr && here.arr.actual != null && !(here.dep && here.dep.actual != null)) {
-          return { need: here.arr.actual + o.meetMarginMs, kind: 'rapporterat', their: theirArrival(tr, line[i].sig, now) };
+          return { need: here.arr.actual + o.meetMarginMs, kind: 'rapporterat', via: 'rapport', their: theirArrival(tr, line[i].sig, now) };
         }
         return { done: true };
       }
@@ -1231,8 +1395,24 @@
       if (!X0) return null;
       const cLoc = tr.at.get(line[c].sig);
       // Ute på sträckan mot oss: åkt från c, eller rapporterat mellan c och oss
-      const entered = !!(cLoc && cLoc.dep && cLoc.dep.actual != null) || !!(m.prog && m.prog.k < c);
-      const E = entered ? null : theirDeparture(tr, line[c].sig, now);
+      let entered = !!(cLoc && cLoc.dep && cLoc.dep.actual != null) || !!(m.prog && m.prog.k < c);
+      let via = entered ? 'rapport' : null;
+      /* Längs uppmätt bana: har tåget lämnat c mot oss är det ute på sträckan (eller redan här i i). Står det
+         still, eller vet vi inte farten, kan det stå kvar vid utfartssignalen i c – då krävs att det är längre ut.
+         Är det förbi i mot oss möts vi på sträckan (dubbelspår, eller fel i uppgifterna) utan väntan här. */
+      const T = trainAlong(tr.otn), di = lineD[i], dc = lineD[c];
+      let beyondC = null;
+      if (T && di != null && dc != null && sureBetween(Math.min(T.d, di), Math.max(T.d, dc))) {
+        if (T.d < di - leftM(T)) return { done: true, onLine: true, via: 'position' };
+        if (!entered && T.d <= dc - leftM(T)) { entered = true; via = 'position'; }
+        else if (T.d > dc + o.axisAtM) beyondC = T;
+      }
+      let E = entered ? null : theirDeparture(tr, line[c].sig, now);
+      // Fortfarande på andra sidan c: kan inte åka därifrån förrän tidigast efter avståndet i högsta fart
+      if (E && beyondC && !E.departed) {
+        const earliest = beyondC.t + (beyondC.d - dc) / o.maxSpeedMs * 1000;
+        if (earliest > E.t) E = Object.assign({}, E, { t: earliest, source: 'position' });
+      }
       // Hit kommer tåget tidigast efter avgången från c och sin planerade gångtid, och efter senaste rapporten
       let t = X0.t, source = X0.source;
       const later = (v, s) => { if (v != null && v > t) { t = v; source = s; } };
@@ -1243,17 +1423,17 @@
       const their = Object.assign({}, X0, { t, source });
       if (!singleBetween(i, c)) {
         // Dubbelspår till nästa mötesplats: möts vi på sträckan blir det ingen väntan
-        if (entered || (E && E.t < arriveAt(c) && t > dep)) return { done: true, onLine: true };
+        if (entered || (E && E.t < arriveAt(c) && t > dep)) return { done: true, onLine: true, via };
         return null;
       }
-      if (entered) return { need: t + o.meetMarginMs, kind: 'rapporterat', their };
+      if (entered) return { need: t + o.meetMarginMs, kind: 'rapporterat', via, their };
       if (!o.predictMoves || !E) return null;
       const A = arriveAt(c);
       if (E.t >= A) return null; // vi hinner till c innan de vill åka därifrån: mötet blir längre fram
       const ourWait = t + o.meetMarginMs - dep;   // vi väntar här
       const theirWait = A + o.meetMarginMs - E.t; // de väntar i c
       if (ourWait > theirWait) return null;
-      return { need: t + o.meetMarginMs, kind: m.moved ? 'rapporterat' : 'beräknat', their };
+      return { need: t + o.meetMarginMs, kind: m.moved ? 'rapporterat' : 'beräknat', via: m.moved ? m.movedVia : null, their };
     }
 
     /* Från där vi är (input.posAt: { sig, t }, gångprofilerna i appen): ankomsten till nästa station i rutten.
@@ -1735,7 +1915,8 @@
     if (!log || !m) return;
     for (const mt of m.meetings || []) {
       trvLogPut(log, `m|${mt.otn}|${mt.sig}`, 'm', now, [mt.otn, mt.sig, mt.at || mt.sig, mt.move || '', mt.waitMin,
-        mt.theirDelayMin, mt.their ? mt.their.source : ''], opts);
+        mt.theirDelayMin, mt.their ? mt.their.source : '', mt.moveVia || (mt.moved ? mt.movedVia : '') || '',
+        mt.position && mt.position.along ? mt.position.side : ''], opts);
     }
     if (m.end && m.end.predArr != null) trvLogPut(log, 'e', 'e', now, [relS(log, Math.round(m.end.predArr / MIN) * MIN), m.end.delayMin], opts);
   }
@@ -1759,7 +1940,7 @@
     DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, alerts, newAlerts, actionText, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
     request, queryOurTrain, queryLine, queryOwnTrains, queryNames, queryMessages, resultOf,
     parseAnnouncement, groupTrains, nearestRun, mergeTrains, isOurs, buildLine, crossingOf, latestDelay, theirArrival, theirDeparture,
-    progressOf, meetingPlaces, travel, trvLogNew, PROFILE, legKey, trackPoints, runLegs, profileBuilder, remainingFrom, positionEstimate, trvLogTrains, trvLogPositions, trvLogModel, trvLogOut,
+    progressOf, meetingPlaces, travel, trvLogNew, PROFILE, legKey, trackPoints, runLegs, profileBuilder, remainingFrom, positionEstimate, AXIS, buildAxis, axisLocate, axisMeasured, trvLogTrains, trvLogPositions, trvLogModel, trvLogOut,
     historyMedians, recoveryRatios, plannedRun, predict, outgoing, incoming, signaturesIn, parseMessage, classifyMessages, messagesFor, compute,
     townKey, lineTownsExcept, busOutgoing, busIncoming, CONN_MODES, connShows, splitByMode, connKey, normOwn, ownMatcher, parseOwn
   };
