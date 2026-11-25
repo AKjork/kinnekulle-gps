@@ -555,3 +555,13 @@ GitHub-inställningarna är ett inloggningsformulär (`autocomplete` username/cu
 
 ### Bilder
 `--shot=nytt-tag` och `--shot=tidtabell-alla-utskrift`.
+
+## Uppdatering (2026-11-25): GPS vid start
+
+André 2026-11-25: när mätningen startas tror appen ofta att tåget rör sig fast det står still, eftersom GPS:en inte har låst in sig.
+
+Dataunderlag (`railtimer-data`, okt–nov): 12 körningar avbröts efter 6–10 s eftersom avgång från startstationen registrerades 1–6 s efter start. GPS:en gav då 2–12 km/h i högst 3 s i sträck, med noggrannhet 4–27 m. Felet är alltså falsk fart, inte dålig noggrannhet. I de 38 hela spåren varar verklig avgång alltid längre än 8 s.
+
+- **Avgång från startstationen** (`processSpeedTriggers`, `idx===0`) kräver fart över 2 km/h i `START_DEPART_CONFIRM_MS` (8 s) i sträck. Faller farten under tröskeln börjar räkningen om. Avgångstid och -position tas från första positionen i rörelse (`station.startMoveSince`), så tiden blir densamma som förut vid en riktig avgång. `handleStationExit` använder samma tid om den finns. Övriga stationer är oförändrade.
+- **GPS-uppvärmning** (`startGpsWarmup`, `stopGpsWarmup`): medan startformuläret visas körs en egen `watchPosition` med hög noggrannhet. Under Start-knappen visas *GPS söker position*, *GPS låser in sig (±N m)* eller *GPS klar (±N m)* vid högst 15 m (`GPS_READY_ACCURACY_M`). Bevakningen stängs när appen går till bakgrunden och när resans egen bevakning har startat. Inte i testläge.
+- Tester: `start: några sekunders falsk fart …` och `start: avgången räknas från …` i `tests/replay.html`. Facit för vanlig resa är oförändrat.

@@ -177,6 +177,30 @@ test('regression: vanlig resa ger exakt samma tider som facit', async () => {
   assertEqual(summarize(r.log), await golden(), 'tider');
 });
 
+// ── GPS-brus vid start: falsk fart medan GPS:en låser in sig ──
+
+test('start: några sekunders falsk fart vid startstationen ger ingen avgång', async () => {
+  const base = buildJourney();
+  // Efter de tre första stillastående positionerna: 6 s falsk fart (4–5 km/h) på samma plats,
+  // sedan står tåget still 10 s till. Resten av resan förskjuts lika mycket.
+  const S = STATIONS[0];
+  const extra = [1.2, 1.4, 1.1, 0, 0, 0, 0, 0];
+  const head = base.slice(0, 3);
+  const inserted = extra.map((speed, k) => ({ t: head[2].t + (k + 1) * STEP_MS, lat: S[1], lon: S[2], speed, leg: -1, frac: 0, dwellAt: 0 }));
+  const shift = extra.length * STEP_MS;
+  const tail = base.slice(3).map(f => Object.assign({}, f, { t: f.t + shift }));
+  const r = await runJourney(head.concat(inserted, tail));
+  const firstMoving = tail.find(f => f.speed > 0.6).t;
+  assertEqual(r.log.stops[0].actualDeparture, iso(firstMoving), 'avgång från start = första positionen i verklig rörelse');
+  assert(r.log.stops[1].actualArrival, 'resan fortsatte till nästa station');
+});
+
+test('start: avgången räknas från när tåget började rulla, inte när den bekräftades', async () => {
+  const r = await runJourney(buildJourney());
+  const firstMoving = buildJourney().find(f => f.speed > 0.6).t;
+  assertEqual(r.log.stops[0].actualDeparture, iso(firstMoving), 'avgång från start');
+});
+
 // ── Task 3: körningsformat 2 ──
 
 test('format 2: id, format, appversion och stationsfält', async () => {

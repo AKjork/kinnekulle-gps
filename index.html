@@ -84,6 +84,9 @@
   .row > .form-group{flex:1 1 9rem}
   .form-group input,.form-group select,.form-group textarea{width:100%}
   .hint{font-size:.8rem;color:var(--mut);margin-top:.3rem}
+  .gps-warm{text-align:center;margin-top:.6rem;font-size:.9rem}
+  .gps-warm.ready{color:var(--good)}
+  .gps-warm.wait{color:var(--sec)}
   .btn-start{width:100%;min-height:3rem;font-size:1rem;margin-top:.5rem}
   label{display:block;margin:.2rem 0;font-weight:500;color:var(--ink-dim);font-size:.8rem;text-transform:uppercase;letter-spacing:.03em}
   input,select,button,textarea{
@@ -668,6 +671,7 @@
     </div>
     <span id="setupError" class="badge warn" style="display:none"></span>
     <button id="btnStart" class="primary btn-start">Starta GPS-resan</button>
+    <div id="gpsWarmStatus" class="hint gps-warm" style="display:none"></div>
   </section>
 
   <section id="journey" style="display:none">
@@ -754,7 +758,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-10-15b';
+  const APP_VERSION = '2026-11-25';
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const DEFAULT_RADIUS = 200;
@@ -764,6 +768,7 @@
   const CLOSE_APPROACH_EPS = 1; // meters
   const PASS_DISTANCE_MARGIN = 5; // meters before we consider leaving after pass
   const DEPART_REVERT_WINDOW_MS = 120000; // allow 2 min to re-time a premature departure
+  const START_DEPART_CONFIRM_MS = 8000;   // startstationen: så länge tåget måste röra sig innan avgång räknas
   // ?test=1 används av tests/replay.html: ingen nätverkstrafik, GPS, service worker eller skärmlås
   const TEST_MODE = new URLSearchParams(location.search).has('test');
   const STORAGE_KEY_LOGS = 'kmon_gps_logs_v1';
@@ -884,6 +889,7 @@
     }
     await loadAllStations();
     getUserLocation();
+    if(currentView==='setup') startGpsWarmup();
     checkForInterruptedJourney();
     scheduleUpload();
   }
@@ -1767,6 +1773,52 @@
     }
   }
 
+  // GPS-uppvärmning: medan startformuläret visas hålls GPS:en igång, så att den redan har
+  // låst in sig när resan startar. Stängs av när appen går till bakgrunden och när resan startar.
+  let warmWatchId=null;
+  const GPS_READY_ACCURACY_M=15;
+  function startGpsWarmup(){
+    if(TEST_MODE || !navigator.geolocation || state.running || warmWatchId!==null) return;
+    if(document.visibilityState==='hidden') return;
+    showGpsWarmStatus(null);
+    warmWatchId=navigator.geolocation.watchPosition(pos=>{
+      state.lastPosition=pos;
+      state.lastFixTime=Date.now();
+      userLocation={ lat:pos.coords.latitude, lon:pos.coords.longitude };
+      updateGpsStatus(pos);
+      showGpsWarmStatus(pos);
+    }, err=>{
+      showGpsWarmStatus(null, err);
+    }, { enableHighAccuracy:true, maximumAge:0, timeout:30000 });
+  }
+  function stopGpsWarmup(){
+    if(warmWatchId===null) return;
+    navigator.geolocation.clearWatch(warmWatchId);
+    warmWatchId=null;
+  }
+  function showGpsWarmStatus(pos, err){
+    const el=document.getElementById('gpsWarmStatus');
+    if(!el) return;
+    el.style.display='block';
+    el.classList.remove('ready','wait');
+    if(err && err.code===1){
+      el.textContent='Platsåtkomst nekad – tillåt plats för sidan.';
+      el.classList.add('wait');
+    }else if(!pos){
+      el.textContent='GPS söker position …';
+      el.classList.add('wait');
+    }else{
+      const acc=Math.round(pos.coords.accuracy||999);
+      if(acc<=GPS_READY_ACCURACY_M){
+        el.textContent=`GPS klar (±${acc} m)`;
+        el.classList.add('ready');
+      }else{
+        el.textContent=`GPS låser in sig (±${acc} m) – vänta gärna tills den är klar`;
+        el.classList.add('wait');
+      }
+    }
+  }
+
   function requestGpsWatch(){
     if(TEST_MODE) return; // testerna matar positioner direkt till handlePosition
     if(!navigator.geolocation){
@@ -1781,6 +1833,7 @@
         maximumAge:1000,
         timeout:15000
       });
+      stopGpsWarmup(); // resans egen bevakning har tagit över
       updateGpsStatus(null, { message:'Väntar på första fix…' });
     };
     navigator.geolocation.getCurrentPosition(pos=>{
@@ -2115,14 +2168,29 @@
     }else if(!station.reachedLowSpeed && speed<=SPEED_THRESHOLD_MS){
       station.reachedLowSpeed=true;
     }
+    if(speed<SPEED_THRESHOLD_MS) station.startMoveSince=null;
     if(station.reachedLowSpeed && speed>=SPEED_THRESHOLD_MS){
-      station.actualDeparture=new Date();
-      station.departSource='gps';
-      station.departurePosition=pos?{
+      let departAt=new Date();
+      let departPos=pos?{
         lat:pos.coords.latitude,
         lon:pos.coords.longitude,
         accuracy:pos.coords.accuracy||null
       }:null;
+      // Startstationen: GPS:en ger ofta några sekunder falsk fart medan den låser in sig.
+      // Avgång kräver därför rörelse i START_DEPART_CONFIRM_MS i sträck och räknas från
+      // första positionen i rörelse.
+      if(idx===0){
+        if(!station.startMoveSince){
+          station.startMoveSince={ t:now, pos:departPos };
+        }
+        if(now-station.startMoveSince.t<START_DEPART_CONFIRM_MS) continue;
+        departAt=new Date(station.startMoveSince.t);
+        departPos=station.startMoveSince.pos;
+        station.startMoveSince=null;
+      }
+      station.actualDeparture=departAt;
+      station.departSource='gps';
+      station.departurePosition=departPos;
       station.departureProvisional=false;
       station.departureProvisionalAt=null;
       if(state.departureProvisionalIdx===idx) state.departureProvisionalIdx=null;
@@ -2211,13 +2279,15 @@
       if(!movingFast){
         return;
       }
-      station.actualDeparture=new Date();
+      const moveStart=idx===0?station.startMoveSince:null;
+      station.startMoveSince=null;
+      station.actualDeparture=moveStart?new Date(moveStart.t):new Date();
       station.departSource='gps';
-      station.departurePosition=pos?{
+      station.departurePosition=moveStart?moveStart.pos:(pos?{
         lat:pos.coords.latitude,
         lon:pos.coords.longitude,
         accuracy:pos.coords.accuracy||null
-      }:null;
+      }:null);
       station.needsArrivalRetiming=false;
       // Om vi aldrig stannade (reachedLowSpeed=false) är detta en passering - bekräfta direkt
       // Om vi stannade men nu rör oss, är avgången också bekräftad
@@ -2556,6 +2626,7 @@
   function showView(view){
     currentView=view;
     els.setup.style.display = view==='setup' ? 'block' : 'none';
+    if(view==='setup') startGpsWarmup();
     els.journey.style.display = view==='journey' ? 'block' : 'none';
     els.report.style.display = view==='report' ? 'block' : 'none';
     document.getElementById('statistics').style.display = view==='statistics' ? 'block' : 'none';
@@ -4007,7 +4078,9 @@
       }
       // Ett avbrott upptäcks och meddelas vid nästa GPS-position (checkForInterruption)
       scheduleUpload();
+      if(currentView==='setup') startGpsWarmup();
     }else if(document.visibilityState==='hidden'){
+      stopGpsWarmup();
       onAppHidden();
     }
   }
