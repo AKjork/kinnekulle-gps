@@ -203,6 +203,105 @@ test('start: avgången räknas från när tåget började rulla, inte när den b
   assertEqual(r.log.stops[0].actualDeparture, iso(firstMoving), 'avgång från start');
 });
 
+// ── Falsk avgång vid mellanstationer (granskning 2026-11-25) ──
+
+// Första positionen i rörelse efter uppehållet vid stationen med index idx
+function departureAfterDwell(fixes, idx) {
+  let j = fixes.findIndex(f => f.dwellAt === idx);
+  while (fixes[j].dwellAt === idx) j++;
+  return fixes[j].t;
+}
+const withSpeed = (fixes, indices, speed) => fixes.map((f, i) => indices.includes(i) ? Object.assign({}, f, { speed }) : f);
+
+test('avgång: en position utan fart under uppehållet ger ingen avgång', async () => {
+  // Som Vedum 2026-11-24: en position utan fart under gång, och en till mitt i uppehållet.
+  // Farten räknades förut mellan de två, och tåget verkade köra fast det stod still.
+  const fixes = buildJourney();
+  const control = await runJourney(fixes);
+  const moving = fixes.findIndex(f => f.leg === 0 && f.speed === 20);
+  const dwell = fixes.findIndex(f => f.dwellAt === 2) + 5;
+  const r = await runJourney(withSpeed(fixes, [moving, dwell], null));
+  assertEqual(stopOf(r.log, 'Källby').actualDeparture, iso(departureAfterDwell(fixes, 2)), 'avgång Källby');
+  sameAsControl(r.log, control.log, STATIONS.map(s => s[0]));
+});
+
+test('avgång: en enstaka fartmätning på 2,3 km/h när tåget har stannat ger ingen avgång', async () => {
+  // Som Hällekis 2026-11-02: 1,9 km/h, 1,8 km/h, 2,3 km/h och sedan stilla i 20 s
+  const fixes = buildJourney();
+  const control = await runJourney(fixes);
+  const spike = fixes.findIndex(f => f.dwellAt === 2) + 3;
+  const r = await runJourney(withSpeed(fixes, [spike], 0.65));
+  assertEqual(stopOf(r.log, 'Källby').actualDeparture, iso(departureAfterDwell(fixes, 2)), 'avgång Källby');
+  sameAsControl(r.log, control.log, STATIONS.map(s => s[0]));
+});
+
+test('avgång: telefon som aldrig anger fart – farten räknas ur positionerna', async () => {
+  const fixes = buildJourney();
+  const control = await runJourney(fixes);
+  const r = await runJourney(fixes.map(f => Object.assign({}, f, { speed: null })));
+  for (const [name] of STATIONS) {
+    const a = stopOf(r.log, name), c = stopOf(control.log, name);
+    for (const key of ['actualArrival', 'actualDeparture']) {
+      if (!c[key]) continue;
+      assert(a[key], `${name}: ${key} saknas`);
+      const diff = Math.abs(Date.parse(a[key]) - Date.parse(c[key]));
+      assert(diff <= 6000, `${name}: ${key} skiljer ${diff / 1000} s från kontrollen`);
+    }
+  }
+});
+
+// ── Full lagring (granskning 2026-11-25) ──
+
+// Fyller localStorage så att nästan inget mer får plats (andra sidor på samma webbplats, år av mätningar)
+function fillStorage(w) {
+  let i = 0;
+  for (const size of [256 * 1024, 16 * 1024, 1024, 64]) {
+    const chunk = 'x'.repeat(size);
+    try { for (;;) w.localStorage.setItem('fyll' + (i++), chunk); } catch (e) { /* fullt */ }
+  }
+}
+
+test('lagring: full lagring – resan finns kvar för export och rapporten säger det', async () => {
+  const r = await runJourney(buildJourney(), { afterStart: (rt, w) => fillStorage(w) });
+  assertEqual(r.w.localStorage.getItem('kmon_gps_logs_v1'), null, 'resan får inte plats i lagringen');
+  assertEqual(r.log && r.log.id, r.rt.state.journeyId, 'resan finns kvar i minnet');
+  assert(r.log.stops[1].actualArrival, 'med tider');
+  const report = r.w.document.getElementById('reportHTML').textContent;
+  assert(/kunde inte sparas på telefonen/.test(report) && /Exportera JSON/.test(report), 'rapporten ska säga att resan inte sparades');
+});
+
+test('lagring: full lagring – äldre uppladdade körningar tas bort så att resan får plats', async () => {
+  let fake;
+  const old = Array.from({ length: 20 }, (_, i) => ({ id: 'gammal' + i, startedAt: new Date(START - (30 - i) * 86400000).toISOString(),
+    trainNumber: '1', startStation: 'A', endStation: 'B', stops: [], notes: 'x'.repeat(20000) }));
+  const r = await runJourney(buildJourney(), {
+    beforeStart: async w => {
+      fake = browserFakeGitHub(w);
+      configureUpload(w, fake);
+      w.localStorage.setItem('kmon_gps_logs_v1', JSON.stringify(old));
+      w.localStorage.setItem('railtimer_upload_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', uploadedIds: old.map(l => l.id), backlogDone: true }));
+    },
+    afterStart: (rt, w) => fillStorage(w)
+  });
+  await r.rt.whenUploadIdle();
+  const stored = JSON.parse(r.w.localStorage.getItem('kmon_gps_logs_v1')).map(l => l.id);
+  assert(stored.includes(r.log.id), 'resan ska vara sparad på telefonen');
+  assert(!stored.includes('gammal0') && stored.includes('gammal19'), `de äldsta uppladdade tas bort först: ${stored.join(',')}`);
+  assert(fake.files.get(r.w.RailTimerGitHub.runPath(r.log)), 'resan ska vara uppladdad');
+  assert(/togs bort från telefonen/.test(r.w.document.getElementById('reportHTML').textContent), 'rapporten ska säga det');
+});
+
+test('lagring: full lagring utan uppladdning – inga körningar tas bort', async () => {
+  const old = [{ id: 'gammal', startedAt: new Date(START - 86400000).toISOString(), trainNumber: '1', startStation: 'A', endStation: 'B', stops: [], notes: 'x'.repeat(20000) }];
+  const r = await runJourney(buildJourney(), {
+    beforeStart: async w => { w.localStorage.setItem('kmon_gps_logs_v1', JSON.stringify(old)); },
+    afterStart: (rt, w) => fillStorage(w)
+  });
+  const stored = JSON.parse(r.w.localStorage.getItem('kmon_gps_logs_v1')).map(l => l.id);
+  assertEqual(stored, ['gammal'], 'den sparade körningen finns kvar');
+  assertEqual(r.rt.loadLogs().map(l => l.id), ['gammal', r.log.id], 'den nya finns i minnet');
+});
+
 // ── Task 3: körningsformat 2 ──
 
 test('format 2: id, format, appversion och stationsfält', async () => {
@@ -1013,6 +1112,202 @@ test('analys: hjälptexten för Stationstyp beskriver de nya flikarna', async ()
   const w = await loadAnalys();
   const title = w.document.getElementById('filterStationType').title;
   assert(!title.includes('Mot tidtabell') && title.includes('Per tåg') && title.includes('Sträckor'), 'titel: ' + title);
+});
+
+// ── Startformuläret, stationslistan och tidtabellen (granskning 2026-11-25) ──
+
+const STATION_LIST = STATIONS.map(s => ({ name: s[0], lat: s[1], lon: s[2], sig: s[3] }));
+const offlineFetch = () => Promise.reject(new TypeError('Failed to fetch'));
+function stationsResponse() {
+  const body = { RESPONSE: { RESULT: [{ TrainStation: STATION_LIST.concat([{ name: 'Mariestad', lat: 58.7071, lon: 13.8256, sig: 'Mst' }])
+    .map(s => ({ AdvertisedLocationName: s.name, LocationSignature: s.sig, Geometry: { WGS84: `POINT (${s.lon} ${s.lat})` } })) }] } };
+  return { ok: true, status: 200, json: async () => body };
+}
+async function appWithStations(ageDays, fetchFn) {
+  const w = await loadApp();
+  await clearAppStorage(w);
+  w.localStorage.setItem('kmon_all_stations_v1', JSON.stringify({ timestamp: Date.now() - ageDays * 86400000, stations: STATION_LIST }));
+  const calls = [];
+  w.fetch = (url, init) => { calls.push(url); return fetchFn(url, init); };
+  await w.__railtimer.loadAllStations();
+  return { w, rt: w.__railtimer, calls };
+}
+
+test('stationer: utan nät används den sparade listan även när den är äldre än 7 dagar', async () => {
+  const { w, rt, calls } = await appWithStations(30, offlineFetch);
+  await realSleep(50);
+  assertEqual(rt.stationNames(), STATIONS.map(s => s[0]), 'stationerna');
+  assertEqual(calls.length, 1, 'en ny lista ska ha försökt hämtas');
+  assertEqual(w.document.getElementById('stationLoadStatus').style.display, 'none', 'inget felmeddelande när en lista finns');
+});
+
+test('stationer: en gammal lista byts mot en ny i bakgrunden, en färsk hämtas inte igen', async () => {
+  let r = await appWithStations(30, async () => stationsResponse());
+  await realSleep(50);
+  assert(r.rt.stationNames().includes('Mariestad'), 'den nya listan ska användas');
+  assert(JSON.parse(r.w.localStorage.getItem('kmon_all_stations_v1')).stations.some(s => s.name === 'Mariestad'), 'och sparas');
+  r = await appWithStations(1, async () => stationsResponse());
+  assertEqual(r.calls.length, 0, 'en färsk lista hämtas inte');
+});
+
+test('stationer: utan sparad lista och utan nät säger appen att stationerna inte kunde hämtas', async () => {
+  const w = await loadApp();
+  await clearAppStorage(w);
+  w.fetch = offlineFetch;
+  await w.__railtimer.loadAllStations();
+  assertEqual(w.__railtimer.stationNames(), [], 'stationer');
+  assert(/försöker igen när det finns nät/.test(w.document.getElementById('stationLoadStatus').textContent), 'meddelandet');
+});
+
+// Skriver början av namnet och väljer stationen i listan under fältet, som när föraren trycker på den
+function pickStation(w, inputId, name) {
+  typeStation(w, inputId, name.slice(0, 3));
+  const item = Array.from(w.document.querySelectorAll(`#${inputId}Dropdown .station-dropdown-item`)).find(el => el.dataset.name === name);
+  item.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true }));
+}
+function typeStation(w, inputId, text) {
+  const input = w.document.getElementById(inputId);
+  input.value = text;
+  input.dispatchEvent(new w.Event('input'));
+}
+
+test('startformulär: ändrad stationstext utan val i listan gäller, inte den station som valdes förut', async () => {
+  const { w, rt } = await appWithStations(1, offlineFetch);
+  pickStation(w, 'startStation', 'Lidköping');
+  typeStation(w, 'startStation', 'källby');   // skriver om utan att välja i listan
+  pickStation(w, 'endStation', 'Hällekis');
+  w.document.getElementById('vehicleType').value = 'Y31';
+  await rt.startJourney();
+  assertEqual(rt.state.route.map(s => s.name), ['Källby', 'Hällekis'], 'rutten');
+  rt.stopJourney(true, 'test');
+});
+
+test('startformulär: en text som inte är en station startar ingen resa', async () => {
+  const { w, rt } = await appWithStations(1, offlineFetch);
+  pickStation(w, 'startStation', 'Lidköping');
+  typeStation(w, 'startStation', 'Lidk');
+  pickStation(w, 'endStation', 'Hällekis');
+  w.document.getElementById('vehicleType').value = 'Y31';
+  await rt.startJourney();
+  assertEqual(rt.state.running, false, 'resan ska inte starta');
+  assert(/Välj start- och slutstation i listan/.test(w.document.getElementById('setupError').textContent), 'meddelandet');
+});
+
+// TrainAnnouncement-svar: [signatur, aktivitet, lokal tid som [år, mån, dag, tim, min], avgångsdatum]
+function announcements(rows) {
+  const list = rows.map(([sig, act, t, otnDate]) => ({ LocationSignature: sig, ActivityType: act, AdvertisedTimeAtLocation: new Date(...t).toISOString(), DepartureDateOTN: otnDate }));
+  return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: list }] } }) };
+}
+
+test('tidtabell: kring midnatt väljs körningen som går nu, med stationerna efter midnatt', async () => {
+  const w = await loadApp();
+  let body = '';
+  w.fetch = async (url, init) => { body = init.body; return announcements([
+    ['Lkp', 'Avgang', [2026, 10, 24, 23, 40], '2026-11-24'], ['Kll', 'Ankomst', [2026, 10, 24, 23, 55], '2026-11-24'],
+    ['Kll', 'Avgang', [2026, 10, 24, 23, 56], '2026-11-24'], ['Hlk', 'Ankomst', [2026, 10, 25, 0, 10], '2026-11-24'],
+    ['Lkp', 'Avgang', [2026, 10, 25, 23, 40], '2026-11-25'], ['Kll', 'Ankomst', [2026, 10, 25, 23, 55], '2026-11-25']
+  ]); };
+  const at = new Date(2026, 10, 25, 0, 2); // två minuter efter midnatt, tåget är på väg mot Hällekis
+  const r = await w.__railtimer.fetchTimetable('9999', at);
+  assert(r.success, r.error);
+  assertEqual(Object.keys(r.timetable).sort(), ['Hlk', 'Kll', 'Lkp'], 'stationer');
+  assertEqual(r.timetable.Lkp.departure.toISOString(), new Date(2026, 10, 24, 23, 40).toISOString(), 'avgång från Lidköping kvällen före');
+  assertEqual(r.timetable.Hlk.arrival.toISOString(), new Date(2026, 10, 25, 0, 10).toISOString(), 'ankomst efter midnatt');
+  assert(body.includes('value="2026-11-24T12:02:00"') && body.includes('value="2026-11-25T12:02:00"'), 'frågan gäller ±12 h i lokal tid');
+});
+
+test('tidtabell: svarar inte Trafikverket inom 10 s fortsätter appen utan tidtabell', async () => {
+  const w = await loadApp();
+  w.fetch = (url, init) => new Promise((resolve, reject) => {
+    init.signal.addEventListener('abort', () => reject(new w.DOMException('Avbruten', 'AbortError')));
+  });
+  const t0 = Date.now();
+  const r = await w.__railtimer.fetchTimetable('9998', new Date());
+  const s = (Date.now() - t0) / 1000;
+  assertEqual(r.success, false, 'utan tidtabell');
+  assert(/svarade inte inom 10 s/.test(r.error), r.error);
+  assert(s >= 9 && s < 15, `väntade ${s} s`);
+});
+
+test('GPS-spår: Kasta bort tar bort spåret, och spår som aldrig kan laddas upp städas bort', async () => {
+  const w = await loadApp();
+  await clearAppStorage(w);
+  const rt = w.__railtimer;
+  const now = Date.now();
+  const id = ms => ms.toString(36);
+  const ids = { kastad: id(now - 600000), loggad: id(now - 20 * 3600000), gammal: id(now - 13 * 3600000), ny: id(now - 3600000) };
+  await new Promise((resolve, reject) => {
+    const q = w.indexedDB.open('railtimer', 1);
+    q.onupgradeneeded = () => q.result.createObjectStore('tracks', { keyPath: 'runId' });
+    q.onsuccess = () => {
+      const tx = q.result.transaction('tracks', 'readwrite');
+      Object.values(ids).forEach(runId => tx.objectStore('tracks').put({ runId, t0: new Date(now).toISOString(), points: [[0, 58.5, 13.16, 5, 0, null, 0]] }));
+      tx.oncomplete = () => { q.result.close(); resolve(); };
+    };
+    q.onerror = () => reject(q.error);
+  });
+  w.localStorage.setItem('kmon_gps_logs_v1', JSON.stringify([{ id: ids.loggad, startedAt: new Date(now).toISOString(), stops: [] }]));
+  w.localStorage.setItem('railtimer_active_journey_v1', JSON.stringify({ running: true, journeyId: ids.kastad, startedAt: new Date(now - 600000).toISOString(),
+    route: [{ name: 'Lidköping', lat: 58.5, lon: 13.16 }, { name: 'Hällekis', lat: 58.63, lon: 13.43 }], trainNumber: '1', vehicleType: 'Y31' }));
+  rt.checkForInterruptedJourney();
+  w.document.getElementById('btnDiscardJourney').click();
+  await realSleep(100);
+  await rt.removeOrphanTracks();
+  const left = [];
+  for (const [name, runId] of Object.entries(ids)) if (await rt.getTrack(runId)) left.push(name);
+  assertEqual(left, ['loggad', 'ny'], 'kvar på telefonen');
+});
+
+// Resa i testläge där föraren kan trycka på knapparna i stationskorten
+async function cardJourney() {
+  const w = await loadApp();
+  await clearAppStorage(w);
+  installClock(w, START);
+  w.confirm = () => true;
+  const rt = w.__railtimer;
+  const route = () => STATIONS.map((s, i) => rt.makeRouteStation({ name: s[0], lat: s[1], lon: s[2], sig: s[3], radius: 200 }, i));
+  const start = () => { rt.initJourneyState(route(), { trainNumber: 'TEST', vehicleType: 'Y31', notes: '' }); rt.showView('journey'); rt.renderRouteCards(); };
+  const fix = (lat, lon, accuracy) => rt.handlePosition({ coords: { latitude: lat, longitude: lon, accuracy, speed: 0, heading: null }, timestamp: START });
+  const card = idx => w.document.querySelector(`.card[data-idx="${idx}"]`);
+  return { w, rt, route, start, fix, card };
+}
+
+test('mittpunkt: flyttad mittpunkt sparas till kommande resor och kan återställas', async () => {
+  const { w, rt, route, start, fix, card } = await cardJourney();
+  start();
+  fix(58.4935, 13.2480, 5); // en bit från Filsbäcks koordinat
+  card(1).querySelector('[data-action="update-pos"]').click();
+  assertEqual([rt.state.route[1].lat, rt.state.route[1].lon], [58.4935, 13.2480], 'mittpunkt under resan');
+  rt.stopJourney(true, 'test');
+  const next = route();
+  assertEqual([next[1].lat, next[1].lon, next[1].ownCenter], [58.4935, 13.2480, true], 'nästa resa');
+  assertEqual([next[2].lat, next[2].ownCenter], [STATIONS[2][1], false], 'andra stationer är orörda');
+  start();
+  assert(/egen mittpunkt/.test(card(1).textContent), 'kortet visar egen mittpunkt');
+  assertEqual(card(1).querySelector('[data-action="reset-pos"]').hidden, false, 'Återställ syns');
+  assertEqual(card(2).querySelector('[data-action="reset-pos"]').hidden, true, 'Återställ syns inte för andra stationer');
+  card(1).querySelector('[data-action="reset-pos"]').click();
+  assertEqual([rt.state.route[1].lat, rt.state.route[1].lon, rt.state.route[1].ownCenter], [STATIONS[1][1], STATIONS[1][2], false], 'återställd');
+  assertEqual(route()[1].ownCenter, false, 'och borta till nästa resa');
+  rt.stopJourney(true, 'test');
+});
+
+test('mittpunkt: en osäker GPS-position sparas inte som mittpunkt', async () => {
+  const { w, rt, route, start, fix, card } = await cardJourney();
+  start();
+  fix(58.4935, 13.2480, 80);
+  card(1).querySelector('[data-action="update-pos"]').click();
+  assertEqual(rt.state.route[1].lat, STATIONS[1][1], 'oförändrad');
+  assertEqual(route()[1].ownCenter, false, 'inget sparat');
+  assert(/för osäker/.test(w.document.getElementById('journeyMsg').textContent), 'meddelandet');
+  rt.stopJourney(true, 'test');
+});
+
+test('CSV: kolumnen Ordning har stationens nummer i körningen', async () => {
+  const w = await loadApp();
+  const csv = w.__railtimer.logsCsv([{ startedAt: iso(START), trainNumber: '1', stops: [{ name: 'A' }, { name: 'B' }, { name: 'C' }] }]);
+  const order = csv.split('\n').slice(1).map(line => line.split(';')[6]);
+  assertEqual(order, ['"1"', '"2"', '"3"'], 'ordning');
 });
 
 // ── Körning ──

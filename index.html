@@ -296,6 +296,7 @@
   }
 
   .meta{font-size:.8rem;color:var(--mut);line-height:1.4}
+  .save-warn{border:1px solid var(--err);color:var(--err);border-radius:8px;padding:.6rem .75rem;margin:0 0 .75rem;line-height:1.4}
   .badge{
     background:var(--b);
     border-radius:4px;
@@ -767,7 +768,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25b';
+  const APP_VERSION = '2026-11-25d';
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const DEFAULT_RADIUS = 200;
@@ -778,10 +779,13 @@
   const PASS_DISTANCE_MARGIN = 5; // meters before we consider leaving after pass
   const DEPART_REVERT_WINDOW_MS = 120000; // allow 2 min to re-time a premature departure
   const START_DEPART_CONFIRM_MS = 8000;   // startstationen: så länge tåget måste röra sig innan avgång räknas
+  const DEPART_CONFIRM_MS = 3000;         // övriga stationer: samma sak, kortare (en enstaka falsk fartmätning)
+  const SPEED_EST_MIN_MS = 3000;          // fart räknad ur positionerna: minst så här långt bakåt …
+  const SPEED_EST_MAX_MS = 15000;         // … och högst så här långt
+  const SPEED_REPORTED_RECENT_MS = 30000; // GPS:en har angett fart nyss: en position utan fart hoppas över
   // ?test=1 används av tests/replay.html: ingen nätverkstrafik, GPS, service worker eller skärmlås
   const TEST_MODE = new URLSearchParams(location.search).has('test');
   const STORAGE_KEY_LOGS = 'kmon_gps_logs_v1';
-  const STORAGE_KEY_STATIONS = 'kmon_gps_station_meta_v1';
   const STORAGE_KEY_SAVE_FILE = 'kmon_gps_file_handle_v1';
   const STORAGE_KEY_ROUTE_HISTORY = 'kmon_gps_route_history_v1';
   const STORAGE_KEY_ACTIVE_JOURNEY = 'railtimer_active_journey_v1';
@@ -792,14 +796,16 @@
   const STORAGE_KEY_RECENT_STATIONS = 'kmon_recent_stations_v1';
   const STORAGE_KEY_SOUND_ENABLED = 'railtimer_sound_v1';
   const STORAGE_KEY_LARGE_TEXT = 'railtimer_large_text_v1';
-  const STATIONS_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dagar
+  const STORAGE_KEY_STATION_CENTERS = 'railtimer_station_centers_v1'; // egna mittpunkter: { 'sig:Lkp': { lat, lon, at } }
+  const CALIBRATE_MAX_ACCURACY_M = 30; // en mittpunkt sparas bara från en GPS-position som är så här säker
+  const STATIONS_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dagar; äldre lista används ändå utan nät
+  const STATIONS_FETCH_TIMEOUT_MS = 20000;  // stationslistan från Trafikverket (stort svar)
+  const TIMETABLE_FETCH_TIMEOUT_MS = 10000; // tidtabellen – Start väntar högst så här länge
   const MAX_RECENT_STATIONS = 20;
   const TRAFIKVERKET_API_KEY = '1acaea82911c472cb3409d57ae19707f';
   const TRAFIKVERKET_API_URL = 'https://api.trafikinfo.trafikverket.se/v2/data.json';
 
-  // Stationer hämtas dynamiskt från Trafikverket API
-  // baseStations används endast som fallback om API:t misslyckas
-  const baseStations = [];
+  // Stationer hämtas från Trafikverkets API och sparas på telefonen (loadAllStations)
 
   const els = {
     startInput: document.getElementById('startStation'),
@@ -834,8 +840,6 @@
     wakeBtn: document.getElementById('btnWakeLock')
   };
 
-  let stationOverrides = loadStationOverrides();
-  let stationCatalog = composeStationCatalog();
   let currentSuggestion = null;
   let allStationsCache = [];
   let recentStations = loadRecentStations();
@@ -868,7 +872,6 @@
   let keepScreenAwake = false;
   let pendingServiceWorker = null;
   let updateTriggered = false;
-  let hadController = !!navigator.serviceWorker.controller;
   let expandedCards = new Set(); // Track which cards are expanded
   let renderedRouteKey = ''; // Vilken rutt stationskorten senast byggdes för
   let wakeLockByJourney = false; // Skärmlåset slogs på av resan (inte manuellt)
@@ -896,11 +899,14 @@
       exposeTestHooks();
       return;
     }
-    await loadAllStations();
+    // Återuppta resa och uppladdning väntar inte på stationslistan (den kan ta tid med dålig täckning)
+    const stationsLoaded=loadAllStations();
     getUserLocation();
     if(currentView==='setup') startGpsWarmup();
     checkForInterruptedJourney();
-    scheduleUpload();
+    removeOrphanTracks().then(()=>scheduleUpload());
+    window.addEventListener('online', () => { if(!allStationsCache.length || stationsStale) refreshStations(); });
+    await stationsLoaded;
   }
 
   // Bara i testläge: tests/replay.html spelar upp resor genom de här funktionerna
@@ -911,7 +917,9 @@
       getTrack: runId => TrackStore.get(runId),
       setFetchForTest: fn => { testFetch = fn; },
       setRailFetchForTest: fn => { railFetchForTest = fn; }, loadRailGeometry, renderRouteMap,
-      scheduleUpload, whenUploadIdle, showUploadSettings, saveAndTestGithub
+      scheduleUpload, whenUploadIdle, showUploadSettings, saveAndTestGithub,
+      loadAllStations, stationNames: () => allStationsCache.map(s => s.name), checkForInterruptedJourney,
+      removeOrphanTracks, startJourney, fetchTimetable, logsCsv
     };
   }
 
@@ -1069,44 +1077,56 @@
     );
   }
 
+  // Stationslistan: den sparade används direkt, även när den är äldre än 7 dagar, så att appen går att
+  // använda utan nät. Är den gammal eller saknas hämtas en ny från Trafikverket – i bakgrunden när en
+  // sparad lista finns. Misslyckas hämtningen görs ett nytt försök när nätet kommer tillbaka.
+  let stationsStale=false;
+  let stationsRefreshing=null;
   async function loadAllStations(){
-    els.stationLoadStatus.style.display = 'block';
-    els.stationLoadStatus.textContent = 'Laddar stationer från Trafikverket...';
-
-    // Try cache first
-    const cached = loadStationsFromCache();
-    if(cached && cached.length > 0){
-      allStationsCache = cached;
-      els.stationLoadStatus.style.display = 'none';
+    const cached=loadStationsFromCache();
+    if(cached && cached.stations.length){
+      allStationsCache=cached.stations;
+      stationsStale=!cached.fresh;
+      els.stationLoadStatus.style.display='none';
+      if(stationsStale) refreshStations();
       return;
     }
-
-    // Fetch from API
-    try{
-      const stations = await fetchAllStationsFromAPI();
-      if(stations && stations.length > 0){
-        allStationsCache = stations;
-        saveStationsToCache(stations);
-        els.stationLoadStatus.style.display = 'none';
-      }else{
-        throw new Error('Inga stationer hämtade');
-      }
-    }catch(e){
-      console.error('Failed to load stations:', e);
-      // Fallback to baseStations
-      allStationsCache = baseStations.map(s => ({ name: s.name, sig: '', lat: s.lat, lon: s.lon }));
-      els.stationLoadStatus.textContent = 'Kunde inte hämta stationer, använder lokal lista';
-      setTimeout(() => { els.stationLoadStatus.style.display = 'none'; }, 3000);
-    }
+    els.stationLoadStatus.style.display='block';
+    els.stationLoadStatus.textContent='Laddar stationer från Trafikverket...';
+    await refreshStations();
   }
 
+  function refreshStations(){
+    if(stationsRefreshing) return stationsRefreshing;
+    stationsRefreshing=(async()=>{
+      try{
+        const stations=await fetchAllStationsFromAPI();
+        if(!stations || !stations.length) throw new Error('Inga stationer hämtade');
+        allStationsCache=stations;
+        stationsStale=false;
+        saveStationsToCache(stations);
+        els.stationLoadStatus.style.display='none';
+      }catch(e){
+        console.warn('Kunde inte hämta stationer:', e);
+        if(!allStationsCache.length){
+          els.stationLoadStatus.style.display='block';
+          els.stationLoadStatus.textContent='Kunde inte hämta stationerna från Trafikverket – försöker igen när det finns nät.';
+        }
+      }finally{
+        stationsRefreshing=null;
+      }
+    })();
+    return stationsRefreshing;
+  }
+
+  // { stations, fresh } – fresh är false när listan är äldre än STATIONS_CACHE_MAX_AGE_MS
   function loadStationsFromCache(){
     try{
       const data = localStorage.getItem(STORAGE_KEY_ALL_STATIONS);
       if(!data) return null;
       const parsed = JSON.parse(data);
-      if(Date.now() - parsed.timestamp > STATIONS_CACHE_MAX_AGE_MS) return null;
-      return parsed.stations;
+      if(!parsed || !Array.isArray(parsed.stations)) return null;
+      return { stations: parsed.stations, fresh: Date.now() - parsed.timestamp <= STATIONS_CACHE_MAX_AGE_MS };
     }catch(e){ return null; }
   }
 
@@ -1117,6 +1137,13 @@
         stations: stations
       }));
     }catch(e){}
+  }
+
+  // fetch med tidsgräns: med dålig täckning ska appen inte vänta i minuter på Trafikverket
+  function fetchWithTimeout(url, init, ms){
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(), ms);
+    return fetch(url, Object.assign({}, init, { signal:ctrl.signal })).finally(()=>clearTimeout(timer));
   }
 
   async function fetchAllStationsFromAPI(){
@@ -1132,11 +1159,11 @@
       </QUERY>
     </REQUEST>`;
 
-    const resp = await fetch(TRAFIKVERKET_API_URL, {
+    const resp = await fetchWithTimeout(TRAFIKVERKET_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/xml' },
       body: xmlRequest
-    });
+    }, STATIONS_FETCH_TIMEOUT_MS);
 
     if(!resp.ok) throw new Error('API error: ' + resp.status);
     const data = await resp.json();
@@ -1236,6 +1263,9 @@
       });
 
       cfg.input.addEventListener('input', () => {
+        // Ändrad text: det tidigare valet gäller inte längre (stationForInput tar ett exakt namn)
+        if(cfg.type === 'start') selectedStartStation = null;
+        else selectedEndStation = null;
         updateDropdown(cfg, cfg.input.value);
       });
 
@@ -1330,6 +1360,16 @@
     }
   }
 
+  // Stationen som fältet visar: den valda om texten är oförändrad, annars en station med exakt det
+  // namnet (stor och liten bokstav spelar ingen roll), annars ingen
+  function stationForInput(input, selected){
+    const text=(input.value||'').trim();
+    if(!text) return null;
+    if(selected && selected.name===text) return selected;
+    const key=text.toLocaleLowerCase('sv');
+    return allStationsCache.find(s=>s.name.toLocaleLowerCase('sv')===key) || null;
+  }
+
   function selectStation(cfg, name){
     const station = allStationsCache.find(s => s.name === name);
     if(!station) return;
@@ -1344,28 +1384,6 @@
     }
 
     addToRecentStations(station);
-  }
-
-  function getSelectedRoute(){
-    // Returns the array of stations between start and end
-    if(!selectedStartStation || !selectedEndStation) return null;
-    if(selectedStartStation.name === selectedEndStation.name) return null;
-
-    // Check if both are in our station catalog (for route building)
-    const startIdx = stationCatalog.findIndex(s => s.name === selectedStartStation.name);
-    const endIdx = stationCatalog.findIndex(s => s.name === selectedEndStation.name);
-
-    if(startIdx >= 0 && endIdx >= 0){
-      // Both in catalog - use existing route logic
-      const forward = startIdx < endIdx;
-      return forward ? stationCatalog.slice(startIdx, endIdx + 1) : stationCatalog.slice(endIdx, startIdx + 1).reverse();
-    }
-
-    // Stations not in catalog - just return start and end
-    return [
-      { ...selectedStartStation, radius: DEFAULT_RADIUS },
-      { ...selectedEndStation, radius: DEFAULT_RADIUS }
-    ];
   }
 
   function bindEvents(){
@@ -1471,9 +1489,11 @@
       return;
     }
 
-    // Validate selection
+    // Validate selection. Ett namn som skrivits in utan att väljas i listan gäller om det är en station.
+    selectedStartStation = stationForInput(els.startInput, selectedStartStation);
+    selectedEndStation = stationForInput(els.endInput, selectedEndStation);
     if(!selectedStartStation || !selectedEndStation){
-      showSetupError('Välj start- och slutstation.');
+      showSetupError(allStationsCache.length ? 'Välj start- och slutstation i listan.' : 'Stationerna är inte hämtade än – kontrollera nätet.');
       return;
     }
     const startName = selectedStartStation.name;
@@ -1510,21 +1530,12 @@
       }
     }
 
-    // Fallback: try stationCatalog or just start/end
+    // Utan tidtabell mäts bara start- och slutstation
     if(!slice || slice.length === 0){
-      const startIdx = stationCatalog.findIndex(s => s.name === startName || s.name.startsWith(startName) || startName.startsWith(s.name));
-      const endIdx = stationCatalog.findIndex(s => s.name === endName || s.name.startsWith(endName) || endName.startsWith(s.name));
-
-      if(startIdx >= 0 && endIdx >= 0 && startIdx !== endIdx){
-        const forward = startIdx < endIdx;
-        slice = forward ? stationCatalog.slice(startIdx, endIdx + 1) : stationCatalog.slice(endIdx, startIdx + 1).reverse();
-      }else{
-        // Just start and end
-        slice = [
-          { ...selectedStartStation, radius: DEFAULT_RADIUS },
-          { ...selectedEndStation, radius: DEFAULT_RADIUS }
-        ];
-      }
+      slice = [
+        { ...selectedStartStation, radius: DEFAULT_RADIUS },
+        { ...selectedEndStation, radius: DEFAULT_RADIUS }
+      ];
     }
 
     const route = slice.map(makeRouteStation);
@@ -1551,18 +1562,23 @@
       showJourneyMessage(`Tidtabell hämtad! (${stopCount} stationer)`, false);
       setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
     }else if(trainNumber && timetableResult){
-      showJourneyMessage(`Tidtabell: ${timetableResult.error}`, true);
+      showJourneyMessage(`Tidtabell: ${timetableResult.error} – bara start- och slutstation mäts`, true);
       setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
     }
   }
 
   // En station i resans rutt, i det format logiken för ankomst/avgång förväntar sig
   function makeRouteStation(st, idx){
+    // Egen mittpunkt (Flytta stationens mittpunkt hit) gäller före Trafikverkets koordinater
+    const own=loadStationCenters()[stationCenterKey(st)];
     return {
       name:st.name,
       sig:st.sig||'',
-      lat:st.lat,
-      lon:st.lon,
+      lat:own?own.lat:st.lat,
+      lon:own?own.lon:st.lon,
+      baseLat:st.lat,
+      baseLon:st.lon,
+      ownCenter:!!own,
       radius:isFinite(st.radius)?st.radius:DEFAULT_RADIUS,
       customRadius:!!st.customRadius,
       actualArrival:null,
@@ -1592,6 +1608,7 @@
   // Nollställer och startar en ny resa. Används av startJourney och av testerna.
   function initJourneyState(route, meta){
     speedHistory.length=0; // nollställer tidigare hastighetsposter inför ny resa
+    lastReportedSpeedAt=null;
     state.awaitingDepartureIndex=null;
     state.departureProvisionalIdx=null;
     state.lastSpeed=null;
@@ -1610,6 +1627,8 @@
     state.interruptions=[];
     state.lastFix=null;
     state.interruptionTipShown=false;
+    state.storageWarned=false;
+    state.prunedAtStart=prunedIds.size;
     startTrack(state.journeyId);
     if(els.journeyTitle) els.journeyTitle.textContent=journeyTitleText();
   }
@@ -1878,10 +1897,12 @@
     const lon=pos.coords.longitude;
     const acc=pos.coords.accuracy;
     checkForInterruption({ t:state.lastFixTime, lat, lon });
-    const speed=pos.coords.speed!=null?pos.coords.speed:estimateSpeedFromHistory(pos);
-    state.lastSpeed=speed;
-    state.lastSpeedTime=pos.timestamp||Date.now();
-    updateSpeedReadout(speed, acc);
+    const speed=speedOf(pos);
+    if(speed!=null){
+      state.lastSpeed=speed;
+      state.lastSpeedTime=pos.timestamp||Date.now();
+    }
+    updateSpeedReadout(speed!=null?speed:state.lastSpeed, acc);
     if(!state.route.length) return;
     const idxs=candidateIndices();
     idxs.forEach(idx=>{
@@ -1941,22 +1962,36 @@
     return !!(AV && t && AV.isWithinInterruption(t, state.interruptions));
   }
 
+  /* Fart i m/s för en position, eller null när den är okänd.
+     GPS:en anger oftast fart. Saknas den i en enstaka position (det händer någon gång per resa)
+     räknas positionen inte för stopp och avgång – tidigare räknades farten då mot en position
+     som kunde vara flera minuter gammal, och tåget verkade köra fast det stod still (Vedum 2026-11-24).
+     Anger telefonen aldrig fart räknas den ur positionerna, minst 3 s bakåt. */
   const speedHistory=[];
-  function estimateSpeedFromHistory(pos){
-    const now=pos.timestamp||Date.now();
-    speedHistory.push({
-      lat:pos.coords.latitude,
-      lon:pos.coords.longitude,
-      t:now
-    });
-    while(speedHistory.length>10) speedHistory.shift();
-    if(speedHistory.length<2) return null;
-    const a=speedHistory[speedHistory.length-2];
+  let lastReportedSpeedAt=null;
+  function speedOf(pos){
+    const t=pos.timestamp||Date.now();
+    speedHistory.push({ lat:pos.coords.latitude, lon:pos.coords.longitude, t });
+    while(speedHistory.length>1 && t-speedHistory[0].t>SPEED_EST_MAX_MS) speedHistory.shift();
+    while(speedHistory.length>30) speedHistory.shift();
+    const reported=pos.coords.speed;
+    if(Number.isFinite(reported) && reported>=0){
+      lastReportedSpeedAt=t;
+      return reported;
+    }
+    if(lastReportedSpeedAt!=null && t-lastReportedSpeedAt<SPEED_REPORTED_RECENT_MS) return null;
+    return estimateSpeedFromHistory(t);
+  }
+  function estimateSpeedFromHistory(t){
     const b=speedHistory[speedHistory.length-1];
-    const dt=(b.t-a.t)/1000;
-    if(dt<=0) return null;
-    const dist=haversine(a.lat,a.lon,b.lat,b.lon);
-    return dist/dt;
+    for(let i=speedHistory.length-2;i>=0;i--){
+      const a=speedHistory[i];
+      const dt=t-a.t;
+      if(dt<SPEED_EST_MIN_MS) continue;
+      if(dt>SPEED_EST_MAX_MS) break;
+      return haversine(a.lat,a.lon,b.lat,b.lon)/(dt/1000);
+    }
+    return null;
   }
 
   function updateSpeedReadout(speed, accuracy){
@@ -2173,24 +2208,21 @@
     }
     if(speed<SPEED_THRESHOLD_MS) station.startMoveSince=null;
     if(station.reachedLowSpeed && speed>=SPEED_THRESHOLD_MS){
-      let departAt=new Date();
-      let departPos=pos?{
-        lat:pos.coords.latitude,
-        lon:pos.coords.longitude,
-        accuracy:pos.coords.accuracy||null
-      }:null;
-      // Startstationen: GPS:en ger ofta några sekunder falsk fart medan den låser in sig.
-      // Avgång kräver därför rörelse i START_DEPART_CONFIRM_MS i sträck och räknas från
-      // första positionen i rörelse.
-      if(idx===0){
-        if(!station.startMoveSince){
-          station.startMoveSince={ t:now, pos:departPos };
-        }
-        if(now-station.startMoveSince.t<START_DEPART_CONFIRM_MS) continue;
-        departAt=new Date(station.startMoveSince.t);
-        departPos=station.startMoveSince.pos;
-        station.startMoveSince=null;
+      // GPS:en ger ibland falsk fart när tåget står still: några sekunder vid start medan den
+      // låser in sig, och en enstaka mätning när tåget rullar in de sista metrarna (Hällekis
+      // 2026-11-02). Avgång kräver därför rörelse i sträck – START_DEPART_CONFIRM_MS vid
+      // startstationen, DEPART_CONFIRM_MS annars – och räknas från första positionen i rörelse.
+      if(!station.startMoveSince){
+        station.startMoveSince={ t:now, pos:pos?{
+          lat:pos.coords.latitude,
+          lon:pos.coords.longitude,
+          accuracy:pos.coords.accuracy||null
+        }:null };
       }
+      if(now-station.startMoveSince.t<(idx===0?START_DEPART_CONFIRM_MS:DEPART_CONFIRM_MS)) continue;
+      const departAt=new Date(station.startMoveSince.t);
+      const departPos=station.startMoveSince.pos;
+      station.startMoveSince=null;
       station.actualDeparture=departAt;
       station.departSource='gps';
       station.departurePosition=departPos;
@@ -2282,7 +2314,8 @@
       if(!movingFast){
         return;
       }
-      const moveStart=idx===0?station.startMoveSince:null;
+      // Har rörelsen redan börjat räknas (processSpeedTriggers) gäller tiden då den började
+      const moveStart=station.startMoveSince||null;
       station.startMoveSince=null;
       station.actualDeparture=moveStart?new Date(moveStart.t):new Date();
       station.departSource='gps';
@@ -2292,17 +2325,10 @@
         accuracy:pos.coords.accuracy||null
       }:null);
       station.needsArrivalRetiming=false;
-      // Om vi aldrig stannade (reachedLowSpeed=false) är detta en passering - bekräfta direkt
-      // Om vi stannade men nu rör oss, är avgången också bekräftad
+      // Avgång vid zonutgång är alltid bekräftad: tåget rör sig och har lämnat stationen
       station.departureProvisional=false;
-      station.departureProvisionalAt=station.departureProvisional?Date.now():null;
-      if(station.departureProvisional){
-        state.departureProvisionalIdx=idx;
-      }
+      station.departureProvisionalAt=null;
       advanceAfterDeparture(idx);
-      if(station.departureProvisional){
-        state.awaitingDepartureIndex=idx;
-      }
     }
   }
 
@@ -2502,6 +2528,7 @@
           <div class="card-foot">
             <span class="meta" data-role="geo"></span>
             <button class="link-btn" data-action="update-pos" data-idx="${idx}">Flytta stationens mittpunkt hit</button>
+            <button class="link-btn" data-action="reset-pos" data-idx="${idx}" hidden>Återställ mittpunkten</button>
           </div>
         </div>
       </div>
@@ -2542,7 +2569,9 @@
     if(station.scheduledArrival) sched.push(`Ankomst ${formatClock(station.scheduledArrival)}`);
     if(station.scheduledDeparture) sched.push(`avgång ${formatClock(station.scheduledDeparture)}`);
     card.querySelector('[data-role="sched"]').textContent = sched.length ? `Tidtabell: ${sched.join(', ')}` : 'Ingen tidtabell för stationen';
-    card.querySelector('[data-role="geo"]').textContent = `${Math.round(station.radius)} m radie`;
+    card.querySelector('[data-role="geo"]').textContent = `${Math.round(station.radius)} m radie${station.ownCenter?' · egen mittpunkt':''}`;
+    const resetBtn=card.querySelector('[data-action="reset-pos"]');
+    if(resetBtn) resetBtn.hidden=!station.ownCenter;
 
     const stopBox=card.querySelector('[data-action="toggle-stop"]');
     if(stopBox) stopBox.checked=!!station.shouldStop;
@@ -2611,8 +2640,10 @@
       const station=state.route[idx];
       if(!station) return;
       // Flyttar stationens mittpunkt och påverkar när ankomst/avgång registreras – fråga först
-      if(!confirm(`Flytta mittpunkten för ${station.name} till din nuvarande position?\n\nDet påverkar när ankomst och avgång registreras vid stationen under den här resan.`)) return;
-      calibrateWithCurrentPosition(station.name, true);
+      if(!confirm(`Flytta mittpunkten för ${station.name} till din nuvarande position?\n\nDen sparas och gäller även kommande resor. Den påverkar när ankomst och avgång registreras vid stationen. Du kan återställa den i stationens kort.`)) return;
+      calibrateStation(idx);
+    }else if(btn.dataset.action==='reset-pos'){
+      resetStationCenter(idx);
     }
   }
 
@@ -2717,13 +2748,13 @@
   function enableWakeLockForJourney(){
     if(TEST_MODE || keepScreenAwake || !('wakeLock' in navigator)) return;
     wakeLockByJourney=true;
-    requestWakeLock();
+    requestWakeLock(true);
   }
 
   function releaseWakeLockAfterJourney(){
     if(!wakeLockByJourney) return;
     wakeLockByJourney=false;
-    if(keepScreenAwake) releaseWakeLock();
+    if(keepScreenAwake) releaseWakeLock(true);
   }
 
   function renderReport(logEntry){
@@ -2784,8 +2815,19 @@
     const when=started?`${started.toLocaleDateString('sv-SE')} ${formatClock(started)}${finished?`–${formatClock(finished)}`:''}`:'';
     const meta=[logEntry.trainNumber?`Tåg ${escapeHtml(logEntry.trainNumber)}`:null, logEntry.vehicleType?escapeHtml(logEntry.vehicleType):null, when].filter(Boolean).join(' · ');
     const status=(state.aborted?'Avbruten':'Klar')+(state.autoReason?` – ${escapeHtml(state.autoReason)}`:'');
+    let saveNote='';
+    if(lastSaveProblem && lastSaveProblem.id===logEntry.id){
+      if(lastSaveProblem.kind==='unsaved'){
+        saveNote=`<p class="save-warn" role="alert">Resan kunde inte sparas på telefonen – lagringen är full. ${loadGithubSettings()
+          ? 'Den laddas upp till GitHub när det finns täckning. Stäng inte appen förrän det står att resan är uppladdad.'
+          : 'Exportera den nu via ⋮ → Exportera JSON innan du stänger appen.'}</p>`;
+      }else{
+        const n=lastSaveProblem.count;
+        saveNote=`<p class="meta">Lagringen var full: ${n} äldre ${n===1?'körning':'körningar'} som redan finns i GitHub togs bort från telefonen.</p>`;
+      }
+    }
 
-    els.reportHTML.innerHTML=`
+    els.reportHTML.innerHTML=`${saveNote}
       <div class="report-summary">
         <div class="rs-title">${escapeHtml(logEntry.startStation||'')} → ${escapeHtml(logEntry.endStation||'')}</div>
         <div class="meta">${meta}</div>
@@ -2974,7 +3016,8 @@
     const waitingRuns=loadLogs().filter(l=>!uploaded.has(String(l.id))).length;
     let waitingTracks=0;
     try{
-      waitingTracks=(await TrackStore.list()).filter(id=>!(state.running && id===state.journeyId)).length;
+      const logIds=new Set(loadLogs().map(l=>String(l.id)));
+      waitingTracks=(await TrackStore.list()).filter(id=>logIds.has(id) && !(state.running && id===state.journeyId)).length;
     }catch(e){}
     const lines=[`<strong>Uppladdat:</strong> ${uploaded.size} körningar, ${st.uploadedTrackCount} spår`];
     if(waitingRuns || waitingTracks) lines.push(`<strong>Väntar:</strong> ${waitingRuns} körningar, ${waitingTracks} spår`);
@@ -3189,9 +3232,9 @@
     return found===legs.length ? 'ok' : (found ? 'partial' : 'failed');
   }
 
-  // GPS-spåret för resan som [lat, lon]
-  function trailPoints(){
-    return track.points.filter(p=>p[1]!=null && p[2]!=null && !(p[3]!=null && p[3]>100)).map(p=>[p[1], p[2]]);
+  // Positioner i GPS-spåret som ritas: med koordinater och noggrannhet högst 100 m
+  function isTrailPoint(p){
+    return p[1]!=null && p[2]!=null && !(p[3]!=null && p[3]>100);
   }
 
   // Stationens färg på kartan: grå ej passerad, orange här, grön klar, blå nästa
@@ -3318,15 +3361,23 @@
     const { X, Y, width, height }=mapView;
     const trail=document.getElementById('mapTrail');
     if(trail){
-      // Glesa ut punkter som ligger närmare än 2 px på skärmen
-      let out='', lx=null, ly=null;
-      for(const p of trailPoints()){
-        const x=X(p[1]), y=Y(p[0]);
-        if(lx!=null && Math.abs(x-lx)<2 && Math.abs(y-ly)<2) continue;
-        out+=`${out?'L':'M'}${x.toFixed(1)},${y.toFixed(1)}`;
-        lx=x; ly=y;
+      // Bara nya positioner läggs till; hela spåret räknas om när bakgrunden ritats om. Förut gicks
+      // hela spåret igenom vid varje position, vilket tar allt längre tid ju längre resan blir.
+      // Punkter närmare än 2 px på skärmen glesas ut.
+      let tr=mapView.trail;
+      const fresh=!tr || tr.src!==track.points || tr.n>track.points.length;
+      if(fresh) tr=mapView.trail={ src:track.points, n:0, d:'', lx:null, ly:null };
+      const before=tr.d.length;
+      for(let i=tr.n;i<track.points.length;i++){
+        const p=track.points[i];
+        if(!isTrailPoint(p)) continue;
+        const x=X(p[2]), y=Y(p[1]);
+        if(tr.lx!=null && Math.abs(x-tr.lx)<2 && Math.abs(y-tr.ly)<2) continue;
+        tr.d+=`${tr.d?'L':'M'}${x.toFixed(1)},${y.toFixed(1)}`;
+        tr.lx=x; tr.ly=y;
       }
-      trail.setAttribute('d', out);
+      tr.n=track.points.length;
+      if(fresh || tr.d.length!==before) trail.setAttribute('d', tr.d);
     }
     const marker=document.getElementById('mapPos');
     if(marker){
@@ -3395,9 +3446,16 @@
     if(AV) entry.stops=AV.applyInterruptionWindows(entry.stops, entry.interruptions);
     if(GH && track.runId===entry.id && track.points.length) entry.trackPath=GH.trackPath(entry);
     logs.push(entry);
-    try{
-      localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(logs));
-    }catch(e){}
+    if(storeLogs(logs)){
+      unsavedLogs=[];
+      const pruned=prunedIds.size-(state.prunedAtStart||0); // även det som frigjordes under resan
+      lastSaveProblem = pruned ? { kind:'pruned', id:entry.id, count:pruned } : null;
+    }else{
+      // Får inte plats: finns kvar i minnet så att den laddas upp och kan exporteras
+      const stored=new Set(readStoredLogs().map(l=>String(l.id)));
+      unsavedLogs=logs.filter(l=>!stored.has(String(l.id))).map(l=>normalizeLogEntry(JSON.parse(JSON.stringify(l))));
+      lastSaveProblem={ kind:'unsaved', id:entry.id };
+    }
     updateLogCount();
 
     if(entry.trainNumber && entry.startStation && entry.endStation) {
@@ -3407,7 +3465,15 @@
     return entry;
   }
 
+  // Sparade körningar, plus de som inte fick plats i lagringen under den här sessionen
   function loadLogs(){
+    const stored=readStoredLogs();
+    if(!unsavedLogs.length) return stored;
+    const ids=new Set(stored.map(l=>String(l.id)));
+    return stored.concat(unsavedLogs.filter(l=>!ids.has(String(l.id))));
+  }
+
+  function readStoredLogs(){
     try{
       const raw=localStorage.getItem(STORAGE_KEY_LOGS);
       if(!raw) return [];
@@ -3417,6 +3483,64 @@
     }catch(e){
       return [];
     }
+  }
+
+  // ── Lagring ──
+  // localStorage rymmer ungefär 5 MB och delas av alla sidor på akjork.github.io. Blir den full frigörs
+  // plats i steg innan något ges upp: först kartans sparade spårsträckor (de hämtas igen), sedan de
+  // äldsta körningarna som redan finns i GitHub-repot. En körning som ändå inte får plats finns kvar i
+  // minnet (unsavedLogs), så att den laddas upp och kan exporteras, och rapporten säger det.
+  let unsavedLogs=[];
+  let lastSaveProblem=null;   // { kind:'unsaved'|'pruned', id, count } för den senast sparade resan
+  const prunedIds=new Set();  // körningar som tagits bort från telefonen för att frigöra plats
+
+  function isQuotaError(e){
+    return !!e && (e.name==='QuotaExceededError' || e.name==='NS_ERROR_DOM_QUOTA_REACHED' || e.code===22 || e.code===1014);
+  }
+
+  // Sparar värdet. Är lagringen full frigörs plats och sparandet görs om; makeValue anropas på nytt
+  // efter varje steg, eftersom ett steg kan ha ändrat vad som ska sparas (färre körningar).
+  function setItemWithRoom(key, makeValue){
+    for(;;){
+      try{ localStorage.setItem(key, makeValue()); return true; }
+      catch(e){
+        if(!isQuotaError(e)){ console.warn('Kunde inte spara '+key, e); return false; }
+      }
+      if(!makeRoom()) return false;
+    }
+  }
+
+  function makeRoom(){
+    try{
+      if(localStorage.getItem(STORAGE_KEY_RAIL)!=null){ localStorage.removeItem(STORAGE_KEY_RAIL); return true; }
+    }catch(e){}
+    return pruneUploadedLogs()>0;
+  }
+
+  function uploadedRunIds(){
+    const settings=loadGithubSettings();
+    if(!GH || !settings) return new Set();
+    return new Set(GH.normalizeState(loadUploadState(), settings.repo).uploadedIds.map(String));
+  }
+
+  // Tar bort den äldsta fjärdedelen (minst en) av de sparade körningar som redan är uppladdade
+  function pruneUploadedLogs(){
+    const uploaded=uploadedRunIds();
+    if(!uploaded.size) return 0;
+    const stored=readStoredLogs();
+    const removable=stored.filter(l=>uploaded.has(String(l.id)))
+      .sort((a,b)=>String(a.startedAt||'').localeCompare(String(b.startedAt||'')));
+    if(!removable.length) return 0;
+    const drop=new Set(removable.slice(0, Math.max(1, Math.ceil(removable.length/4))).map(l=>String(l.id)));
+    try{ localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(stored.filter(l=>!drop.has(String(l.id))))); }
+    catch(e){ return 0; } // skrivs aldrig över med tomt – hellre inget frigjort än förlorade körningar
+    drop.forEach(id=>prunedIds.add(id));
+    return drop.size;
+  }
+
+  // Sparar alla körningar utom dem som tagits bort för att frigöra plats. Returnerar true om det gick.
+  function storeLogs(logs){
+    return setItemWithRoom(STORAGE_KEY_LOGS, ()=>JSON.stringify(prunedIds.size ? logs.filter(l=>!prunedIds.has(String(l.id))) : logs));
   }
 
   function loadRouteHistory(){
@@ -3508,24 +3632,26 @@
       return;
     }
 
+    // Vänta tills föraren slutat skriva; ett svar för ett nummer som hunnit ändras visas inte
     clearTimeout(handleTrainNumberInput._timer);
     handleTrainNumberInput._timer = setTimeout(async () => {
       const currentTime = new Date();
       const currentHour = currentTime.getHours();
-      const currentMinute = currentTime.getMinutes();
+      const stillCurrent = () => (document.getElementById('trainNumber').value||'').trim() === trainNumber;
 
       let suggestion = null;
       let suggestionSource = '';
 
       const timetableResult = await fetchTimetable(trainNumber, currentTime);
+      if(!stillCurrent()) return;
 
       if(timetableResult.success && timetableResult.timetable) {
         const nearestStation = await findNearestStation();
+        if(!stillCurrent()) return;
         const timeBasedRoute = findCurrentRouteSegment(
           timetableResult.timetable,
           nearestStation,
-          currentHour,
-          currentMinute
+          currentTime
         );
 
         if(timeBasedRoute) {
@@ -3559,7 +3685,7 @@
         document.getElementById('routeSuggestion').style.display='none';
         currentSuggestion = null;
       }
-    }, 300);
+    }, 600);
   }
 
   function acceptSuggestion(){
@@ -3582,45 +3708,38 @@
     showHeaderStatus(`✓ Rutt vald: ${currentSuggestion.start} → ${currentSuggestion.end}`, false);
   }
 
+  // Närmaste station till föraren. GPS-uppvärmningen håller positionen färsk; annars läses den en gång.
   async function findNearestStation(){
+    const nearestTo = (lat, lon) => {
+      let nearest = null;
+      let minDistance = Infinity;
+      allStationsCache.forEach(station => {
+        if(!station.lat || !station.lon) return;
+        const dist = haversine(lat, lon, station.lat, station.lon);
+        if(dist < minDistance) {
+          minDistance = dist;
+          nearest = station.name;
+        }
+      });
+      return nearest;
+    };
+    if(userLocation && state.lastFixTime && Date.now()-state.lastFixTime < 60000) return nearestTo(userLocation.lat, userLocation.lon);
     return new Promise((resolve) => {
       if(!navigator.geolocation) {
         resolve(null);
         return;
       }
-
       navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const userLat = position.coords.latitude;
-          const userLon = position.coords.longitude;
-
-          let nearest = null;
-          let minDistance = Infinity;
-
-          // Use allStationsCache instead of stationCatalog
-          allStationsCache.forEach(station => {
-            if(!station.lat || !station.lon) return;
-            const dist = haversine(userLat, userLon, station.lat, station.lon);
-            if(dist < minDistance) {
-              minDistance = dist;
-              nearest = station.name;
-            }
-          });
-
-          resolve(nearest);
-        },
-        (error) => {
-          resolve(null);
-        },
+        (position) => resolve(nearestTo(position.coords.latitude, position.coords.longitude)),
+        () => resolve(null),
         { timeout: 5000, maximumAge: 60000 }
       );
     });
   }
 
-  function findCurrentRouteSegment(timetable, nearestStation, currentHour, currentMinute){
+  function findCurrentRouteSegment(timetable, nearestStation, now){
     if(!timetable || !nearestStation) return null;
 
-    const currentTimeMinutes = currentHour * 60 + currentMinute;
     const BEFORE_MARGIN = 30;
     const AFTER_MARGIN = 15;
 
@@ -3637,9 +3756,8 @@
 
     const depHour = departureTime.getHours();
     const depMinute = departureTime.getMinutes();
-    const depTimeMinutes = depHour * 60 + depMinute;
-
-    const timeDiff = currentTimeMinutes - depTimeMinutes;
+    // Minuter efter planerad avgång; räknat på tidpunkter, så att det stämmer även över midnatt
+    const timeDiff = (now - departureTime) / 60000;
 
     if(timeDiff >= -BEFORE_MARGIN && timeDiff <= AFTER_MARGIN) {
       const sortedStations = Object.keys(timetable)
@@ -3719,10 +3837,12 @@
       const writable=await handle.createWritable();
       await writable.write(JSON.stringify(merged,null,2));
       await writable.close();
-      try{
-        localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(merged));
-      }catch(e){}
+      const storedOk=storeLogs(merged);
       updateLogCount();
+      if(!storedOk){
+        showHeaderStatus('Filen är synkad, men lagringen på enheten är full – alla körningar fick inte plats här.', true);
+        return;
+      }
       const message = normalizedIncoming.length
         ? `Synk klar: +${added} / ignorerade ${ignored}`
         : 'Ingen giltig logg hittades i filen.';
@@ -3753,27 +3873,7 @@
       showHeaderStatus('Inga loggar att exportera.', true);
       return;
     }
-    const rows=[['Datum','Tåg','Fordon','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa']];
-    logs.forEach(log=>{
-      const logDate=log.startedAt?new Date(log.startedAt).toLocaleDateString('sv-SE'):'';
-      const trainNum=log.trainNumber||'';
-      const vehicleType=log.vehicleType||'';
-      const fromSt=log.startStation||'';
-      const toSt=log.endStation||'';
-      (log.stops||[]).forEach(st=>{
-        const arr=st.actualArrival?new Date(st.actualArrival).toLocaleTimeString('sv-SE'):'';
-        const dep=st.actualDeparture?new Date(st.actualDeparture).toLocaleTimeString('sv-SE'):'';
-        const schArr=st.scheduledArrival?new Date(st.scheduledArrival).toLocaleTimeString('sv-SE'):'';
-        const schDep=st.scheduledDeparture?new Date(st.scheduledDeparture).toLocaleTimeString('sv-SE'):'';
-        let delay='';
-        if(st.actualArrival&&st.scheduledArrival){
-          delay=Math.round((new Date(st.actualArrival)-new Date(st.scheduledArrival))/60000);
-        }
-        const source=st.arrivalSource||'';
-        rows.push([logDate,trainNum,vehicleType,fromSt,toSt,st.name,st.order||'',arr,dep,schArr,schDep,delay,source]);
-      });
-    });
-    const csv=rows.map(r=>r.map(c=>'"'+(c+'').replace(/"/g,'""')+'"').join(';')).join('\n');
+    const csv=logsCsv(logs);
     const bom='\uFEFF';
     const blob=new Blob([bom+csv],{type:'text/csv;charset=utf-8'});
     const url=URL.createObjectURL(blob);
@@ -3784,6 +3884,31 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+
+  // CSV med en rad per station: semikolon och citattecken, som Excel med svenska inställningar vill ha
+  function logsCsv(logs){
+    const rows=[['Datum','Tåg','Fordon','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa']];
+    logs.forEach(log=>{
+      const logDate=log.startedAt?new Date(log.startedAt).toLocaleDateString('sv-SE'):'';
+      const trainNum=log.trainNumber||'';
+      const vehicleType=log.vehicleType||'';
+      const fromSt=log.startStation||'';
+      const toSt=log.endStation||'';
+      (log.stops||[]).forEach((st, idx)=>{
+        const arr=st.actualArrival?new Date(st.actualArrival).toLocaleTimeString('sv-SE'):'';
+        const dep=st.actualDeparture?new Date(st.actualDeparture).toLocaleTimeString('sv-SE'):'';
+        const schArr=st.scheduledArrival?new Date(st.scheduledArrival).toLocaleTimeString('sv-SE'):'';
+        const schDep=st.scheduledDeparture?new Date(st.scheduledDeparture).toLocaleTimeString('sv-SE'):'';
+        let delay='';
+        if(st.actualArrival&&st.scheduledArrival){
+          delay=Math.round((new Date(st.actualArrival)-new Date(st.scheduledArrival))/60000);
+        }
+        const source=st.arrivalSource||'';
+        rows.push([logDate,trainNum,vehicleType,fromSt,toSt,st.name,idx+1,arr,dep,schArr,schDep,delay,source]);
+      });
+    });
+    return rows.map(r=>r.map(c=>'"'+(c+'').replace(/"/g,'""')+'"').join(';')).join('\n');
   }
 
   async function saveLogsToFile(){
@@ -3838,11 +3963,9 @@
       const writable=await handle.createWritable();
       await writable.write(JSON.stringify(merged,null,2));
       await writable.close();
-      try{
-        localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(merged));
-      }catch(e){}
+      const storedOk=storeLogs(merged);
       updateLogCount();
-      showHeaderStatus(`Sparat & synkat: ${merged.length} loggar`, false);
+      showHeaderStatus(storedOk ? `Sparat & synkat: ${merged.length} loggar` : 'Filen är sparad, men lagringen på enheten är full – alla körningar fick inte plats här.', !storedOk);
     }catch(err){
       if(err && err.name==='AbortError'){
         showHeaderStatus('Sparande avbröts.', true);
@@ -3856,6 +3979,7 @@
   function clearLogs(){
     if(!confirm('Vill du ta bort alla sparade körningar?')) return;
     localStorage.removeItem(STORAGE_KEY_LOGS);
+    unsavedLogs=[];
     updateLogCount();
   }
 
@@ -3865,31 +3989,61 @@
     els.logCountTop.title=`${count} sparade loggar`;
   }
 
-  function calibrateWithCurrentPosition(name, updateActiveRoute){
-    const applyPosition=pos=>{
-      if(!stationOverrides[name]) stationOverrides[name]={};
-      stationOverrides[name].lat=pos.coords.latitude;
-      stationOverrides[name].lon=pos.coords.longitude;
-      saveStationOverrides();
-      if(updateActiveRoute && state.route && state.route.length){
-        state.route.forEach(st=>{
-          if(st.name===name){
-            st.lat=pos.coords.latitude;
-            st.lon=pos.coords.longitude;
-          }
-        });
-        renderRouteCards();
-        renderRouteMap(true);
+  // ── Egna mittpunkter ──
+  // Trafikverkets koordinat ligger ibland en bit från där tåget stannar. Föraren kan flytta stationens
+  // mittpunkt till sin position; den sparas per station (signatur, annars namn) och gäller även kommande
+  // resor tills den återställs i stationens kort.
+  function stationCenterKey(st){
+    return st && st.sig ? 'sig:'+st.sig : 'namn:'+((st && st.name)||'');
+  }
+  function loadStationCenters(){
+    try{
+      const c=JSON.parse(localStorage.getItem(STORAGE_KEY_STATION_CENTERS)||'{}');
+      return c && typeof c==='object' ? c : {};
+    }catch(e){ return {}; }
+  }
+  function saveStationCenters(centers){
+    return setItemWithRoom(STORAGE_KEY_STATION_CENTERS, ()=>JSON.stringify(centers));
+  }
+
+  // Sätter mittpunkten för stationen (och samma station om den finns flera gånger i rutten)
+  function applyStationCenter(key, lat, lon, own){
+    state.route.forEach(st=>{
+      if(stationCenterKey(st)!==key) return;
+      if(st.baseLat==null){ st.baseLat=st.lat; st.baseLon=st.lon; } // resa startad före 2026-11-25d
+      st.lat=lat;
+      st.lon=lon;
+      st.ownCenter=own;
+    });
+    renderRouteCards();
+    renderRouteMap(true);
+  }
+
+  function calibrateStation(idx){
+    const station=state.route[idx];
+    if(!station) return;
+    const apply=pos=>{
+      const acc=pos.coords.accuracy;
+      if(acc!=null && acc>CALIBRATE_MAX_ACCURACY_M){
+        showJourneyMessage(`GPS:en är för osäker (±${Math.round(acc)} m) – försök igen när den är under ±${CALIBRATE_MAX_ACCURACY_M} m`, true);
+        setTimeout(()=>{ els.journeyMsg.style.display='none'; },5000);
+        return;
       }
-      showJourneyMessage(`Uppdaterade ${name}`, false);
-      setTimeout(()=>{ els.journeyMsg.style.display='none'; },3000);
+      const key=stationCenterKey(station);
+      const lat=pos.coords.latitude, lon=pos.coords.longitude;
+      const centers=loadStationCenters();
+      centers[key]={ lat, lon, at:new Date().toISOString() };
+      const saved=saveStationCenters(centers);
+      applyStationCenter(key, lat, lon, true);
+      showJourneyMessage(saved ? `Ny mittpunkt för ${station.name} – sparad till kommande resor` : `Ny mittpunkt för ${station.name} – bara den här resan (lagringen är full)`, !saved);
+      setTimeout(()=>{ els.journeyMsg.style.display='none'; },4000);
     };
-    if(state.lastPosition){
-      applyPosition(state.lastPosition);
+    if(state.lastPosition && state.lastFixTime && Date.now()-state.lastFixTime<30000){
+      apply(state.lastPosition);
     }else if(navigator.geolocation){
       navigator.geolocation.getCurrentPosition(pos=>{
         state.lastPosition=pos;
-        applyPosition(pos);
+        apply(pos);
       }, err=>{
         showJourneyMessage(err&&err.message?err.message:'Kunde inte läsa GPS.', true);
       }, {enableHighAccuracy:true, timeout:20000});
@@ -3898,36 +4052,17 @@
     }
   }
 
-  function loadStationOverrides(){
-    try{
-      const raw=localStorage.getItem(STORAGE_KEY_STATIONS);
-      if(!raw) return {};
-      const parsed=JSON.parse(raw);
-      return parsed&&typeof parsed==='object'?parsed:{};
-    }catch(e){
-      return {};
-    }
-  }
-
-  function saveStationOverrides(){
-    try{
-      localStorage.setItem(STORAGE_KEY_STATIONS, JSON.stringify(stationOverrides));
-    }catch(e){}
-  }
-
-  function composeStationCatalog(){
-    return baseStations.map(base=>{
-      const override=stationOverrides[base.name]||{};
-      const hasCustomRadius=override.radius!=null;
-      const derivedRadius=hasCustomRadius?override.radius:(base.radius!=null?base.radius:DEFAULT_RADIUS);
-      return {
-        name:base.name,
-        lat:override.lat!=null?override.lat:base.lat,
-        lon:override.lon!=null?override.lon:base.lon,
-        radius:isFinite(derivedRadius)?derivedRadius:DEFAULT_RADIUS,
-        customRadius:hasCustomRadius
-      };
-    });
+  // Tillbaka till Trafikverkets koordinater
+  function resetStationCenter(idx){
+    const station=state.route[idx];
+    if(!station) return;
+    const key=stationCenterKey(station);
+    const centers=loadStationCenters();
+    delete centers[key];
+    saveStationCenters(centers);
+    if(station.baseLat!=null) applyStationCenter(key, station.baseLat, station.baseLon, false);
+    showJourneyMessage(`${station.name}: Trafikverkets mittpunkt igen`, false);
+    setTimeout(()=>{ els.journeyMsg.style.display='none'; },3000);
   }
 
   function showSetupError(text){
@@ -3947,6 +4082,7 @@
 
   function resetForNewRun(){
     speedHistory.length=0; // rensa hastighetshistorik mellan körningar
+    lastReportedSpeedAt=null;
     state.awaitingDepartureIndex=null;
     state.lastSpeed=null;
     state.lastSpeedTime=null;
@@ -3961,7 +4097,7 @@
   }
 
   function escapeHtml(str){
-    return str.replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    return String(str==null?'':str).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   }
 
   function haversine(lat1, lon1, lat2, lon2){
@@ -3976,24 +4112,36 @@
 
   // Stationssignaturer hämtas nu dynamiskt från API:t via station.sig
 
+  // Lokal tid utan tidszon (ÅÅÅÅ-MM-DDTHH:MM:SS), så som Trafikverket tolkar tider i frågor
+  function localIso(d){
+    const p=n=>String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
+  /* Tidtabellen för den körning av tågnumret som går närmast `date`.
+     Frågan täcker ±12 h runt tidpunkten i lokal tid och körningarna skiljs åt med DepartureDateOTN.
+     Tidigare frågades hela dygnet enligt UTC-datum: mellan 00 och 01 (sommartid 00 och 02) blev det
+     gårdagens tidtabell, och för tåg som går över midnatt föll stationerna efter midnatt bort.
+     Lyckade svar återanvänds i 15 min, så att Start inte hämtar samma tidtabell som förslaget nyss hämtade. */
+  const TIMETABLE_REUSE_MS=15*60*1000;
+  const timetableCache=new Map(); // tågnummer → { fetchedAt, at, result }
   async function fetchTimetable(otn, date){
-    if(!otn) return { success: false, error: 'Inget tågnummer angivet' };
+    const train=String(otn||'').trim().replace(/[^0-9A-Za-z]/g,'');
+    if(!train) return { success: false, error: 'Inget tågnummer angivet' };
+    const at = date ? new Date(date) : new Date();
+    const hit=timetableCache.get(train);
+    if(hit && Date.now()-hit.fetchedAt<TIMETABLE_REUSE_MS && Math.abs(at-hit.at)<TIMETABLE_REUSE_MS) return hit.result;
     try{
-      const targetDate = date ? new Date(date) : new Date();
-      const targetDateStr = targetDate.toISOString().split('T')[0];
-
-      // Skapa datumintervall för API-filtret (hela dygnet)
-      const dateStart = targetDateStr + 'T00:00:00';
-      const dateEnd = targetDateStr + 'T23:59:59';
-
+      const from=localIso(new Date(at.getTime()-12*3600000));
+      const to=localIso(new Date(at.getTime()+12*3600000));
       const xmlRequest = `<REQUEST>
         <LOGIN authenticationkey="${TRAFIKVERKET_API_KEY}" />
         <QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="500">
           <FILTER>
             <AND>
-              <EQ name="OperationalTrainNumber" value="${otn}" />
-              <GTE name="AdvertisedTimeAtLocation" value="${dateStart}" />
-              <LTE name="AdvertisedTimeAtLocation" value="${dateEnd}" />
+              <EQ name="OperationalTrainNumber" value="${train}" />
+              <GTE name="AdvertisedTimeAtLocation" value="${from}" />
+              <LTE name="AdvertisedTimeAtLocation" value="${to}" />
             </AND>
           </FILTER>
           <INCLUDE>LocationSignature</INCLUDE>
@@ -4005,31 +4153,30 @@
         </QUERY>
       </REQUEST>`;
 
-      const response = await fetch(TRAFIKVERKET_API_URL, {
+      const response = await fetchWithTimeout(TRAFIKVERKET_API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/xml' },
         body: xmlRequest
-      });
+      }, TIMETABLE_FETCH_TIMEOUT_MS);
 
       if(!response.ok) {
         return { success: false, error: `API-fel: HTTP ${response.status}` };
       }
 
       const data = await response.json();
-      const filtered = data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [];
+      const announcements = nearestTrainRun(data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [], at);
 
-      if(!filtered.length) {
-        return { success: false, error: `Tåg ${otn} hittades inte för ${targetDateStr}` };
+      if(!announcements.length) {
+        return { success: false, error: `Tåg ${train} hittades inte kring ${formatClock(at)} ${at.toLocaleDateString('sv-SE')}` };
       }
 
       const timetable = {};
       const stationStops = new Set();
 
-      filtered.forEach(ann => {
+      announcements.forEach(ann => {
         const sig = ann.LocationSignature;
         const time = ann.AdvertisedTimeAtLocation;
         const activity = ann.ActivityType;
-        const advertised = ann.Advertised;
 
         if(!sig || !time) return;
 
@@ -4051,16 +4198,20 @@
         }
       });
 
-      return {
+      const result = {
         success: true,
         timetable,
         stationStops: Array.from(stationStops),
         stationCount: Object.keys(timetable).length
       };
+      timetableCache.set(train, { fetchedAt: Date.now(), at, result });
+      return result;
     }catch(err){
       console.error('Kunde inte hämta tidtabell:', err);
       let errorMsg = 'Okänt fel vid API-anrop';
-      if(!navigator.onLine){
+      if(err && err.name === 'AbortError'){
+        errorMsg = `Trafikverket svarade inte inom ${TIMETABLE_FETCH_TIMEOUT_MS/1000} s (dålig täckning?)`;
+      }else if(!navigator.onLine){
         errorMsg = 'Ingen internetanslutning – tidtabell kunde inte hämtas';
       }else if(err.name === 'TypeError' && err.message.includes('fetch')){
         errorMsg = 'Nätverksfel – kontrollera anslutningen';
@@ -4071,56 +4222,25 @@
     }
   }
 
-  function applyTimetableToRoute(timetable){
-    if(!timetable || !state.route) return;
-
-    state.route.forEach((station, idx) => {
-      // Use station.sig directly (set when route was built)
-      const sig = station.sig;
-      if(!sig || !timetable[sig]) return;
-
-      const isFirst = idx === 0;
-      const isLast = idx === state.route.length - 1;
-
-      if(!isFirst && timetable[sig].arrival) {
-        station.scheduledArrival = timetable[sig].arrival;
-      }
-
-      if(!isLast && timetable[sig].departure) {
-        station.scheduledDeparture = timetable[sig].departure;
-      }
-    });
-  }
-
-  function filterRouteByTimetable(stationStops){
-    if(!stationStops || !state.route) return;
-
-    const stopsSet = new Set(stationStops);
-    const newRoute = [];
-
-    state.route.forEach((station, idx) => {
-      // Use station.sig directly (set when route was built)
-      const sig = station.sig;
-      const isFirst = idx === 0;
-      const isLast = idx === state.route.length - 1;
-
-      if(isFirst || isLast || stopsSet.has(sig)) {
-        station.shouldStop = true;
-        newRoute.push(station);
-      } else {
-        station.shouldStop = false;
-      }
-    });
-
-    if(newRoute.length > 0) {
-      newRoute.forEach((station, idx) => {
-        station.order = idx + 1;
-      });
-
-      state.route = newRoute;
-      state.lastReachedIndex = 0;
-      state.nextIndex = newRoute.length > 1 ? 1 : null;
+  // Meddelandena för den körning av tågnumret (DepartureDateOTN) vars tider ligger närmast `at`
+  function nearestTrainRun(announcements, at){
+    const runs=new Map();
+    for(const ann of announcements){
+      const t=Date.parse(ann && ann.AdvertisedTimeAtLocation);
+      if(!Number.isFinite(t)) continue;
+      const key=ann.DepartureDateOTN||'';
+      if(!runs.has(key)) runs.set(key, { list:[], min:t, max:t });
+      const r=runs.get(key);
+      r.list.push(ann);
+      r.min=Math.min(r.min, t);
+      r.max=Math.max(r.max, t);
     }
+    let best=null, bestD=Infinity;
+    for(const r of runs.values()){
+      const d = at<r.min ? r.min-at : (at>r.max ? at-r.max : 0);
+      if(d<bestD || (d===bestD && best && r.min<best.min)){ best=r; bestD=d; }
+    }
+    return best ? best.list : [];
   }
 
   function normalizeLogEntry(entry){
@@ -4192,9 +4312,10 @@
     return { start: parts[0], end: parts[parts.length-1] };
   }
 
-  async function requestWakeLock(){
+  // silent: inget meddelande – när skärmlåset slås på igen efter bakgrunden, eller av resan själv
+  async function requestWakeLock(silent){
     if(!('wakeLock' in navigator)){
-      showHeaderStatus('Skärmlås stöds inte i denna webbläsare.', true);
+      if(!silent) showHeaderStatus('Skärmlås stöds inte i denna webbläsare.', true);
       return;
     }
     try{
@@ -4204,27 +4325,27 @@
         wakeLockSentinel=null;
         updateWakeButton();
         if(keepScreenAwake && document.visibilityState==='visible'){
-          requestWakeLock().catch(()=>{});
+          requestWakeLock(true).catch(()=>{});
         }
       });
       updateWakeButton();
-      showHeaderStatus('Skärmen hålls vaken.', false);
+      if(!silent) showHeaderStatus('Skärmen hålls vaken.', false);
     }catch(err){
       keepScreenAwake=false;
       wakeLockSentinel=null;
       updateWakeButton();
-      showHeaderStatus('Kunde inte låsa skärmen vaken.', true);
+      if(!silent) showHeaderStatus('Kunde inte låsa skärmen vaken.', true);
     }
   }
 
-  function releaseWakeLock(){
+  function releaseWakeLock(silent){
     keepScreenAwake=false;
     if(wakeLockSentinel){
       wakeLockSentinel.release();
       wakeLockSentinel=null;
     }
     updateWakeButton();
-    showHeaderStatus('Skärmen får slockna.', false);
+    if(!silent) showHeaderStatus('Skärmen får slockna.', false);
   }
 
   function toggleWakeLock(){
@@ -4243,7 +4364,7 @@
   function handleVisibilityChange(){
     if(document.visibilityState==='visible'){
       if(keepScreenAwake && !wakeLockSentinel){
-        requestWakeLock();
+        requestWakeLock(true);
       }
       // Ett avbrott upptäcks och meddelas vid nästa GPS-position (checkForInterruption)
       scheduleUpload();
@@ -4275,7 +4396,11 @@
         interruptionTipShown: state.interruptionTipShown,
         lastSaveTime: Date.now()
       };
-      localStorage.setItem(STORAGE_KEY_ACTIVE_JOURNEY, JSON.stringify(journeyState));
+      const json=JSON.stringify(journeyState);
+      if(!setItemWithRoom(STORAGE_KEY_ACTIVE_JOURNEY, ()=>json) && !state.storageWarned){
+        state.storageWarned=true;
+        showJourneyMessage('Lagringen på telefonen är full – resan går inte att återuppta om appen stängs', true);
+      }
     }catch(e){
       console.warn('Could not save active journey:', e);
     }
@@ -4304,7 +4429,7 @@
     // Check if journey is less than 12 hours old
     const journeyAge = Date.now() - new Date(saved.startedAt).getTime();
     if(journeyAge > 12 * 60 * 60 * 1000){
-      clearActiveJourney();
+      discardActiveJourney(saved);
       return;
     }
 
@@ -4321,8 +4446,8 @@
         <h3 style="margin:0 0 1rem;color:var(--pri);">Återuppta resa?</h3>
         <p style="margin:0 0 .5rem;color:var(--ink);">En pågående resa hittades:</p>
         <p style="margin:0 0 1rem;color:var(--ink-dim);font-size:.9rem;">
-          <strong>${startStation} → ${endStation}</strong><br>
-          Fordon: ${saved.vehicleType || '–'} • Tåg: ${saved.trainNumber || '–'}<br>
+          <strong>${escapeHtml(startStation)} → ${escapeHtml(endStation)}</strong><br>
+          Fordon: ${escapeHtml(saved.vehicleType || '–')} • Tåg: ${escapeHtml(saved.trainNumber || '–')}<br>
           Startad: ${startTime}
         </p>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
@@ -4339,9 +4464,34 @@
     });
 
     document.getElementById('btnDiscardJourney').addEventListener('click', () => {
-      clearActiveJourney();
+      discardActiveJourney(saved);
       resumeDialog.remove();
     });
+  }
+
+  // En resa som inte ska återupptas: även GPS-spåret tas bort, annars ligger det kvar på
+  // telefonen för alltid och visas som "Väntar: 1 spår" under Uppladdning
+  function discardActiveJourney(saved){
+    clearActiveJourney();
+    if(saved && saved.journeyId) TrackStore.remove(String(saved.journeyId)).catch(()=>{});
+  }
+
+  // Spår utan körning och utan resa att återuppta kan aldrig laddas upp (t.ex. från en resa som
+  // kastades bort före 2026-11-25). De tas bort när de är äldre än 12 h, samma gräns som för Återuppta.
+  async function removeOrphanTracks(){
+    try{
+      const ids=await TrackStore.list();
+      if(!ids.length) return;
+      const logIds=new Set(loadLogs().map(l=>String(l.id)));
+      const active=loadActiveJourney();
+      const activeId=active && active.journeyId ? String(active.journeyId) : null;
+      for(const id of ids){
+        if(logIds.has(id) || id===activeId || (state.running && id===state.journeyId)) continue;
+        const started=parseInt(id, 36); // resans id är starttiden i ms, i bas 36
+        if(Number.isFinite(started) && Date.now()-started < 12*60*60*1000) continue;
+        await TrackStore.remove(id);
+      }
+    }catch(e){ console.warn('Kunde inte städa GPS-spår', e); }
   }
 
   async function resumeJourney(saved){
@@ -4360,6 +4510,8 @@
     state.interruptions = Array.isArray(saved.interruptions) ? saved.interruptions : [];
     state.lastFix = saved.lastFix || null; // så att ett avbrott upptäcks även efter omladdning
     state.interruptionTipShown = !!saved.interruptionTipShown;
+    state.storageWarned = false;
+    state.prunedAtStart = prunedIds.size;
 
     // Update UI
     hideSetupError();
@@ -4386,7 +4538,7 @@
     if(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches){
       hideInstallButton();
     }
-    if('serviceWorker' in navigator){
+    if(navigator.serviceWorker){ // saknas t.ex. i inbyggda webbläsare i appar och via http
       window.addEventListener('load', ()=>{
         navigator.serviceWorker.register(`./sw.js?v=${APP_VERSION}`).then(reg=>{
           monitorServiceWorker(reg);

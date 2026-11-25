@@ -14,11 +14,11 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 ## Huvudfiler
 | Fil | Beskrivning |
 |-----|-------------|
-| `Kinnekulle GPS.html` | Huvudappen (GPS-version) |
-| `index.html` | Kopia av GPS-appen för GitHub Pages |
+| `index.html` | Huvudappen (GitHub Pages) |
+| `Kinnekulle GPS.html`, `Kinnekulle.html` | Vidarekoppling till `index.html` för gamla bokmärken (sedan 2026-11-25d; förut kopior som hölls i takt för hand) |
 | `Analys.html` | Analysverktyg för gång- och uppehållstider |
 | `sw.js` | Service Worker för PWA |
-| `railtimer-karta.js` | Kartans linje längs spåret (OpenStreetMap) |
+| `railtimer-avbrott.js`, `railtimer-github.js`, `railtimer-karta.js`, `railtimer-analys.js` | Avbrott, uppladdning, kartans linje längs spåret, analysens beräkningar |
 | `kinnekulle-gps.webmanifest` | PWA manifest |
 
 ## Viktiga konstanter (i koden)
@@ -36,8 +36,7 @@ MAX_RECENT_STATIONS = 20           // Max antal senast använda stationer
 ### Dynamisk stationslista
 - Hämtar alla svenska stationer från Trafikverket TrainStation API
 - Ca 500+ stationer med GPS-koordinater (WGS84)
-- Cachas i localStorage för offline-bruk
-- Fallback till hårdkodad lista om API misslyckas
+- Cachas i localStorage för offline-bruk; en lista äldre än 7 dagar används ändå utan nät och byts i bakgrunden (2026-11-25d)
 
 ### Stationssökning (Autocomplete)
 - **Sökfält** ersätter tidigare dropdown-listor
@@ -630,3 +629,42 @@ Dataunderlag (`railtimer-data`, 213 körningar 2025-10-29 – 2026-11-24): gång
 ### Tester
 - `node --test "tests/*.test.js"` (97) och `node tests/run-browser-tests.mjs analys` (25), nya: försening längs linjen, GPS-spår och Jämför perioder.
 - I en Linux-miljö som root fungerar webbläsartesterna med `CHROME_PATH=/usr/bin/google-chrome`.
+
+## Uppdatering (2026-11-25d): rättade fel efter kodgranskningen
+
+André 2026-11-25: åtgärda allt från granskningen (`claude/kodgranskning-2026-11-25.md` i projektet). Appversion `2026-11-25d`.
+
+### Avgång vid mellanstationer
+Dataunderlag: 2 av 255 avgångar från mellanstationer i spåren registrerades ca 20 s för tidigt.
+- **Position utan fart** (`speedOf`). Vedum 2026-11-24: farten räknades mellan två positioner utan fart, 22 min isär, så tåget verkade köra fast det stod still. Har GPS:en angett fart de senaste 30 s räknas en position utan fart inte för stopp och avgång (`state.lastSpeed` behålls). Anger telefonen aldrig fart räknas den ur positionerna, minst 3 s och högst 15 s bakåt (`SPEED_EST_MIN_MS`/`MAX`). Fart som inte är ett tal ≥ 0 räknas som saknad.
+- **Enstaka fartspik** (Hällekis 2026-11-02: 1,9, 1,8, 2,3 km/h och sedan stilla 20 s). Avgång kräver nu rörelse i `DEPART_CONFIRM_MS` (3 s) i sträck vid alla stationer, 8 s vid startstationen som förut. Tiden räknas från första positionen i rörelse (`station.startMoveSince`), även vid zonutgång (`handleStationExit`).
+- Uppspelning av alla riktiga spår i `railtimer-data` genom gammal och ny kod: bara de felaktiga avgångarna ändras. Facit för vanlig resa är oförändrat.
+
+### Lagring
+- `saveLog` svalde felet när localStorage var full: resan visades som klar men sparades och laddades aldrig upp. Nu (`setItemWithRoom`, `makeRoom`): först tas kartans sparade spårsträckor bort, sedan den äldsta fjärdedelen av körningarna som redan finns i GitHub (`pruneUploadedLogs`), tills det får plats. Körningar som inte är uppladdade tas aldrig bort.
+- Får resan ändå inte plats finns den kvar i minnet (`unsavedLogs`, med i `loadLogs`), så att den laddas upp och kan exporteras. Rapporten säger vad som hände (`lastSaveProblem`). Får pågående resa inte plats visas ett meddelande en gång.
+- Gränsen är ca 5 MB och delas av alla sidor på akjork.github.io. Körningarna var ca 0,9 MB i november 2026.
+
+### Trafikverket
+- **Stationslistan** äldre än 7 dagar används utan nät och byts i bakgrunden (`refreshStations`); nytt försök vid `online`. Den tomma reservlistan `baseStations` är borttagen.
+- **Tidsgränser** (`fetchWithTimeout`): tidtabellen 10 s, stationslistan 20 s. Start fastnar inte längre på "Hämtar tidtabell…"; utan tidtabell mäts start- och slutstation och meddelandet säger det.
+- `init` väntar inte på stationslistan innan Återuppta resa och uppladdningen.
+- **Tidtabellen** (`fetchTimetable`): frågan gäller ±12 h runt nu i lokal tid (`localIso`), och körningen vars tider ligger närmast väljs (`nearestTrainRun`, per `DepartureDateOTN`). Förut gällde hela dygnet enligt UTC-datum: mellan 00 och 01 (sommartid 02) blev det gårdagens tidtabell, och stationer efter midnatt föll bort. Lyckade svar återanvänds i 15 min.
+- **Tågnummerförslaget** väntar 0,6 s efter sista tangenten och visar inget för ett nummer som hunnit ändras. Närmaste station tas från GPS-uppvärmningen om den är färsk.
+
+### Övrigt
+- Appen startade inte alls när `navigator.serviceWorker` saknas (inbyggda webbläsare i appar, http). Den oanvända `hadController` är borttagen och registreringen kontrollerar att `navigator.serviceWorker` finns.
+- **Kasta bort** och resor äldre än 12 h tar bort GPS-spåret (`discardActiveJourney`). Spår utan körning, äldre än 12 h, tas bort vid start (`removeOrphanTracks`). Uppladdning räknar bara spår som har en körning.
+- **Stationsfälten**: ändras texten efter ett val gäller inte valet längre. En station med exakt det namnet (oavsett stor och liten bokstav) används (`stationForInput`), annars "Välj start- och slutstation i listan".
+- **Service workern** sparar bara lyckade svar (`resp.ok`), hämtar appens filer med `cache: 'reload'` vid installation och sparar även `./`.
+- **CSV**: kolumnen Ordning var alltid tom; nu stationens nummer (`logsCsv`).
+- **Kartan**: GPS-spåret byggs på med nya positioner i stället för att räknas om helt vid varje position.
+- **Flytta stationens mittpunkt hit** sparas nu till kommande resor (André 2026-11-25: "fixa allt"). Mittpunkten sparas per station i `railtimer_station_centers_v1` (nyckel `sig:<signatur>`, annars `namn:<namn>`) och används av `makeRouteStation` före Trafikverkets koordinater (`ownCenter`, `baseLat`/`baseLon`). Den sparas bara när GPS:en är säkrare än ±30 m (`CALIBRATE_MAX_ACCURACY_M`). Kortet visar "egen mittpunkt" och knappen **Återställ mittpunkten** (`resetStationCenter`).
+- Den gamla sparningen (`kmon_gps_station_meta_v1`, `stationOverrides`) användes aldrig och läses inte; tidigare flyttar gäller alltså inte. `stationCatalog`, `getSelectedRoute`, `applyTimetableToRoute` och `filterRouteByTimetable` är borttagna.
+- `escapeHtml` tål tal och null; Återuppta-dialogen escapar tåg och fordon. Skärmlåset visar meddelande bara när föraren själv slår av eller på det.
+- Token i localStorage kan läsas av alla sidor på akjork.github.io. Det går inte att ändra i appen; token är begränsad till `railtimer-data` med skrivrätt till innehåll (`TOKEN_URL`).
+
+### Tester
+- `node --test "tests/*.test.js"` (99): service workern sparar inte felsvar och hämtar med `cache: 'reload'`.
+- `node tests/run-browser-tests.mjs` (67), nya: `avgång:`, `lagring:`, `stationer:`, `startformulär:`, `tidtabell:`, `mittpunkt:`, `GPS-spår: Kasta bort …` och `CSV:`. `tidtabell: svarar inte …` tar 10 s.
+
