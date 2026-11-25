@@ -988,6 +988,33 @@ test('egna anslutningar (Mina): tåg och buss i slutstationen och längs vägen,
   assert.ok(all.alert.connections.some(c => c.ident === '182'));
 });
 
+test('egna anslutningar: knapp eller missad ger förslaget att ringa trafikledningen, och knappt enligt plan varnar inte', () => {
+  // 3061 har enligt tidtabell 2 min att byta i Herrljunga (11:40 → 11:42), 3047 har 5 min
+  const rows = departures([['3061', '11:42'], ['3047', '11:45']]);
+  const own = [{ kind: 'tåg', id: '3061', sig: 'Hr' }, { kind: 'tåg', id: '3047', sig: 'Hr' }];
+  // I tid: 3061 är knapp som planerat – visas, men varnar inte och ger inget förslag
+  const ok = setup(rows, { own, connMode: 'mina' });
+  const c61 = ok.connections.find(c => c.otn === '3061');
+  assert.deepEqual([c61.status, c61.transferMin, c61.plannedTransferMin, c61.asPlanned, c61.level], ['knappt', 2, 2, true, 0]);
+  assert.equal(ok.actions.length, 0);
+  assert.equal(ok.tight, 0);
+  assert.equal(ok.attention, 0);
+  assert.equal(I.alerts(ok).filter(a => a.key.startsWith('c|')).length, 0);
+  assert.equal(I.announcement(ok), null, 'inget utrop för ett byte som är knappt enligt plan');
+  // 6 min sena: båda missas, och de egna ger förslaget utan ★. 3061 behöver vänta tills det blir 2 min igen (6 min),
+  // 3047 tills det blir 4 min (5 min).
+  const late = setup(LATE().concat(rows), { own, connMode: 'mina' });
+  assert.deepEqual(late.connections.map(c => [c.otn, c.status, c.level, c.own, c.marked]),
+    [['3061', 'missas', 2, true, false], ['3047', 'missas', 2, true, false]]);
+  assert.deepEqual(late.actions.map(a => [a.type, a.c.otn, a.waitMin]), [['hold', '3061', 6], ['hold', '3047', 5]]);
+  assert.deepEqual(late.markedList.map(x => x.c.otn), ['3061', '3047'], 'sparas i körningen');
+  // Förslaget gäller oavsett valet, som för ★
+  const tag = setup(LATE().concat(rows), { own });
+  assert.deepEqual(tag.actions.map(a => a.c.otn), ['3061', '3047']);
+  // De vanliga som förut: utan egna eller ★ inget förslag
+  assert.equal(setup(LATE().concat(rows)).actions.length, 0);
+});
+
 test('egna anslutningar: det föraren skriver tolkas', () => {
   assert.deepEqual(I.parseOwn('buss 600 Lidköping'), { kind: 'buss', id: '600', place: 'Lidköping' });
   assert.deepEqual(I.parseOwn('Tåg 182 från Herrljunga C'), { kind: 'tåg', id: '182', place: 'Herrljunga C' });

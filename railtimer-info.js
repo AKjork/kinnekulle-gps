@@ -979,7 +979,7 @@
       out.push({
         kind: 'tåg', otn: tr.otn, ident: tr.ident, product: tr.product, from: tr.from,
         adv: arr.adv, arr: theirArr, delayMin: roundMin(theirArr - arr.adv), track: arr.track,
-        transferMin: Math.floor(transfer), arrived,
+        transferMin: Math.floor(transfer), plannedTransferMin: Math.round(plannedTransfer), arrived,
         status: arr.canceled ? 'inställt' : connectionStatus(transfer, o),
         source: arrived ? 'faktisk' : (arr.est != null ? 'trafikverket' : 'plan')
       });
@@ -1057,7 +1057,7 @@
       out.push({
         kind: 'buss', otn: b.id, ident: b.line, product: 'Buss', from: [], fromText: b.origin,
         adv: b.planned, arr: theirArr, delayMin: roundMin(theirArr - b.planned), track: b.platform, stop: b.stop,
-        transferMin: Math.floor(transfer), arrived,
+        transferMin: Math.floor(transfer), plannedTransferMin: Math.round(plannedTransfer), arrived,
         status: b.canceled ? 'inställt' : connectionStatus(transfer, o),
         source: b.est != null ? 'västtrafik' : 'plan'
       });
@@ -1593,7 +1593,15 @@
     // Väntan i hela minuter, samma som visas
     // Ett flyttat möte räknas som andra: efter väntan (förut 0, eftersom väntan inte räknades)
     const lvlMeeting = m => m.canceled ? 0 : (m.waitMin >= 5 ? 2 : (m.waitMin >= 1 ? 1 : 0));
-    const lvlConn = c => (c.status === 'missas' || c.status === 'avgått') ? 2 : ((c.status === 'knappt' || c.status === 'inställt') ? 1 : 0);
+    /* Knappt enligt plan: en egen anslutning kan enligt tidtabell ha under transferMin att byta (till exempel 2 min
+       över plattformen). Den är knapp varje gång, så den varnar bara när det blir mindre än planerat (asPlanned).
+       De vanliga har minst transferMin enligt plan, så för dem ändrar det inget. */
+    const lvlConn = c => {
+      c.asPlanned = c.status === 'knappt' && c.plannedTransferMin != null && c.transferMin >= c.plannedTransferMin;
+      if (c.status === 'missas' || c.status === 'avgått') return 2;
+      if (c.status === 'inställt' || (c.status === 'knappt' && !c.asPlanned)) return 1;
+      return 0;
+    };
     meetings.sort((a, b) => a.atI - b.atI || a.i - b.i);
     for (const m of meetings) { m.waitMin = roundMin(m.waitMs); m.level = lvlMeeting(m); }
     for (const c of conn) c.level = lvlConn(c);
@@ -1659,10 +1667,10 @@
     const midAll = [];
     for (const st of alert.stops) midAll.push(...st.connections, ...st.incoming);
 
-    /* Blir en markerad anslutning knapp eller missas, och det räcker att den väntar högst holdMaxMin för att få
-       vanlig bytestid (transferMin), blir det ett förslag: ring trafikledningen och fråga om den kan vänta –
-       eller om vi kan vänta på den som ska till oss – och om spår vid samma plattform. Inte när den gått
-       eller är inställd. */
+    /* Blir en markerad (★) eller egen anslutning (Mina) knapp eller missas, och det räcker att den väntar högst
+       holdMaxMin för att få vanlig bytestid (transferMin) – eller bytestiden enligt plan när den är kortare – blir
+       det ett förslag: ring trafikledningen och fråga om den kan vänta, eller om vi kan vänta på den som ska till
+       oss, och om spår vid samma plattform. Inte när den gått eller är inställd. */
     const ourTrack = sig => {
       const l = our.at.get(sig);
       return (l && ((l.arr && l.arr.track) || (l.dep && l.dep.track))) || '';
@@ -1676,8 +1684,10 @@
     }
     const actions = [];
     for (const x of every) {
-      if (!x.c.marked || (x.c.status !== 'knappt' && x.c.status !== 'missas')) continue;
-      const waitMin = o.transferMin - x.c.transferMin;
+      if (!(x.c.marked || x.c.own) || (x.c.status !== 'knappt' && x.c.status !== 'missas')) continue;
+      const planned = x.c.plannedTransferMin;
+      const need = planned != null ? Math.min(o.transferMin, Math.max(planned, o.missedUnderMin)) : o.transferMin;
+      const waitMin = need - x.c.transferMin;
       if (waitMin < 1 || waitMin > o.holdMaxMin) continue;
       actions.push({
         type: x.dir === 'ut' ? 'hold' : 'wait', sig: x.sig, c: x.c, waitMin,
@@ -1685,7 +1695,8 @@
       });
     }
     actions.sort((a, b) => a.c.adv - b.c.adv);
-    const markedList = every.filter(x => x.c.marked).map(x => ({ sig: x.sig, dir: x.dir, c: x.c }));
+    // Markerade och egna: sparas i körningen (info.marked)
+    const markedList = every.filter(x => x.c.marked || x.c.own).map(x => ({ sig: x.sig, dir: x.dir, c: x.c }));
 
     const endLevel = end.delayMin >= 6 ? 2 : (end.delayMin >= 2 ? 1 : 0);
     const levels = [endLevel].concat(meetings.map(m => m.level), alert.connections.map(c => c.level), alert.incoming.map(c => c.level),
@@ -1730,7 +1741,8 @@
     const bad = conns.filter(c => c.status === 'missas' || c.status === 'avgått').slice(0, 3);
     const tight = conns.filter(c => c.status === 'knappt').slice(0, 3);
     const ok = conns.filter(c => c.status === 'ok').slice(0, 2);
-    if (d < 3 && !bad.length && !tight.length) return null;
+    // Knappt enligt plan (en egen anslutning med kort planerat byte) ger inget utrop på egen hand
+    if (d < 3 && !bad.length && !tight.some(c => !c.asPlanned)) return null;
     const endName = name(m.end.sig);
     const dest = c => c.kind === 'buss' ? (c.toText || '?') : ((c.to || []).map(name).filter(Boolean).join(' / ') || '?');
     // "Tåget mot X 11:45" / "Buss 1 mot X 11:45"; "spår 3" / "läge A"

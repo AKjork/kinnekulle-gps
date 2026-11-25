@@ -1012,7 +1012,7 @@
       <h2>Mina anslutningar</h2>
       <button id="btnCloseOwn" class="ghost">Klar</button>
     </div>
-    <p class="hint">Anslutningar som gäller dig. Välj <b>Mina</b> under Anslutningar i Info, så visas bara de här och de du markerat med ★. Tåg, Buss och Båda visar allt som förut.</p>
+    <p class="hint">Anslutningar som resenärer byter till eller från. Välj <b>Mina</b> under Anslutningar i Info, så visas och bevakas bara de här och de du markerat med ★. Blir ett byte knappt eller missas föreslår appen att ringa trafikledningen, som för ★. Tåg, Buss och Båda visar allt som förut.</p>
     <div class="group" id="ownList"></div>
     <form id="ownForm" autocomplete="off" onsubmit="return false">
       <div class="form-group">
@@ -1039,7 +1039,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25zh'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25zi'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -4079,8 +4079,8 @@
     for(const m of model.messages) add(m, null);
     for(const m of model.messagesHidden||[]) add(m, m.reason);
   }
-  /* De markerade anslutningarna sparas i körningen: senaste läget och om det föreslogs att ringa trafikledningen
-     (info.marked), så att det går att se i efterhand hur ofta en anslutning blir knapp. */
+  /* De markerade (★) och egna anslutningarna (Mina) sparas i körningen: senaste läget och om det föreslogs att ringa
+     trafikledningen (info.marked), så att det går att se i efterhand hur ofta en anslutning blir knapp. */
   function recordMarks(model){
     if(!infoState.markLog) infoState.markLog=new Map();
     const asked=new Set((model.actions||[]).map(a=>a.c.key));
@@ -4089,6 +4089,7 @@
       infoState.markLog.set(c.key, {
         sig:x.sig, name:sigName(x.sig), dir:x.dir, kind:c.kind, train:c.ident||c.otn, to:connTo(c)||'', from:connFrom(c)||'',
         planned:new Date(c.adv).toISOString(), status:c.status, transferMin:c.transferMin,
+        marked:!!c.marked, own:!!c.own,
         suggested:!!(asked.has(c.key) || (prev && prev.suggested))
       });
     }
@@ -4251,7 +4252,9 @@
       return `<span class="dl-very-late">${incoming?'hinner inte till oss':'missas'}</span><small>${why}</small>`;
     }
     const cls = c.status==='knappt' ? 'dl-late' : 'dl-live';
-    const word = incoming ? (c.status==='knappt' ? 'knappt till oss' : 'hinner till oss') : (c.status==='knappt' ? 'knappt att byta' : 'att byta');
+    // Knappt enligt plan (egen anslutning med kort planerat byte): visas, men varnar inte
+    const plan = c.status==='knappt' && c.asPlanned ? ' enligt plan' : '';
+    const word = (incoming ? (c.status==='knappt' ? 'knappt till oss' : 'hinner till oss') : (c.status==='knappt' ? 'knappt att byta' : 'att byta')) + plan;
     return `<span class="${cls}">${c.transferMin} min</span><small>${word}</small>`;
   }
   // Radens rubrik: → dit resenärerna åker vidare från oss, ← varifrån de kommer till oss
@@ -4444,8 +4447,8 @@
       (legProfiles.size ? '. Till nästa station räknas tiden från var vi är, ur tidigare GPS-spår på samma sträcka' : '');
     const notShown=(m.messagesHidden||[]).filter(h=>h.reason!=='inte under resan').length;
     const what = mode==='buss' ? 'bussar' : (mode==='tag' ? 'tåg' : 'tåg och bussar');
-    const transferNote=`Byter från oss (→): ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll; där är det de som kan behöva vänta på oss. Byter till oss (←): ${what} som kommer före vår avgång; där är det vi som kan behöva vänta. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. ` +
-      (mode==='mina' ? `Mina: dina egna anslutningar (⋮ → Inställningar → Mina anslutningar) och de du markerat med ★, vid alla stationer framför oss där vi stannar – från oss upp till ${D.ownWindowMin/60} h efter vår ankomst, till oss upp till ${D.ownIncomingWindowMin} min före vår avgång, också längs vår linje. ` : '') +
+    const transferNote=`Byter från oss (→): ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll; där är det de som kan behöva vänta på oss. Byter till oss (←): ${what} som kommer före vår avgång; där är det vi som kan behöva vänta. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. Blir ett byte du markerat med ★ eller lagt in under Mina anslutningar knappt eller missas, föreslår appen att ringa trafikledningen. ` +
+      (mode==='mina' ? `Mina: dina egna anslutningar (⋮ → Inställningar → Mina anslutningar) och de du markerat med ★, vid alla stationer framför oss där vi stannar – från oss upp till ${D.ownWindowMin/60} h efter vår ankomst, till oss upp till ${D.ownIncomingWindowMin} min före vår avgång, också längs vår linje. En egen anslutning med kortare byte enligt tidtabell varnar först när det blir kortare än planerat. ` : '') +
       (mode!=='tag' ? `Bussarna kommer från Västtrafik (hållplatser inom ${VT ? VT.DEFAULTS.stopRadiusM : 350} m från stationen), tågen från Trafikverket. ` : '');
     // Felet syns alltid. Förklaringen av reglerna är ihopfälld: den behövs sällan under resan.
     if(infoState.error) html+=`<p class="info-hint err">Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).</p>`;

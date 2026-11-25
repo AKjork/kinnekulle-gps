@@ -2947,6 +2947,32 @@ test('mina anslutningar: läggs till i Inställningar, och Mina i Info visar bar
   assertEqual(r.rt.infoModel().connections.map(c => c.otn), ['3051', '3053']);
 });
 
+test('mina anslutningar: en egen anslutning som missas ger ☎ ring trafikledningen utan ★, och sparas i körningen', async () => {
+  const r = await midJourneyWithInfo(); // 6 min sena till Hällekis: 3051 (5 min efter) missas
+  const d = r.w.document;
+  r.w.localStorage.setItem('kmon_all_stations_v1', JSON.stringify({ timestamp: Date.now(), stations: STATION_LIST }));
+  await r.rt.loadAllStations();
+  r.rt.showOwnSettings();
+  d.getElementById('ownInput').value = 'tåg 3051 Hällekis';
+  d.getElementById('btnOwnAdd').click();
+  assert(d.querySelector('#ownSettings .hint').textContent.includes('föreslår appen att ringa trafikledningen'), 'rutan säger det');
+  d.getElementById('btnCloseOwn').click();
+  r.rt.setInfoTab('info');
+  d.querySelector('[data-info="conn-mina"]').click();
+  await realSleep(150);
+  const m = r.rt.infoModel();
+  assertEqual(m.connections.map(c => [c.otn, c.status, c.own, c.marked]), [['3051', 'missas', true, false]]);
+  assertEqual(m.actions.map(a => a.c.otn), ['3051'], 'förslaget utan ★');
+  const act = d.querySelector('#infoPane .info-row.action');
+  assert(act && act.textContent.includes(`Ring trafikledningen: kan 3051 vänta ca ${m.actions[0].waitMin} min?`), act ? act.textContent : infoPaneText(r));
+  assert(d.getElementById('npInfo').textContent.includes('☎ ring trafikledningen'), d.getElementById('npInfo').textContent);
+  r.rt.stopJourney(false, 'test');
+  await realSleep(100);
+  const logs = r.rt.loadLogs();
+  const mk = logs[logs.length - 1].info.marked;
+  assert(mk && mk.length === 1 && mk[0].train === '3051' && mk[0].own === true && mk[0].marked === false && mk[0].suggested === true, JSON.stringify(mk));
+});
+
 test('☆ markerad anslutning: knapp eller missad ger ☎ ring trafikledningen överst, i panelen och uppläst – en gång', async () => {
   const r = await midJourneyWithInfo(); // 6 min sena till Hällekis: 3051 (5 min efter) missas
   r.rt.setInfoTab('info');

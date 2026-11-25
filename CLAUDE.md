@@ -1861,3 +1861,20 @@ André 2026-11-25: "Gör det du rekommenderar." Rekommendationen efter 2026-11-2
   - *längs banan: där banan inte är uppmätt …*: även en position långt från linjen;
   - *längs banan: långt bort på andra sidan Vara …*.
 - `node tests/run-browser-tests.mjs` (130), nytt: *längs banan: GPS-spåren ger linjen längs banan – 3347 ute på enkelspåret mot oss …* (axeln ur tre spår från GitHub, mötet i Blomberg, fliken och körningen).
+## Uppdatering (2026-11-25zi): egna anslutningar bevakas som ★
+
+André 2026-11-25 om Mina anslutningar: "Blir de valda och bevakade då? Eller är det bara för egen info?" Han vill kunna arbeta med bara sina egna anslutningar och bara få dem bevakade. Det fungerade redan så med Mina och *Varningar: bara valda*. Förslaget att ringa trafikledningen kom dock bara för ★. "Gör det du rekommenderar." Appversion `2026-11-25zi`.
+
+- **Egna anslutningar ger förslaget att ringa trafikledningen**, som ★ (`actions` i `compute`: `c.marked || c.own`). Det gäller oavsett valet Tåg | Buss | Båda | Mina, som för ★. Rutan Mina anslutningar säger det, och att de är byten som resenärer gör.
+- **Knappt enligt plan** (`asPlanned`): en egen anslutning kan enligt tidtabell ha under 4 min att byta, till exempel 2 min över plattformen. Den är då knapp varje resa.
+  - Den visas som *2 min knappt att byta enligt plan* och har nivå 0. Den räknas alltså inte i siffran och panelens rad, meddelas inte och ger inget utrop på egen hand.
+  - Den varnar först när bytet blir kortare än planerat.
+  - Förslaget att ringa gäller tills bytet är som planerat igen: väntan = min(4 min, planerat byte, minst 1 min) − bytet nu. Med planerat byte på 2 min och 6 min försening blir det *kan 3061 vänta ca 6 min?*.
+  - De vanliga anslutningarna har minst 4 min enligt plan, så för dem ändrar det inget.
+- `incoming` och `busIncoming` ger nu också `plannedTransferMin`.
+- **Körningen:** `info.marked` har nu även de egna, med `marked` (★) och `own` (egen). Saknas fälten är anslutningen markerad. Se `docs/railtimer-data-README.md`.
+- *Så räknas det* nämner förslaget för ★ och egna, och regeln om knappt enligt plan.
+
+### Tester
+- `node --test "tests/*.test.js"` (214), nytt: *egna anslutningar: knapp eller missad ger förslaget att ringa trafikledningen, och knappt enligt plan varnar inte*.
+- `node tests/run-browser-tests.mjs` (131), nytt: *mina anslutningar: en egen anslutning som missas ger ☎ ring trafikledningen utan ★, och sparas i körningen*.
