@@ -812,6 +812,47 @@ test('motionZones: inbromsning i steg räknas ihop när tåget inte gasar emella
   assert.ok(between.zones.some(x => x.kind === 'gas' && x.to < 0), 'gasen emellan');
 });
 
+// ── Km-tal (appversion 2026-11-25m) ──
+
+test('km-tal: linjen som punkter längs spåren, och plankorsningarnas km-tal per bandel', () => {
+  const back = ABC.slice().reverse();
+  const sims = [simulateRun('k1', ABC, { day: 1 }), simulateRun('k2', ABC, { day: 2 }), simulateRun('k3', back, { day: 3 })];
+  const runs = sims.map(s => s.run);
+  const L = AN.motionZones(runs, AN.motionTracks(runs, sims.map(s => s.track))).lines[0];
+  within(L.trace.length, 235, 241, 'en punkt var 25:e meter');
+  assert.ok(L.trace.every((p, k) => k === 0 || (p.km > L.trace[k - 1].km && p.lat > L.trace[k - 1].lat)), 'km och läge i ordning');
+  within(L.trace[120].lat, 58 + 2990 / M_PER_DEG_LAT, 58 + 3035 / M_PER_DEG_LAT, 'läget vid 3 km');
+
+  const at = (x, east) => ({ lat: 58 + x / M_PER_DEG_LAT, lon: 13 + (east || 0) / 58700 });
+  const crossings = [
+    // Bandel 641: km-talet minskar norrut, 250+000 vid A
+    ...[200, 700, 1200, 2200, 2800].map(x => Object.assign(at(x, 6), { bandel: 641, m: 250000 - x })),
+    Object.assign(at(1700, -5), { bandel: 641, m: 250000 - 1700 + 2000 }),   // fel post: 2 km fel
+    // Bandel 631: km-talet ökar norrut från 3,4 km
+    ...[3400, 4300, 5100, 5800].map(x => Object.assign(at(x, -8), { bandel: 631, m: 10000 + (x - 3200) * 1.01 })),
+    Object.assign(at(1500, 200), { bandel: 641, m: 1 }),                   // annan linje 200 m bort
+    Object.assign(at(2500, 3), { bandel: 999, m: 77000 }), Object.assign(at(2600, 3), { bandel: 999, m: 77100 }) // för få
+  ];
+  const ax = AN.kmTalAxis(L, crossings);
+  assert.deepEqual(ax.segs.map(s => [s.bandel, s.sign, s.refs.length]), [[641, -1, 5], [631, 1, 4]], 'bandelarna');
+  const kt = km => AN.kmTalAt(ax, km);
+  within(kt(1.0).m, 248990, 249010, 'mellan korsningarna');
+  assert.equal(kt(1.0).bandel, 641);
+  within(kt(0).m, 249990, 250010, 'vid A: räknat vidare längs spåret');
+  within(kt(3.0).m, 246990, 247010, 'vid B: närmaste bandelen');
+  assert.equal(kt(3.0).outside, 200);
+  assert.equal(kt(3.2).bandel, 631, 'närmare bandel 631');
+  within(kt(6.0).m, 12820, 12835, 'vid C');
+  assert.equal(kt(9.5), null, 'längre än 3 km från korsningarna');
+  assert.equal(AN.kmTalAxis(L, crossings.filter(c => c.bandel === 999)), null, 'för få korsningar');
+  assert.equal(AN.kmTalAxis(L, []), null);
+  assert.equal(AN.formatKmTal(247000), '247+000');
+  assert.equal(AN.formatKmTal(12805.4), '12+805');
+  assert.equal(AN.formatKmTal(950), '0+950');
+  assert.equal(AN.formatKmTal(null), '');
+  assert.equal(AN.formatKmTal(268996, 10), '269+000', 'avrundat till 10 m');
+});
+
 // ── Tågorderns tider (appversion 2026-11-25f) ──
 
 /* Tåg 23349 Lidköping → Herrljunga C 2026-11-25: verkliga tider ur railtimer-data (hela sekunder), planerade enligt

@@ -923,3 +923,28 @@ André 2026-11-25 kom in i appen via inloggningslänken men hittade inte analysv
 - Appens ⋮-meny har **Analysverktyg** (`btnAnalysis`) under Statistik. Valet öppnar `Analys.html` i samma flik, men inte under en resa ("Öppnas när resan är klar"), eftersom mätningen stannar när sidan byts.
 - Analysverktygets rubrikrad har länken **← Till appen** (`./`). Den visas inte i utskriften.
 - Tester: `node --test "tests/*.test.js"` (149). `node tests/run-browser-tests.mjs` (94), nytt: *meny: Analysverktyg öppnar analysverktyget, men inte under en resa*.
+
+## Uppdatering (2026-11-25m): Trafikverkets km-tal i Broms och gas (Analys.html)
+
+André 2026-11-25: gör om kilometrarna till järnvägens egna km-tal, han förstod inte kolumnen Km. Appversion `2026-11-25m`.
+
+- Förut var **Km** RailTimers eget mått: sträckan längs GPS-spåren från linjens sydligaste ände (Herrljunga C = 0, Vara 21,4, Hallsberg 200,3).
+- **Källan:** Trafikverkets öppna API, objekttypen `RailCrossing` 1.5 (plankorsningarna). Varje plankorsning har `Kilometer` och `Meter` enligt banans längdmätning, `TrackPortion` (bandel) och `Geometry.WGS84`.
+  - Kilometertavlorna själva (Markeringsstolpe/Kilometertal) finns bara som WFS och nedladdning hos Lastkajen. Varken den, Overpass eller Trafikverkets API nås från utvecklingsmiljön.
+- `railtimer-trv.js`:
+  - `fetchRailCrossings(box)` frågar först med `<WITHIN name="Geometry.WGS84" shape="box" value="lon lat, lon lat" />`.
+  - Godtas inte filtret (felsvar), eller blir svaret tomt, hämtas hela landet (tidsgräns 30 s) och rektangeln väljs i appen. Vid nätfel eller tidsgräns görs inget nytt försök.
+  - `parseCrossings` ger `{ lat, lon, bandel, m }`, där m = km-talet i meter. Raderade och ofullständiga poster tas inte med.
+- `railtimer-analys.js`:
+  - `motionZones` ger per linje `trace`: medianläget i spåren var 25:e meter med linjens km.
+  - `kmTalAxis(line, crossings)`: plankorsningar högst 40 m från spåren blir referenspunkter. Per bandel behålls den längsta kedjan där km-talet följer spåret (±15 %, minst ±60 m), och bandelen behöver minst 3 sådana punkter. Felaktiga poster och korsningar på andra linjer kommer därmed inte med.
+  - `kmTalAt(axis, km)` interpolerar mellan referenspunkterna och räknar vidare längs spåret högst 3 km utanför dem. Mellan två bandelar gäller den närmaste, och där flera täcker samma ställe den med flest punkter.
+  - `formatKmTal(m, step)` ger "269+000".
+- **Analys.html:**
+  - Plankorsningarna hämtas när fliken visas, för rektangeln runt spåren + 0,02°. De sparas i `railtimer_kmtal_v1` och hämtas igen efter 30 dagar eller när spåren går utanför rektangeln.
+  - Efter ett fel görs nytt försök tidigast efter 10 min, eller med **Försök igen**. Äldre sparat km-tal används hellre än inget.
+  - Km-tal visas avrundat till 10 m: i stationsraderna ("km 269+000 · 3 uppehåll"), i linjebandet (jämna km per bandel, streckad linje där bandelen byts), i Lista för halkbekämpningen och zontabellen (kolumnen **Km-tal**, intervall i färdriktningen), i rutorna (*börjar km …*, *slutar km …*), vid pekaren i fartprofilen, i utskriften (raden Km) och i CSV:n (Bandel, Km-tal, Börjar bromsa km-tal, Slutar gasa km-tal; linjens egna km finns kvar som "Km från …").
+  - Raden under linjebandet (`#motionKmNote`) säger var km-talet kommer från: bandelarna med första och sista station och antal plankorsningar.
+  - Saknas km-tal står "Km från Herrljunga C" i kolumnerna och "21,4 km från Herrljunga C" i raderna, och raden säger varför.
+- **Inte provat mot Trafikverket:** varken schemaversion 1.5, fälten, WITHIN-filtret eller om bandelarnas km-tal längs Kinnekullebanan räcker. Kontrollera vid första öppningen att raden under linjebandet visar bandelar, och att km-talen vid stationerna stämmer med linjeboken.
+- Tester: `node --test "tests/*.test.js"` (152), nya *km-tal: …*, *parseCrossings: …* och *fetchRailCrossings: …*. `node tests/run-browser-tests.mjs` (95), nytt *analys: Broms och gas visar Trafikverkets km-tal från plankorsningarna*. Bilderna `--shot=broms-och-gas…` visar km-tal (simulerade plankorsningar).

@@ -270,3 +270,60 @@ test('wgs84: läser punkt från Trafikverkets format', () => {
   assert.deepEqual(TRV.wgs84('POINT (12.99868 58.16898)'), { lon: 12.99868, lat: 58.16898 });
   assert.equal(TRV.wgs84(''), null);
 });
+
+// ── Km-tal: plankorsningarna (appversion 2026-11-25m) ──
+
+const CROSSINGS = [
+  { Kilometer: 121, Meter: 416, TrackPortion: 631, Geometry: { WGS84: 'POINT (13.0 58.2)' } },
+  { Kilometer: 272, Meter: 72, TrackPortion: 641, Geometry: { WGS84: 'POINT (13.15 58.5)' } },
+  { Kilometer: 300, Meter: 0, TrackPortion: 900, Geometry: { WGS84: 'POINT (17.0 60.0)' } },    // utanför rektangeln
+  { Kilometer: 5, Meter: 0, TrackPortion: 641, Deleted: true, Geometry: { WGS84: 'POINT (13.1 58.4)' } },
+  { Kilometer: null, Meter: 10, TrackPortion: 641, Geometry: { WGS84: 'POINT (13.1 58.4)' } },
+  { Kilometer: 7, TrackPortion: 641, Geometry: { WGS84: 'POINT (13.1 58.45)' } }                // utan meter
+];
+const BOX = { minLat: 58, minLon: 12.9, maxLat: 59.1, maxLon: 15.2 };
+
+test('parseCrossings: km-tal i meter och bandel; raderade och ofullständiga tas inte med', () => {
+  assert.deepEqual(TRV.parseCrossings(CROSSINGS), [
+    { lat: 58.2, lon: 13, bandel: 631, m: 121416 }, { lat: 58.5, lon: 13.15, bandel: 641, m: 272072 },
+    { lat: 60, lon: 17, bandel: 900, m: 300000 }, { lat: 58.45, lon: 13.1, bandel: 641, m: 7000 }
+  ]);
+});
+
+test('fetchRailCrossings: rektangel med WITHIN; godtas den inte hämtas hela landet', async () => {
+  const bodies = [];
+  const ok = await TRV.fetchRailCrossings(BOX, { fetch: async (url, init) => {
+    bodies.push(init.body);
+    return okResponse({ RESPONSE: { RESULT: [{ RailCrossing: CROSSINGS }] } });
+  } });
+  assert.equal(ok.filtered, true);
+  assert.equal(ok.crossings.length, 3, 'bara inom rektangeln');
+  assert.match(bodies[0], /<QUERY objecttype="RailCrossing" schemaversion="1\.5"><FILTER><WITHIN name="Geometry\.WGS84" shape="box" value="12\.9 58, 15\.2 59\.1" \/><\/FILTER><INCLUDE>Kilometer<\/INCLUDE><INCLUDE>Meter<\/INCLUDE><INCLUDE>TrackPortion<\/INCLUDE>/);
+
+  // Felsvar för filtret: frågan görs om utan filter
+  const asked = [];
+  const fallback = await TRV.fetchRailCrossings(BOX, { fetch: async (url, init) => {
+    asked.push(init.body);
+    if (init.body.includes('WITHIN')) return { ok: false, status: 400, json: async () => ({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Request', MESSAGE: 'Invalid filter' } }] } }) };
+    return okResponse({ RESPONSE: { RESULT: [{ RailCrossing: CROSSINGS }] } });
+  } });
+  assert.equal(asked.length, 2);
+  assert.ok(!asked[1].includes('<FILTER>'), 'utan filter');
+  assert.equal(fallback.filtered, false);
+  assert.deepEqual(fallback.crossings.map(c => c.m), [121416, 272072, 7000]);
+
+  // Tomt svar med filtret: också hela landet
+  let n = 0;
+  const empty = await TRV.fetchRailCrossings(BOX, { fetch: async (url, init) => {
+    n++;
+    return okResponse({ RESPONSE: { RESULT: [{ RailCrossing: init.body.includes('WITHIN') ? [] : CROSSINGS }] } });
+  } });
+  assert.equal(n, 2);
+  assert.equal(empty.crossings.length, 3);
+
+  // Nätfel: inget nytt försök
+  let calls = 0;
+  const err = await TRV.fetchRailCrossings(BOX, { fetch: async () => { calls++; throw new TypeError('Failed to fetch'); } }).catch(e => e);
+  assert.equal(err.kind, 'network');
+  assert.equal(calls, 1);
+});

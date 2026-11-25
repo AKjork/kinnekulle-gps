@@ -246,6 +246,9 @@
   .mz-overview .st-name{fill:var(--ink-dim);font-size:11px;cursor:pointer}
   .mz-overview .st-name.stop{fill:var(--ink)}
   .mz-overview .km{fill:var(--mut);font-size:10px}
+  .mz-overview .bandel-sep{stroke:var(--ink);stroke-width:1.5;stroke-dasharray:3 2}
+  .mz-kmnote{margin:-.5rem 0 1rem}
+  .mz-kmnote button{padding:.2rem .6rem;font-size:.8rem;margin-left:.25rem}
   .mz-overview .track{fill:var(--card-bg)}
   .mz-list{position:relative;border:1px solid var(--b);border-radius:10px;background:var(--card-bg);overflow:hidden}
   .mz-axis,.mz-row{display:grid;grid-template-columns:minmax(0,1fr);gap:.35rem;padding:.6rem .75rem .6rem 2.1rem;position:relative}
@@ -333,6 +336,7 @@
     .mz-row::before{background:#888} .mz-row::after{background:#000;border-color:#fff}
     .mz-bar .bg{fill:#f0efec} .mz-bar .mid{stroke:#000} .mz-bar .stopat{fill:#000}
     .mz-overview .st-name,.mz-overview .st-name.stop,.mz-overview .km{fill:#000}
+    .mz-overview .bandel-sep{stroke:#000}
     .mz-overview .track{fill:#f0efec}
     .mz-detail{background:#fff} .mz-detail::before{background:#888}
     .mz-chart .median{stroke:#000} .mz-chart .run{stroke:rgba(0,0,0,.25)}
@@ -645,17 +649,19 @@
         </div>
         <h3>Hela linjen</h3>
         <div id="motionOverview" class="mz-overview"></div>
+        <p class="meta mz-kmnote" id="motionKmNote"></p>
         <h3 id="motionListTitle">Vid uppehållen</h3>
         <div id="motionList" class="mz-list"></div>
         <h3 id="motionTableTitle">Lista för halkbekämpningen</h3>
         <div id="motionTable"></div>
-        <p class="meta no-print">Räknat ur GPS-spåren (en punkt i sekunden). Tåget <strong>bromsar</strong> när farten minskar med minst 0,15 m/s² och <strong>gasar</strong> när den ökar med minst 0,15 m/s²; däremellan är farten jämn (rullning och lutning). Vid varje station räknas bara körningar som stannade där. Avstånden är meter före och efter stationens mittpunkt (Trafikverkets koordinat) i färdriktningen, i steg om 50 m. En <strong>zon</strong> är där minst hälften av körningarna bromsar eller gasar. <strong>Inbromsning</strong> och <strong>gas</strong> räknar ihop zoner i steg, till exempel inför en bangård, så länge tåget inte gör tvärtom däremellan. Km räknas längs spåret från linjens ände. Välj sträcka med <strong>Från</strong> och <strong>Till</strong> (alla körningar som går där räknas, även de som bara går en del av sträckan); ⇄ byter riktning. Station 1 och 2 i filtret väljer också sträckan. Klicka på en station för fartprofil, karta och koordinater.</p>
+        <p class="meta no-print">Räknat ur GPS-spåren (en punkt i sekunden). Tåget <strong>bromsar</strong> när farten minskar med minst 0,15 m/s² och <strong>gasar</strong> när den ökar med minst 0,15 m/s²; däremellan är farten jämn (rullning och lutning). Vid varje station räknas bara körningar som stannade där. Avstånden är meter före och efter stationens mittpunkt (Trafikverkets koordinat) i färdriktningen, i steg om 50 m. En <strong>zon</strong> är där minst hälften av körningarna bromsar eller gasar. <strong>Inbromsning</strong> och <strong>gas</strong> räknar ihop zoner i steg, till exempel inför en bangård, så länge tåget inte gör tvärtom däremellan. <strong>Km-tal</strong> är Trafikverkets längdmätning per bandel, som på kilometertavlorna (23+450 = km 23 och 450 m); se raden under linjebandet. Går det inte att hämta visas km längs spåret från linjens ände. Välj sträcka med <strong>Från</strong> och <strong>Till</strong> (alla körningar som går där räknas, även de som bara går en del av sträckan); ⇄ byter riktning. Station 1 och 2 i filtret väljer också sträckan. Klicka på en station för fartprofil, karta och koordinater.</p>
       </div>
     </div>
   </div>
 </main>
 
 <script src="railtimer-github.js"></script>
+<script src="railtimer-trv.js"></script>
 <script src="railtimer-analys.js"></script>
 <script>
 (function(){
@@ -692,6 +698,12 @@
   let openMotion = '';           // stationen vars fartprofil och karta visas (namn|riktning)
   let lastMotion = null;         // senaste Broms och gas
   let motionDirty = true;        // urvalet har ändrats sedan Broms och gas räknades
+  // Trafikverkets km-tal (plankorsningarna). status: none | loading | ok | error
+  let kmTal = { status: 'none', crossings: [], error: '', fetchedAt: 0, bbox: null };
+  let kmAxes = null;             // km-talet per linje i lastMotion (AN.kmTalAxis), räknas om när något ändras
+  let kmAxesFor = null;
+  let kmTalTriedAt = 0;          // senaste hämtningen som startade av sig själv
+  let kmTalFetch = null;         // simulerat Trafikverket i testerna
   let tileUrl = TEST_MODE ? '' : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'; // testerna når inte nätet
 
   // Elements
@@ -779,6 +791,11 @@
     const el = e.target.closest('[data-motion-key]');
     if(el) openMotionStation(el.dataset.motionKey);
   }));
+  document.getElementById('motionKmNote').addEventListener('click', e => {
+    if(!e.target.closest('#btnKmTalRetry') || !lastMotion) return;
+    kmTalTriedAt = Date.now();
+    loadKmTal(traceBox(lastMotion));
+  });
   let motionResize = null;
   window.addEventListener('resize', () => {
     clearTimeout(motionResize);
@@ -2284,6 +2301,139 @@
   function passText(n){ return n + (n === 1 ? ' passage' : ' passager'); }
   function mainLine(z){ return z.lines.slice().sort((a, b) => b.length - a.length)[0]; }
 
+  /* Km-tal: Trafikverkets längdmätning, som på kilometertavlorna. Räknas från plankorsningarnas km-tal och bandel
+     (RailCrossing), som hämtas en gång för rektangeln runt spåren och sparas i 30 dagar. Utan km-tal visas km
+     längs spåret från linjens ände. */
+  const KMTAL_KEY = 'railtimer_kmtal_v1';
+  const KMTAL_MAX_AGE_MS = 30 * 24 * 3600 * 1000;
+  const KMTAL_RETRY_MS = 10 * 60 * 1000;   // efter ett fel hämtas det av sig självt tidigast efter 10 min
+  const KMTAL_MARGIN = 0.02;              // grader runt spåren
+
+  function traceBox(z){
+    let box = null;
+    for(const L of (z && z.lines) || []){
+      for(const p of L.trace || []){
+        if(!box) box = { minLat: p.lat, maxLat: p.lat, minLon: p.lon, maxLon: p.lon };
+        else { box.minLat = Math.min(box.minLat, p.lat); box.maxLat = Math.max(box.maxLat, p.lat); box.minLon = Math.min(box.minLon, p.lon); box.maxLon = Math.max(box.maxLon, p.lon); }
+      }
+    }
+    if(!box) return null;
+    const r = v => Math.round(v * 1000) / 1000;
+    return { minLat: r(box.minLat - KMTAL_MARGIN), minLon: r(box.minLon - KMTAL_MARGIN), maxLat: r(box.maxLat + KMTAL_MARGIN), maxLon: r(box.maxLon + KMTAL_MARGIN) };
+  }
+  function boxCovers(a, b){
+    return !!(a && b && a.minLat <= b.minLat + 1e-9 && a.minLon <= b.minLon + 1e-9 && a.maxLat >= b.maxLat - 1e-9 && a.maxLon >= b.maxLon - 1e-9);
+  }
+  function readKmTalCache(){
+    try{
+      const c = JSON.parse(localStorage.getItem(KMTAL_KEY) || 'null');
+      if(!c || !Array.isArray(c.list) || !c.bbox) return null;
+      return { fetchedAt: Number(c.fetchedAt) || 0, bbox: c.bbox, crossings: c.list.map(([lat, lon, bandel, m]) => ({ lat, lon, bandel, m })) };
+    }catch(e){ return null; }
+  }
+  function saveKmTalCache(d){
+    const r5 = v => Math.round(v * 1e5) / 1e5;
+    try{ localStorage.setItem(KMTAL_KEY, JSON.stringify({ fetchedAt: d.fetchedAt, bbox: d.bbox, list: d.crossings.map(c => [r5(c.lat), r5(c.lon), c.bandel, c.m]) })); }catch(e){ /* full lagring: km-talet hämtas igen nästa gång */ }
+  }
+  function setKmTal(d, extra){
+    kmTal = Object.assign({ status: 'ok', crossings: d.crossings, fetchedAt: d.fetchedAt, bbox: d.bbox, error: '' }, extra || {});
+    kmAxes = null;
+  }
+
+  // Km-talet för spåren i z: sparat om det täcker spåren, annars hämtas det (i testläge bara med testernas fetch)
+  function ensureKmTal(z){
+    const box = traceBox(z);
+    if(!box || kmTal.status === 'loading') return;
+    if(kmTal.status !== 'ok' || !boxCovers(kmTal.bbox, box)){
+      const c = readKmTalCache();
+      if(c && (boxCovers(c.bbox, box) || kmTal.status !== 'ok')) setKmTal(c);
+    }
+    const fresh = kmTal.status === 'ok' && boxCovers(kmTal.bbox, box) && Date.now() - kmTal.fetchedAt < KMTAL_MAX_AGE_MS;
+    if(fresh || (TEST_MODE && !kmTalFetch) || Date.now() - kmTalTriedAt < KMTAL_RETRY_MS) return;
+    kmTalTriedAt = Date.now();
+    loadKmTal(box);
+  }
+
+  async function loadKmTal(box){
+    if(!box) return;
+    const prev = kmTal;
+    kmTal = Object.assign({}, prev, { status: 'loading', error: '' });
+    renderKmNote();
+    try{
+      const res = await window.RailTimerTrv.fetchRailCrossings(box, { fetch: kmTalFetch || undefined });
+      const d = { crossings: res.crossings, fetchedAt: Date.now(), bbox: box };
+      saveKmTalCache(d);
+      setKmTal(d);
+    }catch(e){
+      const error = (e && e.message) || String(e);
+      // Äldre km-tal används hellre än inget
+      if(prev.crossings && prev.crossings.length) setKmTal(prev, { error, stale: true });
+      else { kmTal = { status: 'error', crossings: [], error, fetchedAt: 0, bbox: null }; kmAxes = null; }
+    }
+    if(lastMotion) renderMotionView();
+    else renderKmNote();
+  }
+
+  function axesFor(z){
+    if(kmAxes && kmAxesFor === z) return kmAxes;
+    kmAxesFor = z;
+    kmAxes = z ? z.lines.map(L => AN.kmTalAxis(L, kmTal.crossings)) : [];
+    return kmAxes;
+  }
+  function kmAxisOf(L){ return L && lastMotion ? axesFor(lastMotion)[L.index] || null : null; }
+  function kmTalOf(L, km){ return AN.kmTalAt(kmAxisOf(L), km); }
+  // Km-talet avrundat till 10 m: noggrannare än så är det inte mellan plankorsningarna
+  function fmtTal(m){ return AN.formatKmTal(m, 10); }
+  // "km 121+416", utan km-tal "21,4 km från Herrljunga C". Tomt när linjen har km-tal men inte just där.
+  function kmText(L, km){
+    if(!kmAxisOf(L)) return fmtKm(km) + ' km från ' + L.stations[0].name;
+    const k = kmTalOf(L, km);
+    return k ? 'km ' + fmtTal(k.m) : '';
+  }
+  function kmCell(L, km){
+    if(!kmAxisOf(L)) return fmtKm(km);
+    const k = kmTalOf(L, km);
+    return k ? fmtTal(k.m) : '–';
+  }
+  function kmRange(L, a, b){ return kmCell(L, a) + '–' + kmCell(L, b); }
+  function kmHead(L){ return kmAxisOf(L) ? 'Km-tal' : 'Km från ' + L.stations[0].name; }
+
+  // Bandelarna längs linjen med första och sista stationen (i linjens ordning): [{ bandel, from, to, refs }]
+  function bandelsOf(L){
+    const ax = kmAxisOf(L);
+    if(!ax) return [];
+    return ax.segs.map(s => {
+      const names = L.stations.filter(st => { const k = AN.kmTalAt(ax, st.km); return k && k.bandel === s.bandel; }).map(st => st.name);
+      return { bandel: s.bandel, from: names[0] || '', to: names[names.length - 1] || '', refs: s.refs.length };
+    }).filter(b => b.from);
+  }
+  function bandelText(L){
+    return bandelsOf(L).map(b => `bandel ${b.bandel} (${b.from === b.to ? b.from : b.from + ' – ' + b.to})`).join(', ');
+  }
+
+  // Raden under linjebandet: var km-talet kommer från, eller varför det saknas
+  function kmNoteHtml(L){
+    const s = kmTal.status;
+    if(s === 'loading') return 'Hämtar km-tal från Trafikverket …';
+    const ax = L ? kmAxisOf(L) : null;
+    const retry = ' <button type="button" class="ghost no-print" id="btnKmTalRetry">Försök igen</button>';
+    if(ax){
+      const n = ax.segs.reduce((sum, x) => sum + x.refs.length, 0);
+      return `<strong>Km-tal</strong> enligt Trafikverket (banans längdmätning, som på kilometertavlorna): ${esc(bandelText(L))}. ` +
+        `Räknat från ${n} plankorsningar längs linjen; mellan dem räknas sträckan längs GPS-spåren, så km-talet kan skilja några tiotal meter.` +
+        (kmTal.stale ? ` Kunde inte uppdateras (${esc(kmTal.error)}); km-talet är från ${esc(AN.localDate(new Date(kmTal.fetchedAt)))}.` + retry : '');
+    }
+    const own = L ? `Km = avstånd längs spåret från ${esc(L.stations[0].name)}, räknat ur GPS-spåren. ` : '';
+    if(s === 'error') return own + `Trafikverkets km-tal kunde inte hämtas (${esc(kmTal.error)}).` + retry;
+    if(s === 'ok') return own + 'Trafikverket har inga plankorsningar med km-tal längs linjen.';
+    return own + 'Trafikverkets km-tal är inte hämtat.' + (TEST_MODE && !kmTalFetch ? '' : retry);
+  }
+  function renderKmNote(){
+    const el = document.getElementById('motionKmNote');
+    if(!el) return;
+    el.innerHTML = kmNoteHtml(lastMotion ? motionRange(lastMotion).L : null);
+  }
+
   // Färg för ett längdsteg: det körningarna oftast gör, starkare ju fler som gör det. null = för få körningar
   function heatOf(b, minRuns){
     if(!b || b.n < minRuns) return null;
@@ -2377,6 +2527,7 @@
     }
     lastMotion = z;
     content.style.display = '';
+    ensureKmTal(z);
     renderMotionView();
   }
 
@@ -2398,6 +2549,7 @@
       `${z.runCount} körningar med GPS-spår (${periodText(z.period)}) · ${route}, ${fmtKm(r.hi - r.lo, r.hi - r.lo < 10 ? 1 : 0)} km · ` +
       `${stopCount} stationer med uppehåll` + (z.filter.train ? ` · tåg ${z.filter.train}` : '');
     document.getElementById('motionOverview').innerHTML = overviewHtml(z, r);
+    renderKmNote();
     document.getElementById('motionListTitle').textContent = 'Vid uppehållen ' + route;
     document.getElementById('motionList').innerHTML = stationListHtml(z, r);
     document.getElementById('motionTableTitle').textContent = 'Lista för halkbekämpningen, ' + route;
@@ -2451,13 +2603,40 @@
       const stop = stopNames.has(st.name);
       const ly = trackY - 6 - lane * 15;
       svg += `<line class="st-tick${stop ? ' stop' : ''}" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${ly + 3}" y2="${trackY + trackH + 4}"/>`;
-      svg += `<text class="st-name${stop ? ' stop' : ''}" x="${(end ? x - 3 : x + 3).toFixed(1)}" y="${ly}"${end ? ' text-anchor="end"' : ''}${stop ? ` data-motion-key="${esc(st.name + '|' + dir)}"` : ''}><title>${esc(st.name + ' · km ' + fmtKm(st.km))}</title>${esc(st.name)}</text>`;
+      const where = kmText(L, st.km);
+      svg += `<text class="st-name${stop ? ' stop' : ''}" x="${(end ? x - 3 : x + 3).toFixed(1)}" y="${ly}"${end ? ' text-anchor="end"' : ''}${stop ? ` data-motion-key="${esc(st.name + '|' + dir)}"` : ''}><title>${esc(st.name + (where ? ' · ' + where : ''))}</title>${esc(st.name)}</text>`;
     }
     const step = span > 60 ? 10 : span > 20 ? 5 : 1;
-    for(let k = Math.ceil(kmA / step) * step; k <= kmB + 1e-9; k += step){
-      svg += `<text class="km" x="${X(k).toFixed(1)}" y="${trackY + trackH + 16}" text-anchor="middle">${fmtKm(k, 0)}</text>`;
+    const tickY = trackY + trackH + 16;
+    const ax = kmAxisOf(L);
+    if(ax){
+      // Km-talet där det passerar jämna km (per bandel), och ett streck där bandelen byts
+      const stepM = step * 1000;
+      let prev = null, lastX = -Infinity;
+      for(let i = 0, n = Math.ceil(span / 0.05); i <= n; i++){
+        const km = Math.min(kmB, kmA + i * 0.05);
+        const k = AN.kmTalAt(ax, km);
+        if(prev && k && prev.k.bandel !== k.bandel){
+          const x = X((prev.km + km) / 2);
+          svg += `<line class="bandel-sep" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${trackY - 2}" y2="${trackY + trackH + 6}"><title>${esc('bandel ' + prev.k.bandel + ' | bandel ' + k.bandel)}</title></line>`;
+        }else if(prev && k && Math.floor(prev.k.m / stepM) !== Math.floor(k.m / stepM)){
+          const t = Math.max(Math.floor(prev.k.m / stepM), Math.floor(k.m / stepM)) * stepM;
+          const kmT = k.m === prev.k.m ? km : prev.km + (t - prev.k.m) / (k.m - prev.k.m) * (km - prev.km);
+          const x = X(kmT);
+          if(Math.abs(x - lastX) >= 26){
+            svg += `<text class="km" x="${x.toFixed(1)}" y="${tickY}" text-anchor="middle">${t / 1000}</text>`;
+            lastX = x;
+          }
+        }
+        prev = k ? { km, k } : null;
+      }
+      svg += `<text class="km" x="${P}" y="${H - 6}">km-tal (Trafikverket) · färdriktning → mot ${esc(r.to.name)}</text>`;
+    }else{
+      for(let k = Math.ceil(kmA / step) * step; k <= kmB + 1e-9; k += step){
+        svg += `<text class="km" x="${X(k).toFixed(1)}" y="${tickY}" text-anchor="middle">${fmtKm(k, 0)}</text>`;
+      }
+      svg += `<text class="km" x="${P}" y="${H - 6}">km från ${esc(L.stations[0].name)} · färdriktning → mot ${esc(r.to.name)}</text>`;
     }
-    svg += `<text class="km" x="${P}" y="${H - 6}">km från ${esc(L.stations[0].name)} · färdriktning → mot ${esc(r.to.name)}</text>`;
     return svg + '</svg>';
   }
 
@@ -2494,16 +2673,17 @@
     order.forEach((st, i) => {
       const g = byKey.get(st.name + '|' + dir);
       const cls = (i === 0 ? ' first' : '') + (i === order.length - 1 ? ' last' : '');
-      const km = 'km ' + fmtKm(st.km);
+      const where = kmText(r.L, st.km);
+      const km = where ? esc(where) + ' · ' : '';
       if(!g || !g.n){
         const pass = g ? g.passages : 0;
         html += `<div class="mz-row pass${cls}"><span class="mz-head"><span class="mz-name">${esc(st.name)}</span>` +
-          `<span class="mz-sub">${km} · ${pass ? 'passeras (' + pass + (pass === 1 ? ' körning)' : ' körningar)') : 'inga uppehåll i spåren'}</span></span></div>`;
+          `<span class="mz-sub">${km}${pass ? 'passeras (' + pass + (pass === 1 ? ' körning)' : ' körningar)') : 'inga uppehåll i spåren'}</span></span></div>`;
         return;
       }
       const open = g.key === openMotion;
       html += `<button type="button" class="mz-row${cls}${open ? ' open' : ''}" data-motion-key="${esc(g.key)}" aria-expanded="${open}">` +
-        `<span class="mz-head"><span class="mz-name">${esc(st.name)}</span><span class="mz-sub">${km} · ${g.n} uppehåll` +
+        `<span class="mz-head"><span class="mz-name">${esc(st.name)}</span><span class="mz-sub">${km}${g.n} uppehåll` +
         `${g.passages ? ' · ' + passText(g.passages) : ''}</span>${g.n < AN.ZONE_MIN_RUNS ? '<span class="mz-few">få körningar</span>' : ''}</span>` +
         miniBar(g) + `<span class="mz-nums">${zoneSummary(g)}</span></button>`;
       if(open) html += '<div class="mz-detail" id="motionDetail"></div>';
@@ -2514,21 +2694,24 @@
   // Lista per station i vald riktning: inbromsning och gas med koordinater (det halkbekämpningen behöver)
   function motionTableHtml(z, r){
     const rows = [];
+    const L = r.L;
     {
       for(const st of lineOrder(r, r.dir)){
         const g = z.stations.find(s => s.key === st.name + '|' + r.dir && s.line === r.L.index);
         if(!g || !g.n) continue;
         const a = g.approach, d = g.departure;
-        rows.push(`<tr data-motion-key="${esc(g.key)}"><td>${esc(g.name)}</td><td class="num">${fmtKm(g.km)}</td><td class="num">${g.n}</td>` +
-          (a ? `<td>${esc(brakeText(a))}</td><td class="num">${fmtM(a.length)}</td><td class="num">${fmtKm(a.km1)}–${fmtKm(a.km2)}</td><td class="num">${fmtSpeed(a.vFrom)}</td><td>${mapLink(a.start)}</td>`
+        const k = kmTalOf(L, g.km);
+        rows.push(`<tr data-motion-key="${esc(g.key)}"><td>${esc(g.name)}</td><td class="num"${k ? ` title="bandel ${k.bandel}"` : ''}>${kmCell(L, g.km)}</td><td class="num">${g.n}</td>` +
+          (a ? `<td>${esc(brakeText(a))}</td><td class="num">${fmtM(a.length)}</td><td class="num">${kmRange(L, a.km1, a.km2)}</td><td class="num">${fmtSpeed(a.vFrom)}</td><td>${mapLink(a.start)}</td>`
             : '<td>–</td><td></td><td></td><td></td><td></td>') +
-          (d ? `<td>${esc(gasText(d))}</td><td class="num">${fmtM(d.length)}</td><td class="num">${fmtKm(d.km1)}–${fmtKm(d.km2)}</td><td>${mapLink(d.end)}</td>`
+          (d ? `<td>${esc(gasText(d))}</td><td class="num">${fmtM(d.length)}</td><td class="num">${kmRange(L, d.km1, d.km2)}</td><td>${mapLink(d.end)}</td>`
             : '<td>–</td><td></td><td></td><td></td>') + '</tr>');
       }
     }
-    return '<div class="table-wrap"><table id="motionTableEl" class="clickable"><thead><tr><th>Station</th><th class="num">Km</th><th class="num" title="Körningar som stannade">Uppehåll</th>' +
-      '<th>Bromsar</th><th class="num">Längd</th><th class="num">Km</th><th class="num" title="Fart när inbromsningen börjar (median)">Fart in</th><th title="Där inbromsningen börjar">Börjar bromsa</th>' +
-      '<th>Gasar</th><th class="num">Längd</th><th class="num">Km</th><th title="Där gasen slutar">Slutar gasa</th></tr></thead><tbody>' +
+    const head = esc(kmHead(L));
+    return '<div class="table-wrap"><table id="motionTableEl" class="clickable"><thead><tr><th>Station</th><th class="num">' + head + '</th><th class="num" title="Körningar som stannade">Uppehåll</th>' +
+      '<th>Bromsar</th><th class="num">Längd</th><th class="num" title="Var inbromsningen börjar och slutar">' + head + '</th><th class="num" title="Fart när inbromsningen börjar (median)">Fart in</th><th title="Där inbromsningen börjar">Börjar bromsa</th>' +
+      '<th>Gasar</th><th class="num">Längd</th><th class="num" title="Var gasen börjar och slutar">' + head + '</th><th title="Där gasen slutar">Slutar gasa</th></tr></thead><tbody>' +
       (rows.length ? rows.join('') : '<tr><td colspan="12" class="empty">Inga uppehåll i urvalet</td></tr>') + '</tbody></table></div>';
   }
 
@@ -2546,9 +2729,11 @@
     const a = g.approach, d = g.departure;
     const dates = g.runs.map(r => r.date).filter(Boolean).sort();
     const tile = (label, value, sub) => `<div>${esc(label)}<strong>${esc(value)}</strong><span>${esc(sub)}</span></div>`;
+    const L = lastMotion.lines[g.line];
+    const at = (word, km) => { const k = kmTalOf(L, km); return k ? ` · ${word} km ${fmtTal(k.m)}` : ''; };
     let html = '<div class="balance">' +
-      tile('Inbromsning', a ? fmtM(a.length) : '–', a ? `${brakeText(a)} · från ${fmtSpeed(a.vFrom)}${a.steps > 1 ? ' · i ' + a.steps + ' steg' : ''}` : 'ingen tydlig inbromsning') +
-      tile('Gas', d ? fmtM(d.length) : '–', d ? `${gasText(d)} · till ${fmtSpeed(d.vTo)}${d.steps > 1 ? ' · i ' + d.steps + ' steg' : ''}` : 'ingen tydlig gas') +
+      tile('Inbromsning', a ? fmtM(a.length) : '–', a ? `${brakeText(a)}${at('börjar', a.km1)} · från ${fmtSpeed(a.vFrom)}${a.steps > 1 ? ' · i ' + a.steps + ' steg' : ''}` : 'ingen tydlig inbromsning') +
+      tile('Gas', d ? fmtM(d.length) : '–', d ? `${gasText(d)}${at('slutar', d.km2)} · till ${fmtSpeed(d.vTo)}${d.steps > 1 ? ' · i ' + d.steps + ' steg' : ''}` : 'ingen tydlig gas') +
       tile('Stannar', g.stopAt == null || Math.abs(g.stopAt) < 1 ? 'vid mitten' : fmtPos(g.stopAt), 'median, från stationens mittpunkt') +
       tile('Underlag', g.n + ' uppehåll', (dates.length ? (dates[0] === dates[dates.length - 1] ? dates[0] : dates[0] + ' – ' + dates[dates.length - 1]) : '') + (g.passages ? ` · ${passText(g.passages)} räknas inte` : '')) +
       '</div>';
@@ -2557,10 +2742,10 @@
     html += `<div class="mz-map" role="img" aria-label="${esc('Karta över ' + g.name + ' med var tågen bromsar och gasar')}"></div>`;
     const zones = g.zones.filter(x => x.own);
     html += '<h3>Zoner vid ' + esc(g.name) + '</h3><div class="table-wrap"><table id="motionZones"><thead><tr><th>Zon</th><th>Var</th><th class="num">Längd</th>' +
-      '<th class="num" title="Andel av körningarna som bromsar eller gasar där (medel över zonen)">Andel</th><th class="num">Fart</th><th class="num">Km</th><th>Start</th><th>Slut</th></tr></thead><tbody>';
+      `<th class="num" title="Andel av körningarna som bromsar eller gasar där (medel över zonen)">Andel</th><th class="num">Fart</th><th class="num">${esc(kmHead(L))}</th><th>Start</th><th>Slut</th></tr></thead><tbody>`;
     html += zones.length ? zones.map(x => `<tr><td class="mz-zone-kind"><span class="key ${x.kind === 'broms' ? 'brake' : 'gas'}"></span>${x.kind === 'broms' ? 'Bromsar' : 'Gasar'}</td>` +
       `<td>${esc(fmtRange(x))}</td><td class="num">${fmtM(x.length)}</td><td class="num">${pct(x.share)}</td>` +
-      `<td class="num">${Math.round(x.vFrom || 0)}→${Math.round(x.vTo || 0)} km/h</td><td class="num">${fmtKm(x.km1)}–${fmtKm(x.km2)}</td>` +
+      `<td class="num">${Math.round(x.vFrom || 0)}→${Math.round(x.vTo || 0)} km/h</td><td class="num">${kmRange(L, x.km1, x.km2)}</td>` +
       `<td>${mapLink(x.start)}</td><td>${mapLink(x.end)}</td></tr>`).join('')
       : '<tr><td colspan="8" class="empty">Inga zoner där minst hälften av körningarna bromsar eller gasar</td></tr>';
     return html + '</tbody></table></div>';
@@ -2626,7 +2811,8 @@
       if(!b){ tip.style.display = 'none'; cross.style.display = 'none'; return; }
       cross.setAttribute('x1', px); cross.setAttribute('x2', px);
       cross.style.display = 'block';
-      tip.innerHTML = `<b>${esc(fmtPos(b.from + AN.ZONE_BIN_M / 2))}</b> · ${fmtSpeed(b.v.median)}<br>` +
+      const kt = lastMotion ? kmTalOf(lastMotion.lines[g.line], g.km + g.dir * (b.from + AN.ZONE_BIN_M / 2) / 1000) : null;
+      tip.innerHTML = `<b>${esc(fmtPos(b.from + AN.ZONE_BIN_M / 2))}</b>${kt ? ' · km ' + fmtTal(kt.m) : ''} · ${fmtSpeed(b.v.median)}<br>` +
         `Bromsar ${b.broms} av ${b.n} · gasar ${b.gas} av ${b.n}`;
       tip.style.display = 'block';
       const bx = ev.clientX - box.getBoundingClientRect().left;
@@ -2726,7 +2912,9 @@
     return [
       ['Bygger på', `${z.runCount} körningar med GPS-spår (av ${z.selected} i urvalet)`],
       ['Period', periodText(z.period)],
-      ['Sträcka', `${routeText(r)}, ${fmtKm(r.hi - r.lo, r.hi - r.lo < 10 ? 1 : 0)} km. Km räknas längs spåret från ${L.stations[0].name} (linjen ${L.stations[0].name} – ${L.stations[L.stations.length - 1].name}).`],
+      ['Sträcka', `${routeText(r)}, ${fmtKm(r.hi - r.lo, r.hi - r.lo < 10 ? 1 : 0)} km.`],
+      ['Km', kmAxisOf(L) ? `Km-tal enligt Trafikverket (banans längdmätning): ${bandelText(L)}. Räknat från plankorsningarnas km-tal; mellan dem längs GPS-spåren.`
+        : `Km räknas längs spåret från ${L.stations[0].name} (linjen ${L.stations[0].name} – ${L.stations[L.stations.length - 1].name}); Trafikverkets km-tal saknas.`],
       ['Urval', describeFilter()],
       ['Så räknas det', 'Bromsar/gasar = farten minskar/ökar med minst 0,15 m/s². Zon = minst hälften av körningarna som stannade. Meter före/efter stationens mittpunkt i färdriktningen.'],
       ['Skapad', nowText()]
@@ -2739,6 +2927,11 @@
     const coord = p => p && p.lat != null && isFinite(p.lat) ? [p.lat.toFixed(5).replace('.', ','), p.lon.toFixed(5).replace('.', ',')] : ['', ''];
     const summary = [], zones = [];
     const r = motionRange(z);
+    const L = r.L;
+    // Km-tal som text ("121+416") och bandelen; tomt utan km-tal
+    const tal = km => { const k = kmTalOf(L, km); return k ? fmtTal(k.m) : ''; };
+    const bandel = km => { const k = kmTalOf(L, km); return k ? k.bandel : ''; };
+    const own = 'Km från ' + L.stations[0].name;
     {
       // Båda riktningarna på vald sträcka, vald riktning först
       for(const dir of [r.dir, -r.dir]){
@@ -2746,25 +2939,27 @@
           const g = z.stations.find(s => s.key === st.name + '|' + dir && s.line === r.L.index);
           if(!g || !g.n) continue;
           const a = g.approach, d = g.departure;
-          summary.push([routeText(r, dir), g.name, g.km, g.n, g.passages, g.stopAt == null ? null : Math.round(g.stopAt),
-            a ? a.from : null, a ? a.to : null, a ? a.length : null, a ? Math.round(a.vFrom) : null, ...coord(a && a.start),
-            d ? d.from : null, d ? d.to : null, d ? d.length : null, d ? Math.round(d.vTo) : null, ...coord(d && d.end)]);
+          summary.push([routeText(r, dir), g.name, bandel(g.km), tal(g.km), g.km, g.n, g.passages, g.stopAt == null ? null : Math.round(g.stopAt),
+            a ? a.from : null, a ? a.to : null, a ? a.length : null, a ? Math.round(a.vFrom) : null, a ? tal(a.km1) : '', ...coord(a && a.start),
+            d ? d.from : null, d ? d.to : null, d ? d.length : null, d ? Math.round(d.vTo) : null, d ? tal(d.km2) : '', ...coord(d && d.end)]);
           for(const x of g.zones.filter(q => q.own)){
             zones.push([routeText(r, dir), g.name, x.kind === 'broms' ? 'Bromsar' : 'Gasar', x.from, x.to, x.length, Math.round(x.share * 100),
-              x.vFrom == null ? null : Math.round(x.vFrom), x.vTo == null ? null : Math.round(x.vTo), x.km1, x.km2, ...coord(x.start), ...coord(x.end)]);
+              x.vFrom == null ? null : Math.round(x.vFrom), x.vTo == null ? null : Math.round(x.vTo), bandel(x.km1), tal(x.km1), tal(x.km2), x.km1, x.km2,
+              ...coord(x.start), ...coord(x.end)]);
           }
         }
       }
     }
     const text = AN.csvDocument(MOTION_TITLE, motionMeta(z), [{
       title: 'Uppehåll: inbromsning och gas (meter från stationens mittpunkt, negativt = före)',
-      header: ['Riktning', 'Station', 'Km', 'Uppehåll', 'Passager', 'Stannar (m)', 'Bromsar från (m)', 'Bromsar till (m)', 'Bromssträcka (m)', 'Fart in (km/h)',
-        'Börjar bromsa lat', 'Börjar bromsa lon', 'Gasar från (m)', 'Gasar till (m)', 'Gassträcka (m)', 'Fart ut (km/h)', 'Slutar gasa lat', 'Slutar gasa lon'],
+      header: ['Riktning', 'Station', 'Bandel', 'Km-tal', own, 'Uppehåll', 'Passager', 'Stannar (m)', 'Bromsar från (m)', 'Bromsar till (m)', 'Bromssträcka (m)', 'Fart in (km/h)',
+        'Börjar bromsa km-tal', 'Börjar bromsa lat', 'Börjar bromsa lon', 'Gasar från (m)', 'Gasar till (m)', 'Gassträcka (m)', 'Fart ut (km/h)',
+        'Slutar gasa km-tal', 'Slutar gasa lat', 'Slutar gasa lon'],
       rows: summary
     }, {
       title: 'Alla zoner',
-      header: ['Riktning', 'Station', 'Zon', 'Från (m)', 'Till (m)', 'Längd (m)', 'Andel körningar (%)', 'Fart start (km/h)', 'Fart slut (km/h)', 'Km start', 'Km slut',
-        'Start lat', 'Start lon', 'Slut lat', 'Slut lon'],
+      header: ['Riktning', 'Station', 'Zon', 'Från (m)', 'Till (m)', 'Längd (m)', 'Andel körningar (%)', 'Fart start (km/h)', 'Fart slut (km/h)',
+        'Bandel', 'Km-tal start', 'Km-tal slut', own + ' start', own + ' slut', 'Start lat', 'Start lon', 'Slut lat', 'Slut lon'],
       rows: zones
     }]);
     downloadText('broms-och-gas_' + AN.localDate(new Date()) + '.csv', text);
@@ -2833,6 +3028,10 @@
       setMotionDir(dir){ if(dir !== motionDir) setMotionRoute(motionTo, motionFrom); },
       setMotionRoute,
       setTileUrl(url){ tileUrl = url; },
+      setKmTalFetch(fn){ kmTalFetch = fn; kmTalTriedAt = 0; },
+      getKmTal: () => kmTal,
+      loadKmTal: () => loadKmTal(traceBox(lastMotion)),
+      traceBox: () => traceBox(lastMotion),
       exportMotionCsv,
       prepareMotionPrint: () => lastMotion && preparePrint('motionReport', MOTION_TITLE, motionMeta(lastMotion))
     };
