@@ -304,10 +304,10 @@ test('lagring: full lagring utan uppladdning – inga körningar tas bort', asyn
 
 // ── Task 3: körningsformat 2 ──
 
-test('format 2: id, format, appversion och stationsfält', async () => {
+test('format 3: id, format, appversion och stationsfält', async () => {
   const r = await runJourney(buildJourney());
   const log = r.log;
-  assertEqual(log.format, 2, 'format');
+  assertEqual(log.format, 3, 'format (3 sedan 2026-11-25e: tågorderns tider operationalArrival/-Departure)');
   assert(typeof log.appVersion === 'string' && log.appVersion.length > 0, 'appVersion saknas');
   assertEqual(log.id, r.rt.state.journeyId, 'id ska vara resans id');
   const s = log.stops[1];
@@ -614,7 +614,9 @@ function ttStop(name, o, day) {
   return {
     name,
     actualArrival: t(o.arr), actualDeparture: t(o.dep),
+    // sArr/sDep är tågorderns tider (från appversion 2026-11-25e); de annonserade sätts lika
     scheduledArrival: t(o.sArr), scheduledDeparture: t(o.sDep),
+    operationalArrival: t(o.sArr), operationalDeparture: t(o.sDep),
     arrivalSource: o.arr != null ? 'gps' : '', departSource: o.dep != null ? 'gps' : '',
     shouldStop: true
   };
@@ -693,6 +695,21 @@ test('analys: tid på dygnet begränsar urvalet', async () => {
   assertEqual(trips(), '6', 'två stationer valda');
 });
 
+test('analys: körningar med bara annonserade tider jämförs inte mot tidtabellen, och det står vilka', async () => {
+  const runs = againstRuns();
+  // Två gamla körningar (före appversion 2026-11-25e): bara annonserade tider, ankomst = avgång vid mellanstationerna
+  for (const r of runs.slice(0, 2)) {
+    r.stops.forEach(s => { s.operationalArrival = null; s.operationalDeparture = null; if (s.scheduledDeparture) s.scheduledArrival = s.scheduledArrival && s.scheduledDeparture; });
+  }
+  const w = await loadAnalysWith(runs);
+  const line = w.document.getElementById('basisLine');
+  assertEqual(line.hidden, false, 'raden visas');
+  assertEqual(line.textContent, 'Jämförelser mot tidtabellen bygger på 2 körningar med tågorderns tider. 2 körningar har bara Trafikverkets annonserade tider (appen före version 2026-11-25e) och räknas bara i det som mäts: vad sträckorna tar, uppehåll och GPS-spår.', 'text');
+  assert(w.document.getElementById('trainsSummary').textContent.startsWith('Bygger på 2 körningar med tågorderns tider av 6 i urvalet'), w.document.getElementById('trainsSummary').textContent);
+  const w2 = await loadAnalysWith(againstRuns());
+  assertEqual(w2.document.getElementById('basisLine').hidden, true, 'dold när alla har tågorderns tider');
+});
+
 test('analys: samma station med två namn slås ihop vid inläsning', async () => {
   const runs = againstRuns().slice(0, 2);
   runs[0].stops[3].name = 'Herrljunga';
@@ -753,7 +770,7 @@ test('analys: Per tåg är förvald och visar varje tåg mot sin egen tidtabell'
   const w = await loadAnalysWith(trainRuns());
   assert(w.document.getElementById('tabTrains').classList.contains('active'), 'Per tåg ska vara förvald');
   const summary = w.document.getElementById('trainsSummary').textContent;
-  assertEqual(summary, 'Bygger på 6 körningar med tidtabell av 8 i urvalet · 2 tåg · period 2026-10-13 – 2026-10-15 · tolerans ±1 min · 1 tågnummer utan tidtabell (2 körningar) visas inte', 'sammanfattning');
+  assertEqual(summary, 'Bygger på 6 körningar med tågorderns tider av 8 i urvalet · 2 tåg · period 2026-10-13 – 2026-10-15 · tolerans ±1 min · 1 tågnummer utan tågorderns tider (2 körningar) visas inte', 'sammanfattning');
   assertEqual(tableRows(w, 'trainsTable'), [
     ['3344', 'Lidköping → Blomberg', '3', '0,0', '0,0', '+2,0', '1', '2,5'],
     ['3346', 'Lidköping → Blomberg', '3', '0,0', '+2,0', '−2,0', '0', '–']
@@ -794,10 +811,10 @@ test('analys: Per tåg med två valda stationer och med tomt urval', async () =>
   const w = await loadAnalysWith(trainRuns());
   w.__analys.setFilters({ filterFrom: 'Lidköping', filterTo: 'Källby' });
   const summary = w.document.getElementById('trainsSummary').textContent;
-  assert(summary.startsWith('Bygger på 6 körningar med tidtabell av 6 i urvalet · 2 tåg') && summary.endsWith('· sträcka Lidköping → Källby'), 'sammanfattning: ' + summary);
+  assert(summary.startsWith('Bygger på 6 körningar med tågorderns tider av 6 i urvalet · 2 tåg') && summary.endsWith('· sträcka Lidköping → Källby'), 'sammanfattning: ' + summary);
   assertEqual(tableRows(w, 'trainsTable').map(r => [r[0], r[1], r[5]]), [['3344', 'Lidköping → Källby', '+2,0'], ['3346', 'Lidköping → Källby', '−2,0']], 'avskurna');
   w.__analys.setFilters({ filterFrom: '', filterTo: '', filterDayType: 'helg' });
-  assertEqual(w.document.getElementById('trainsSummary').textContent, 'Inga körningar med tidtabellstider i urvalet.', 'tomt urval');
+  assertEqual(w.document.getElementById('trainsSummary').textContent, 'Inga körningar med tågorderns tider i urvalet. Körningar från appen före version 2026-11-25e har bara annonserade tider och jämförs inte mot tidtabellen.', 'tomt urval');
   assertEqual(w.document.getElementById('trainsContent').style.display, 'none', 'tabellen döljs');
 });
 
@@ -835,7 +852,7 @@ test('analys: export och utskrift av Per tåg, även med Ctrl+P', async () => {
   const w = await loadAnalysWith(trainRuns());
   let text = w.__analys.exportTrainsCsv();
   assert(text.charCodeAt(0) === 0xFEFF, 'BOM saknas');
-  for (const part of ['"Bygger på";"6 körningar med tidtabell (av 8 i urvalet), 2 tåg"', '"Tolerans";"±1 min"',
+  for (const part of ['"Bygger på";"6 körningar med tågorderns tider (av 8 i urvalet), 2 tåg"', '"Tolerans";"±1 min"',
     '"Tid över (min)";"Restid planerad (min)";"Restid behövs (min)";"Gångtidsmarginal summa (min)"',
     '"3344";"Lidköping → Blomberg";"3";"3";"0";"0";"2";"14";"12";"2";"3";"3";"1";"2,5"']) {
     assert(text.includes(part), 'saknas i CSV: ' + part);
@@ -846,18 +863,18 @@ test('analys: export och utskrift av Per tåg, även med Ctrl+P', async () => {
   assert(text.includes('"Tåg 3344 – gånger tåget tappade tid"') && text.includes('"2026-10-15";"Tor";"07:11";"Källby";"Uppehåll";"2,5";"-2";"2,5";"5,5";"1"'), 'tågkortet i CSV');
   assert(/^tag-3344_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn med tåg');
   const header = w.__analys.prepareTrainsPrint();
-  assert(header.includes('RailTimer – Analys per tåg') && header.includes('Bygger på: 6 körningar med tidtabell (av 8 i urvalet), 2 tåg') && header.includes('Tåg: 3344'), 'utskrift: ' + header);
+  assert(header.includes('RailTimer – Analys per tåg') && header.includes('Bygger på: 6 körningar med tågorderns tider (av 8 i urvalet), 2 tåg') && header.includes('Tåg: 3344'), 'utskrift: ' + header);
   w.__analys.setFilters({ filterTimeOfDay: 'dag' });
   w.dispatchEvent(new w.Event('beforeprint'));
   const printed = w.document.querySelector('#trainsReport .print-header').textContent;
-  assert(printed.includes('Bygger på: 3 körningar med tidtabell (av 5 i urvalet), 1 tåg'), 'Ctrl+P efter filterbyte: ' + printed);
+  assert(printed.includes('Bygger på: 3 körningar med tågorderns tider (av 5 i urvalet), 1 tåg'), 'Ctrl+P efter filterbyte: ' + printed);
 });
 
 test('analys: Sträckor visar vad sträckan tar och planerad tid per tåg', async () => {
   const w = await loadAnalysWith(trainRuns());
   w.__analys.showTab('segments');
   const summary = w.document.getElementById('segmentsSummary').textContent;
-  assert(summary.startsWith('3 sträckor med tidtabell, 1 med olika planerad tid för olika tåg · vad sträckan tar bygger på 8 körningar'), 'sammanfattning: ' + summary);
+  assert(summary.startsWith('3 sträckor med tågorderns tider, 1 med olika planerad tid för olika tåg · vad sträckan tar bygger på 8 körningar'), 'sammanfattning: ' + summary);
   assertEqual(tableRows(w, 'segmentsTable').map(r => r.slice(0, 5).concat([r[6]])), [
     ['Filsbäck → Källby', 'Stopp–stopp', '4,0', '4,0', '6', 'Snål och generös'],
     ['Källby → Blomberg', 'Stopp–stopp', '3,0', '3,0', '6', 'Lagom'],
@@ -871,7 +888,7 @@ test('analys: Sträckor visar vad sträckan tar och planerad tid per tåg', asyn
   assertEqual(tableRows(w, 'segmentsTable').map(r => r[0]), ['Filsbäck → Källby'], 'olika planerad tid');
   w.document.querySelector('#segmentsTable tbody tr').click();
   const detail = w.document.getElementById('segmentDetail');
-  assertEqual(detail.querySelector('h3').textContent, 'Filsbäck → Källby (Stopp–stopp) – 6 mätningar med tidtabell', 'rubrik');
+  assertEqual(detail.querySelector('h3').textContent, 'Filsbäck → Källby (Stopp–stopp) – 6 mätningar med tågorderns tider', 'rubrik');
   assertEqual(tableRows(w, 'segmentObs').length, 6, 'mätningar');
   assertEqual(tableRows(w, 'segmentObs')[0].slice(4), ['som planerat', 'inget spår', 'ja'], 'stannade, spår och räknas');
 });
@@ -942,7 +959,7 @@ test('analys: export och utskrift av Sträckor', async () => {
   w.__analys.showTab('segments');
   w.dispatchEvent(new w.Event('beforeprint'));
   const printed = w.document.querySelector('#segmentsReport .print-header').textContent;
-  assert(printed.includes('RailTimer – Sträckor och planerad tid') && printed.includes('Bygger på: 3 sträckor med tidtabell; vad sträckan tar från 8 körningar (alla tåg i urvalet)'), 'utskrift: ' + printed);
+  assert(printed.includes('RailTimer – Sträckor och planerad tid') && printed.includes('Bygger på: 3 sträckor med tågorderns tider; vad sträckan tar från 8 körningar (alla tåg i urvalet)'), 'utskrift: ' + printed);
 });
 
 test('analys: Tidtabell föreslår tidtabell för valt tåg utifrån vad sträckorna tar', async () => {
@@ -1193,11 +1210,88 @@ test('startformulär: en text som inte är en station startar ingen resa', async
   assert(/Välj start- och slutstation i listan/.test(w.document.getElementById('setupError').textContent), 'meddelandet');
 });
 
-// TrainAnnouncement-svar: [signatur, aktivitet, lokal tid som [år, mån, dag, tim, min], avgångsdatum]
+// TrainAnnouncement-svar: [signatur, aktivitet, lokal tid som [år, mån, dag, tim, min], avgångsdatum, tågorderns tid
+// (LocationDateTimeOTN) som [år, mån, dag, tim, min] – valfri]
 function announcements(rows) {
-  const list = rows.map(([sig, act, t, otnDate]) => ({ LocationSignature: sig, ActivityType: act, AdvertisedTimeAtLocation: new Date(...t).toISOString(), DepartureDateOTN: otnDate }));
+  const list = rows.map(([sig, act, t, otnDate, otn]) => Object.assign(
+    { LocationSignature: sig, ActivityType: act, AdvertisedTimeAtLocation: new Date(...t).toISOString(), DepartureDateOTN: otnDate },
+    otn ? { LocationDateTimeOTN: new Date(...otn).toISOString() } : {}));
   return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: list }] } }) };
 }
+
+// Tåg 23349 2026-11-25 enligt tågordern: Vara ank 11:53 avg 11:54 (annonserad avgång 11:53), Vedum ank 12:00 avg 12:01
+// (annonserad ankomst och avgång 12:01), Herrljunga ank 12:09
+test('tidtabell: tågorderns tider (LocationDateTimeOTN) hämtas och sparas bredvid de annonserade', async () => {
+  const w = await loadApp();
+  let body = '';
+  const d = (h, m) => [2026, 10, 25, h, m];
+  w.fetch = async (url, init) => { body = init.body; return announcements([
+    ['Vaa', 'Ankomst', d(11, 53), '2026-11-25', d(11, 53)], ['Vaa', 'Avgang', d(11, 53), '2026-11-25', d(11, 54)],
+    ['Ved', 'Ankomst', d(12, 1), '2026-11-25', d(12, 0)], ['Ved', 'Avgang', d(12, 1), '2026-11-25', d(12, 1)],
+    ['Hrc', 'Ankomst', d(12, 9), '2026-11-25', d(12, 9)]
+  ]); };
+  const r = await w.__railtimer.fetchTimetable('23349', new Date(2026, 10, 25, 11, 50));
+  assert(r.success, r.error);
+  assert(body.includes('<INCLUDE>LocationDateTimeOTN</INCLUDE>'), 'frågan hämtar tågorderns tid');
+  const t = (h, m) => new Date(2026, 10, 25, h, m).toISOString();
+  assertEqual([r.timetable.Ved.arrival.toISOString(), r.timetable.Ved.operationalArrival.toISOString()], [t(12, 1), t(12, 0)], 'Vedum ankomst: annonserad och tågorder');
+  assertEqual([r.timetable.Vaa.departure.toISOString(), r.timetable.Vaa.operationalDeparture.toISOString()], [t(11, 53), t(11, 54)], 'Vara avgång: annonserad och tågorder');
+});
+
+test('tidtabell: utan LocationDateTimeOTN i svaret blir tågorderns tider tomma', async () => {
+  const w = await loadApp();
+  w.fetch = async () => announcements([['Lkp', 'Avgang', [2026, 10, 25, 11, 22], '2026-11-25'], ['Hlk', 'Ankomst', [2026, 10, 25, 11, 40], '2026-11-25']]);
+  const r = await w.__railtimer.fetchTimetable('9997', new Date(2026, 10, 25, 11, 20));
+  assert(r.success, r.error);
+  assertEqual([r.timetable.Lkp.operationalDeparture, r.timetable.Hlk.operationalArrival], [null, null], 'inga tågordertider');
+});
+
+test('tidtabell: planerad tid är tågorderns; utan den visas ingen ankomst där annonserad ankomst = avgång', async () => {
+  const w = await loadApp();
+  const rt = w.__railtimer;
+  const t = (h, m) => new Date(2026, 10, 25, h, m).toISOString();
+  const vedum = { shouldStop: true, scheduledArrival: t(12, 1), scheduledDeparture: t(12, 1), operationalArrival: t(12, 0), operationalDeparture: t(12, 1) };
+  assertEqual([rt.planArr(vedum), rt.planDep(vedum)], [t(12, 0), t(12, 1)], 'med tågorder');
+  const old = { shouldStop: true, scheduledArrival: t(12, 1), scheduledDeparture: t(12, 1) };
+  assertEqual([rt.planArr(old), rt.planDep(old)], [null, t(12, 1)], 'bara annonserade tider: ankomsten okänd');
+  const oldDiff = { shouldStop: true, scheduledArrival: t(11, 23), scheduledDeparture: t(11, 24) };
+  assertEqual([rt.planArr(oldDiff), rt.planDep(oldDiff)], [t(11, 23), t(11, 24)], 'annonserad ankomst som skiljer sig från avgången gäller');
+  const passage = { shouldStop: false, scheduledArrival: t(11, 49), scheduledDeparture: t(11, 49) };
+  assertEqual([rt.planArr(passage), rt.planDep(passage)], [t(11, 49), t(11, 49)], 'passage: samma tid');
+  const csv = rt.logsCsv([{ startedAt: t(11, 22), trainNumber: '23349', stops: [
+    Object.assign({ name: 'Vedum', actualArrival: t(12, 0) }, vedum), Object.assign({ name: 'Gammal', actualArrival: t(12, 0) }, old)] }]);
+  const rows = csv.split('\n').map(line => line.split(';').map(c => c.replace(/"/g, '')));
+  const col = name => rows[0].indexOf(name);
+  assertEqual([rows[1][col('Schema Ank')], rows[1][col('Försenad (min)')], rows[1][col('Tidtabell')], rows[1][col('Annonserad Ank')]], ['12:00:00', '0', 'tågorder', '12:01:00'], 'CSV med tågorder');
+  assertEqual([rows[2][col('Schema Ank')], rows[2][col('Försenad (min)')], rows[2][col('Tidtabell')]], ['', '', 'annonserad'], 'CSV utan tågorder: ingen ankomstavvikelse');
+});
+
+test('tidtabell: resvyn räknar mot tågordern och körningen sparar båda tiderna', async () => {
+  const fixes = buildJourney();
+  const stopT = fixes.find(f => f.leg === 2 && f.frac > 0.55).t;
+  // Tågorderns ankomst en minut före den annonserade, som i Trafikverkets data; annonserad ankomst = avgång
+  const route = r => { scheduleFor(fixes)(r); r.forEach((st, i) => {
+    if (i > 0) { st.operationalArrival = st.scheduledArrival; }
+    if (i < r.length - 1) { st.operationalDeparture = st.scheduledDeparture; }
+    if (i > 0 && i < r.length - 1) st.scheduledArrival = st.scheduledDeparture;
+    if (i === 3) st.scheduledDeparture = new Date(new Date(st.operationalDeparture).getTime() - 60000).toISOString();
+  }); };
+  const r = await runJourney(fixes, { trainNumber: '3344', drop: f => f.t > stopT, route });
+  const d = r.w.document;
+  const next = r.rt.state.route[3];
+  assertEqual(d.getElementById('nextStop').textContent, 'Blomberg', 'nästa station');
+  assertEqual(d.getElementById('nextSub2').textContent, 'ankomst plan', 'etikett');
+  assertEqual(d.getElementById('nextValue2').textContent, new Date(next.operationalArrival).toTimeString().slice(0, 5), 'tågorderns ankomst');
+  const card = d.querySelectorAll('#cards .card')[3];
+  assert(/Tågorder: ankomst \d\d:\d\d, avgång \d\d:\d\d · annonserad avgång \d\d:\d\d/.test(card.querySelector('[data-role="sched"]').textContent), card.querySelector('[data-role="sched"]').textContent);
+  r.rt.stopJourney(true, 'test');
+  await realSleep(100);
+  const logs = r.rt.loadLogs();
+  const saved = logs[logs.length - 1];
+  assertEqual(saved.format, 3, 'format');
+  assert(saved.stops[2].operationalArrival && saved.stops[2].operationalDeparture && saved.stops[2].scheduledArrival, 'båda tiderna sparas');
+  assert(saved.stops[2].operationalArrival !== saved.stops[2].scheduledArrival, 'tågorderns ankomst skiljer sig från den annonserade');
+});
 
 test('tidtabell: kring midnatt väljs körningen som går nu, med stationerna efter midnatt', async () => {
   const w = await loadApp();
