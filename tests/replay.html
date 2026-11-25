@@ -2059,6 +2059,89 @@ test('uppdatering: ny version laddas direkt vid start utan resa, men under resan
   assert(w.document.getElementById('btnUpdate').style.display !== 'none', 'Uppdatera app i menyn');
 });
 
+test('synk: körningarna i GitHub hämtas till telefonen – statistik, fordonstyp och sparat utan nät', async () => {
+  let w = await loadApp();
+  await clearAppStorage(w);
+  await new Promise(resolve => { const req = w.indexedDB.deleteDatabase('railtimer-analys'); req.onsuccess = req.onerror = req.onblocked = () => resolve(); });
+  w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'test-token', branch: 'main' }));
+  const fake = browserFakeGitHub(w);
+  const t = (d, h, m) => new Date(Date.UTC(2026, 10, d, h, m)).toISOString();
+  const run = (id, train, vehicle, d) => ({ id, trainNumber: train, vehicleType: vehicle, startStation: 'Lidköping', endStation: 'Hällekis',
+    startedAt: t(d, 5, 0), aborted: false, format: 3, stops: [
+      { name: 'Lidköping', actualDeparture: t(d, 5, 0), scheduledDeparture: t(d, 5, 0) },
+      { name: 'Källby', actualArrival: t(d, 5, 9), actualDeparture: t(d, 5, 10) },
+      { name: 'Hällekis', actualArrival: t(d, 5, 20) }] });
+  fake.put('korningar/2026/2026-11-20_3344_a.json', JSON.stringify(run('a', '3344', 'Y31', 20)));
+  fake.put('korningar/2026/2026-11-21_3344_b.json', JSON.stringify(run('b', '3344', 'Y31', 21)));
+  fake.put('korningar/2026/2026-11-22_3346_c.json', JSON.stringify(run('c', '3346', 'X11', 22)));
+  fake.put('import/2026-10-15T0848_befintliga-1.json', JSON.stringify([run('d', '9999', 'X40', 10)]));
+  fake.put('gps-spar/2026/2026-11-22_3346_c.json', JSON.stringify({ format: 1, points: [] }));
+  let rt = w.__railtimer;
+  rt.setFetchForTest(fake.fetch);
+  const st = await rt.syncFromGithub(true);
+  assertEqual([st.count, st.newFiles, st.error], [4, 4, null], 'fyra körningar i fyra filer');
+  assertEqual(rt.allRuns().map(r => r.id).sort(), ['a', 'b', 'c', 'd'], 'på telefonen');
+  const stored = rt.allRuns().find(r => r.id === 'a');
+  assert(!('scheduledDeparture' in stored.stops[0]) && stored.stops[1].actualArrival, 'kompakt: bara det som används');
+  // Andra gången hämtas bara nya filer
+  assertEqual((await rt.syncFromGithub(true)).newFiles, 0, 'inga nya filer andra gången');
+  // Inte under en resa
+  rt.state.running = true;
+  assertEqual(await rt.syncFromGithub(true), null, 'ingen hämtning under resa');
+  rt.state.running = false;
+  // Fordonstyp: oftast använd för tågnumret, annars senast använd
+  rt.prefillVehicleType('3344');
+  assertEqual(w.document.getElementById('vehicleType').value, 'Y31', 'tågets vanliga fordon');
+  w.document.getElementById('vehicleType').value = '';
+  rt.prefillVehicleType();
+  assertEqual(w.document.getElementById('vehicleType').value, 'X11', 'senast använda');
+  // Uppladdning visar synken
+  rt.showUploadSettings();
+  await rt.renderUploadStatus();
+  assert(w.document.getElementById('uploadStatus').textContent.includes('Hämtat från GitHub: 4 körningar'), w.document.getElementById('uploadStatus').textContent);
+  // Statistik bygger även på körningarna från GitHub
+  w.document.getElementById('btnStatistics').click();
+  assert(/Lidköping → Källby/.test(w.document.getElementById('statsContent').textContent), 'statistik från GitHub-körningarna');
+  // Finns kvar efter omstart utan nät
+  w = await loadApp();
+  assertEqual(await w.__railtimer.loadRepoRunsFromDevice(), 4, 'sparat på telefonen');
+  // Fordonstyp som föraren själv valt ändras inte
+  const sel = w.document.getElementById('vehicleType');
+  sel.value = 'X40';
+  sel.dispatchEvent(new w.Event('change'));
+  w.__railtimer.prefillVehicleType('3344');
+  assertEqual(sel.value, 'X40', 'förarens val gäller');
+});
+
+test('startformulär: tågnumret fyller i rutten när föraren står vid tågets station nära avgången, men inte över förarens val', async () => {
+  const base = Math.floor(Date.now() / 60000) * 60000 + 5 * 60000;
+  const t = m => new Date(base + m * 60000).toISOString();
+  const otnDate = new Date(base).toISOString().slice(0, 10);
+  const ann = (sig, act, m) => ({ LocationSignature: sig, ActivityType: act, AdvertisedTimeAtLocation: t(m), LocationDateTimeOTN: t(m), DepartureDateOTN: otnDate, Advertised: true });
+  const list = [ann('Lkp', 'Avgang', 0), ann('Kll', 'Ankomst', 11), ann('Kll', 'Avgang', 11), ann('Hlk', 'Ankomst', 30)];
+  const { w, rt } = await appWithStations(1, async (url, init) => {
+    if (init && String(init.body || '').includes('TrainAnnouncement'))
+      return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: list }] } }) };
+    throw new TypeError('Failed to fetch');
+  });
+  // Föraren står i Lidköping
+  w.navigator.geolocation.getCurrentPosition = ok => ok({ coords: { latitude: STATIONS[0][1], longitude: STATIONS[0][2], accuracy: 5 }, timestamp: Date.now() });
+  const typeTrain = async n => {
+    const el = w.document.getElementById('trainNumber');
+    el.value = n;
+    el.dispatchEvent(new w.Event('input', { bubbles: true }));
+    await realSleep(900);
+  };
+  const route = () => [w.document.getElementById('startStation').value, w.document.getElementById('endStation').value];
+  await typeTrain('23349');
+  assertEqual(route(), ['Lidköping', 'Hällekis'], 'rutten ifylld');
+  assertEqual(w.document.getElementById('routeSuggestion').style.display, 'none', 'inget förslag att trycka på');
+  // Föraren väljer själv slutstation – den skrivs inte över när tågnumret ändras
+  pickStation(w, 'endStation', 'Källby');
+  await typeTrain('23350');
+  assertEqual(route(), ['Lidköping', 'Källby'], 'förarens val gäller');
+});
+
 function formatHm(t) {
   return new Date(Math.round(t / 60000) * 60000).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
 }

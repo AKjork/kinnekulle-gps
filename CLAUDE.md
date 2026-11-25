@@ -971,3 +971,34 @@ André 2026-11-25, under resan med 23334: infofliken syntes inte, eftersom telef
 - `node --test "tests/*.test.js"` (159), nya i `tests/sw.test.js`: med nät visas servern, utan nät och vid tidsgräns den sparade kopian, felsvar, `version.json` orörd, `skipWaiting`/`clients.claim` och gamla kopior bort, och samma version i `index.html` och `version.json`.
 - `node tests/run-browser-tests.mjs uppdatering` (2): *Uppdatera app mitt i resan laddar om och fortsätter samma resa utan frågan* (tiderna kvar, vanlig omstart frågar), och *ny version laddas direkt vid start utan resa, men under resan bara med meddelande* (en gång per version, samma version gör inget). Alla webbläsartester: 97.
 - Inte provat på en riktig telefon: att Safari och Chrome byter service worker som väntat. Kontrollera efter publiceringen att ⋮-menyn visar den nya versionen efter en omstart.
+
+## Uppdatering (2026-11-25o): körningarna från GitHub på telefonen, förvald fordonstyp och rutt
+
+André 2026-11-25: "Absolut allt som gör det mer smidigt och automatiserat." Appversion `2026-11-25o`.
+
+### Synk från GitHub (`syncFromGithub`)
+- Förut gick synken bara upp till GitHub. Historiken fanns bara på telefonen där körningarna gjorts och försvann när webbläsarens data rensades.
+- Nu hämtas körningarna i `railtimer-data` (`korningar/…` och `import/…`) med `GH.loadRunsFromRepo`, samma som analysverktyget.
+  - Filerna sparas per sha i analysverktygets lokala databas (IndexedDB `railtimer-analys`/`blobs`, `AppBlobCache`). Bara nya filer hämtas, och det som analysverktyget redan hämtat i samma webbläsare hämtas inte igen.
+  - Körningarna sparas kompakt (`compactRun`: tåg, fordon, start och slut, tider, `excludeInboundRun`) under nyckeln `app:korningar-v1` och läses vid start (`loadRepoRunsFromDevice`), så att de finns utan nät.
+- **När:** vid start efter uppladdningen, när appen blir synlig och efter varje resa. Högst var 30:e minut (`REPO_SYNC_MIN_MS`) utom efter en resa, aldrig under en pågående resa och inte utan nät. Läget sparas i `railtimer_repo_sync_v1` (`at, count, newFiles, error`).
+- `allRuns()`: telefonens körningar plus de från GitHub som inte finns på telefonen (samma id). Används av:
+  - infoflikens egna gångtider (`historyMedians`);
+  - Statistik och dess filter;
+  - ruttförslaget för ett tågnummer (`analyzeRouteHistory`);
+  - förvald fordonstyp.
+- ⋮ → Uppladdning visar *Hämtat från GitHub: N körningar (tid)* och ett eventuellt fel.
+
+### Startformuläret
+- **Fordonstyp** (`prefillVehicleType`): den som oftast använts för tågnumret (vid lika den senaste), annars den senast använda. Den väljs vid start och när tågnumret skrivs, men aldrig när föraren själv valt fordonstyp (`vehicleChosenByUser`).
+- **Rutten fylls i direkt** när förslaget kommer från GPS + tidtabell, alltså när föraren står vid en station på tågets väg inom 30 min före till 15 min efter avgången (`findCurrentRouteSegment`).
+  - Det sker bara när start- och slutfälten är tomma eller fortfarande har det som fylldes i automatiskt (`routeFieldsUntouched`, `autoFilledRoute`).
+  - Rubriken visar *✓ Rutt ifylld: …*.
+  - Förslag ur tidigare körningar visas som förut, med knappen att trycka på.
+
+### Tester
+- `node --test "tests/*.test.js"` (159).
+- `node tests/run-browser-tests.mjs` (100), nya:
+  - *synk: körningarna i GitHub hämtas till telefonen …*: fyra körningar i fyra filer, kompakt, inga nya filer andra gången, inte under resa, fordonstyp, Uppladdning, Statistik, kvar efter omstart och förarens val av fordon.
+  - *startformulär: tågnumret fyller i rutten …*.
+- Inte provat mot riktiga GitHub från telefonen. Kontrollera i ⋮ → Uppladdning att *Hämtat från GitHub* visar ungefär lika många körningar som analysverktyget.

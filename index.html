@@ -824,7 +824,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25n'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25o'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -970,7 +970,9 @@
     getUserLocation();
     if(currentView==='setup') startGpsWarmup();
     checkForInterruptedJourney();
-    removeOrphanTracks().then(()=>scheduleUpload());
+    loadRepoRunsFromDevice().then(()=>prefillVehicleType());
+    // Först upp det som väntar, sedan ner det som finns i GitHub
+    removeOrphanTracks().then(()=>scheduleUpload()).then(()=>syncFromGithub(false));
     window.addEventListener('online', () => { if(!allStationsCache.length || stationsStale) refreshStations(); });
     // Senaste versionen från GitHub Pages: kollas vid start, när appen blir synlig och när nätet kommer tillbaka
     checkForNewVersion(true);
@@ -994,7 +996,8 @@
       refreshInfo, updateInfo, setInfoTab, infoModel: () => infoState.model,
       applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
       setVersionForTest: (fetchFn, reloadFn) => { versionFetchForTest = fetchFn; if(reloadFn) reloadPage = reloadFn; },
-      appVersion: APP_VERSION
+      appVersion: APP_VERSION,
+      syncFromGithub, allRuns, loadRepoRunsFromDevice, prefillVehicleType, renderUploadStatus
     };
   }
 
@@ -1546,6 +1549,7 @@
     els.cards.addEventListener('input', handleCardInput);
 
     document.getElementById('trainNumber').addEventListener('input', handleTrainNumberInput);
+    document.getElementById('vehicleType').addEventListener('change', () => { vehicleChosenByUser = true; });
     document.getElementById('btnAcceptSuggestion').addEventListener('click', acceptSuggestion);
     document.getElementById('btnIgnoreSuggestion').addEventListener('click', () => {
       document.getElementById('routeSuggestion').style.display='none';
@@ -2738,7 +2742,7 @@
     stopInfo();
     Object.assign(infoState, { our:null, ourKey:null, line:null, trains:null, fetchedAt:null, error:null, messages:[], messagesAt:0,
       model:null, lastHtml:'', notified:new Map(), meetLog:new Map(), safeFields:false });
-    infoState.history = INFO ? INFO.historyMedians(loadLogs()) : null;
+    infoState.history = INFO ? INFO.historyMedians(allRuns()) : null; // även körningar hämtade från GitHub
     setInfoTab('stations');
     renderInfo();
     // I testläge hämtar testerna själva (refreshInfo), utan nätet
@@ -3689,6 +3693,7 @@
   function afterJourneyUpload(){
     if(!loadGithubSettings()) return null;
     return scheduleUpload().then(result=>{
+      syncFromGithub(true); // resan finns nu i GitHub; hämta det som kommit från andra håll
       if(result && !result.error && result.uploadedRuns+result.importedRuns>0){
         showHeaderStatus('Resan uppladdad', false);
       }else if(result && result.error && result.error.kind!=='network'){
@@ -3796,6 +3801,120 @@
     setGhResult('Token borttagen från enheten.', false);
   }
 
+  /* ── Synk från GitHub (2026-11-25o) ──
+     Körningarna i railtimer-data hämtas till telefonen, så att historiken finns även när webbläsarens data har
+     rensats eller körningarna gjorts på en annan telefon: egna gångtider i infofliken, ruttförslaget för ett
+     tågnummer, förvald fordonstyp och Statistik. Filerna sparas i samma lokala databas som analysverktyget
+     (IndexedDB railtimer-analys/blobs, per sha), så bara nya filer hämtas – och det som analysverktyget redan
+     hämtat behöver appen inte hämta igen. Körningarna sparas kompakt (bara det som används) under REPO_RUNS_KEY.
+     Aldrig under en pågående resa, högst var 30:e minut utom efter en resa. */
+  const STORAGE_KEY_REPO_SYNC = 'railtimer_repo_sync_v1'; // { at, count, newFiles, error }
+  const REPO_RUNS_KEY = 'app:korningar-v1';
+  const REPO_SYNC_MIN_MS = 30*60*1000;
+  let repoRuns = [];
+  let repoSyncPromise = null;
+
+  const AppBlobCache = (function(){
+    let dbPromise = null;
+    function open(){
+      if(!dbPromise){
+        dbPromise = new Promise((resolve, reject) => {
+          if(!window.indexedDB){ reject(new Error('IndexedDB saknas')); return; }
+          const req = indexedDB.open('railtimer-analys', 1);
+          req.onupgradeneeded = () => { req.result.createObjectStore('blobs', { keyPath: 'sha' }); };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        dbPromise.catch(() => {});
+      }
+      return dbPromise;
+    }
+    return {
+      async get(sha){
+        try{
+          const db = await open();
+          return await new Promise((resolve, reject) => {
+            const req = db.transaction('blobs').objectStore('blobs').get(sha);
+            req.onsuccess = () => resolve(req.result ? req.result.json : undefined);
+            req.onerror = () => reject(req.error);
+          });
+        }catch(e){ return undefined; }
+      },
+      async set(sha, json){
+        try{
+          const db = await open();
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction('blobs', 'readwrite');
+            tx.objectStore('blobs').put({ sha, json });
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+          });
+        }catch(e){ /* utan lokal databas hämtas filen igen nästa gång */ }
+      }
+    };
+  })();
+
+  function loadRepoSyncState(){
+    try{ return JSON.parse(localStorage.getItem(STORAGE_KEY_REPO_SYNC)||'null') || {}; }catch(e){ return {}; }
+  }
+  function saveRepoSyncState(st){
+    try{ localStorage.setItem(STORAGE_KEY_REPO_SYNC, JSON.stringify(st)); }catch(e){}
+  }
+
+  // Bara det som historiken, ruttförslaget och statistiken använder
+  function compactRun(r){
+    return {
+      id:String(r.id||''), trainNumber:r.trainNumber||'', vehicleType:r.vehicleType||'',
+      startStation:r.startStation||'', endStation:r.endStation||'', startedAt:r.startedAt||null, aborted:!!r.aborted,
+      stops:(Array.isArray(r.stops)?r.stops:[]).map(st=>({
+        name:st.name||'', actualArrival:st.actualArrival||null, actualDeparture:st.actualDeparture||null,
+        excludeInboundRun:!!st.excludeInboundRun
+      }))
+    };
+  }
+
+  // Sparade körningar från GitHub till minnet (vid start, utan nätet)
+  async function loadRepoRunsFromDevice(){
+    const saved=await AppBlobCache.get(REPO_RUNS_KEY);
+    if(saved && Array.isArray(saved.runs)) repoRuns=saved.runs;
+    return repoRuns.length;
+  }
+
+  // Telefonens körningar plus de från GitHub som inte finns på telefonen
+  function allRuns(){
+    const local=loadLogs();
+    const ids=new Set(local.map(l=>String(l.id)));
+    return local.concat(repoRuns.filter(r=>!ids.has(String(r.id))));
+  }
+
+  async function syncFromGithub(force){
+    if(repoSyncPromise) return repoSyncPromise;
+    const settings=loadGithubSettings();
+    if(!GH || !settings || state.running) return null;
+    if(!force && Date.now()-(loadRepoSyncState().at||0) < REPO_SYNC_MIN_MS) return null;
+    if(!TEST_MODE && navigator.onLine===false) return null;
+    const client=githubClient(settings);
+    if(!client) return null;
+    repoSyncPromise=(async()=>{
+      try{
+        const r=await GH.loadRunsFromRepo({ client, cache:AppBlobCache, concurrency:4 });
+        repoRuns=r.runs.map(compactRun);
+        await AppBlobCache.set(REPO_RUNS_KEY, { at:Date.now(), runs:repoRuns });
+        const st={ at:Date.now(), count:repoRuns.length, newFiles:r.newFiles, error:null };
+        saveRepoSyncState(st);
+        return st;
+      }catch(e){
+        const st=Object.assign(loadRepoSyncState(), { error:{ message:String(e && e.message || e), kind:e && e.kind, at:Date.now() } });
+        saveRepoSyncState(st);
+        return st;
+      }finally{
+        repoSyncPromise=null;
+        if(currentView==='settings') renderUploadStatus();
+      }
+    })();
+    return repoSyncPromise;
+  }
+
   async function renderUploadStatus(){
     const el=document.getElementById('uploadStatus');
     if(!el) return;
@@ -3818,11 +3937,16 @@
     }else if(st.lastSuccessAt){
       lines.push(`Senast uppladdat ${new Date(st.lastSuccessAt).toLocaleString('sv-SE')}`);
     }
+    const sync=loadRepoSyncState();
+    if(sync.at) lines.push(`<strong>Hämtat från GitHub:</strong> ${sync.count} körningar (${new Date(sync.at).toLocaleString('sv-SE')})`);
+    if(sync.error && (!sync.at || sync.error.at>sync.at)){
+      lines.push(sync.error.kind==='network' ? 'Hämtning från GitHub väntar (ingen täckning)' : `<strong>Hämtning från GitHub:</strong> ${escapeHtml(sync.error.message)}`);
+    }
     el.innerHTML=lines.join('<br>');
   }
 
   function populateStatsFilters(){
-    const logs = loadLogs();
+    const logs = allRuns();
     const vehicles = new Set();
     const routes = new Set();
 
@@ -3844,7 +3968,7 @@
   }
 
   function renderStatistics(){
-    const logs = loadLogs();
+    const logs = allRuns(); // även körningar hämtade från GitHub
     const vehicleFilter = document.getElementById('statsVehicleFilter').value;
     const routeFilter = document.getElementById('statsRouteFilter').value;
 
@@ -4385,7 +4509,11 @@
     if(!trainNumber) return null;
 
     const history = loadRouteHistory();
-    const routes = history[trainNumber];
+    // Telefonens rutthistorik plus körningarna från GitHub för tågnumret
+    const fromRepo = repoRuns
+      .filter(r=>String(r.trainNumber)===String(trainNumber) && r.startStation && r.endStation && !r.aborted)
+      .map(r=>({ start:r.startStation, end:r.endStation, hour:r.startedAt ? new Date(r.startedAt).getHours() : undefined }));
+    const routes = (history[trainNumber] || []).concat(fromRepo);
 
     if(!routes || routes.length === 0) return null;
 
@@ -4468,6 +4596,20 @@
         }
       }
 
+      prefillVehicleType(trainNumber);
+
+      // Säkert förslag (föraren står vid en station på tågets väg nära avgångstiden): fyll i direkt,
+      // om fälten är tomma eller fortfarande har det som fylldes i automatiskt
+      if(suggestion && suggestionSource.startsWith('GPS + tidtabell') && routeFieldsUntouched()) {
+        currentSuggestion = suggestion;
+        if(fillSuggestedRoute(suggestion)){
+          autoFilledRoute = { start: els.startInput.value, end: els.endInput.value };
+          document.getElementById('routeSuggestion').style.display='none';
+          showHeaderStatus(`✓ Rutt ifylld: ${suggestion.start} → ${suggestion.end} (${suggestionSource})`, false);
+          return;
+        }
+      }
+
       if(suggestion) {
         currentSuggestion = suggestion;
         const text = `Tåg ${trainNumber}: ${suggestion.start} → ${suggestion.end}`;
@@ -4482,13 +4624,10 @@
     }, 600);
   }
 
-  function acceptSuggestion(){
-    if(!currentSuggestion) return;
-
-    // Find stations in cache
-    const startStation = allStationsCache.find(s => s.name === currentSuggestion.start);
-    const endStation = allStationsCache.find(s => s.name === currentSuggestion.end);
-
+  // Fyller i start- och slutstation från ett förslag; sant om båda finns i stationslistan
+  function fillSuggestedRoute(suggestion){
+    const startStation = allStationsCache.find(s => s.name === suggestion.start);
+    const endStation = allStationsCache.find(s => s.name === suggestion.end);
     if(startStation){
       els.startInput.value = startStation.name;
       selectedStartStation = startStation;
@@ -4497,6 +4636,39 @@
       els.endInput.value = endStation.name;
       selectedEndStation = endStation;
     }
+    return !!(startStation && endStation);
+  }
+
+  // Start och slut är tomma, eller har det som appen själv fyllde i (föraren har inte skrivit något eget)
+  let autoFilledRoute = null;
+  function routeFieldsUntouched(){
+    const a=(els.startInput.value||'').trim(), b=(els.endInput.value||'').trim();
+    if(!a && !b) return true;
+    return !!(autoFilledRoute && a===autoFilledRoute.start && b===autoFilledRoute.end);
+  }
+
+  /* Förvald fordonstyp (2026-11-25o): den föraren oftast använt för tågnumret, annars den senast använda.
+     Bara så länge föraren inte själv valt fordonstyp. Körningar från GitHub räknas med. */
+  let vehicleChosenByUser = false;
+  function prefillVehicleType(trainNumber){
+    const sel=document.getElementById('vehicleType');
+    if(!sel || vehicleChosenByUser || state.running) return;
+    const runs=allRuns().filter(r=>r.vehicleType).sort((a,b)=>String(b.startedAt||'').localeCompare(String(a.startedAt||'')));
+    let pick=null;
+    if(trainNumber){
+      const counts=new Map();
+      for(const r of runs) if(String(r.trainNumber)===String(trainNumber)) counts.set(r.vehicleType, (counts.get(r.vehicleType)||0)+1);
+      let best=0;
+      for(const [v,n] of counts) if(n>best){ best=n; pick=v; } // vid lika: den senaste (runs är nyast först)
+    }
+    if(!pick && !sel.value && runs.length) pick=runs[0].vehicleType;
+    if(pick && Array.from(sel.options).some(o=>o.value===pick)) sel.value=pick;
+  }
+
+  function acceptSuggestion(){
+    if(!currentSuggestion) return;
+
+    fillSuggestedRoute(currentSuggestion);
 
     document.getElementById('routeSuggestion').style.display='none';
     showHeaderStatus(`✓ Rutt vald: ${currentSuggestion.start} → ${currentSuggestion.end}`, false);
@@ -5194,6 +5366,7 @@
       if(currentView==='setup') startGpsWarmup();
       if(state.running && (!infoState.fetchedAt || Date.now()-infoState.fetchedAt>=INFO_REFRESH_MS)) refreshInfo();
       if(Date.now()-versionCheckedAt>=60000) checkForNewVersion(true);
+      if(!state.running) Promise.resolve(uploadPromise).then(()=>syncFromGithub(false));
     }else if(document.visibilityState==='hidden'){
       stopGpsWarmup();
       onAppHidden();
