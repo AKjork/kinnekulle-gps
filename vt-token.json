@@ -1,0 +1,22 @@
+{
+ "token": null,
+ "expiresAt": null,
+ "fetchedAt": "2026-11-25T17:58:26.889Z",
+ "cors": {
+  "token": {
+   "status": 200,
+   "allowOrigin": "https://akjork.github.io",
+   "allowMethods": "POST, OPTIONS",
+   "allowHeaders": "authorization,content-type"
+  },
+  "api": {
+   "status": 200,
+   "allowOrigin": "https://akjork.github.io",
+   "allowMethods": "GET",
+   "allowHeaders": "authorization"
+  },
+  "tokenFromBrowser": true,
+  "apiFromBrowser": true
+ },
+ "error": "VT_KEY och VT_SECRET saknas i GitHub"
+}
