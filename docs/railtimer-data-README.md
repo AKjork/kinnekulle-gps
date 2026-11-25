@@ -30,3 +30,7 @@ Körningar utan `format` är äldre (format 1).
 ## GPS-spår, format 1
 
 `{ format, runId, trainNumber, t0, fields, points }` där `fields` är `["t_ms","lat","lon","acc_m","speed_ms","heading_deg","fixAge_ms"]` och varje punkt är en lista i den ordningen. `t_ms` räknas från `t0` med appens klocka – samma klocka som körningens tider.
+
+## platsminnen.json (från appversion 2026-11-25t)
+
+Förarnas platsminnen, en kort anteckning per station som appen visar och läser upp när tåget närmar sig: `{ format: 1, updatedAt, notes: { 'sig:Vaa': { text, at, name } } }`. Nyckeln är stationens signatur (`sig:`), annars namnet (`namn:`). `text: ''` betyder borttaget. Appen slår ihop med telefonens minnen när den synkar, och det nyaste (`at`) gäller per station.

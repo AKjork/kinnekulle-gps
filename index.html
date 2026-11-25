@@ -212,6 +212,7 @@
   .transfer-ctl{display:inline-flex;align-items:center;gap:.3rem;text-transform:none;letter-spacing:0;font-weight:500;font-size:.75rem;color:var(--ink-dim);white-space:nowrap}
   .transfer-ctl button{padding:.05rem .55rem;font-size:.9rem;line-height:1.3}
   .info-foot{font-size:.7rem;color:var(--mut);padding:.5rem .7rem;margin:0;border-top:1px solid var(--b)}
+  .place-note{width:100%;margin-top:.5rem;font-size:.9rem}
   .utrop{margin:0;padding:.5rem .7rem;font-size:.9rem;line-height:1.4;color:var(--ink);border-left:3px solid var(--pri)}
   .utrop-ctl button{padding:.15rem .5rem;font-size:.75rem;margin-left:.3rem}
   .utrop-ctl button[aria-pressed="true"]{border-color:var(--pri);color:var(--pri)}
@@ -857,7 +858,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25s'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25t'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1015,7 +1016,7 @@
       if(!document.getElementById('resumeDialog') && currentView==='setup') prefillFromTour();
     });
     // Först upp det som väntar, sedan ner det som finns i GitHub
-    removeOrphanTracks().then(()=>scheduleUpload()).then(()=>syncFromGithub(false));
+    removeOrphanTracks().then(()=>scheduleUpload()).then(()=>syncFromGithub(!repoRuns.length));
     window.addEventListener('online', () => { if(!allStationsCache.length || stationsStale) refreshStations(); });
     // Senaste versionen från GitHub Pages: kollas vid start, när appen blir synlig och när nätet kommer tillbaka
     checkForNewVersion(true);
@@ -1043,7 +1044,8 @@
       syncFromGithub, allRuns, loadRepoRunsFromDevice, prefillVehicleType, renderUploadStatus,
       autoStartFix, autoStartArmed, renderAutoStartStatus, spoken: () => spokenForTest.slice(), clearSpoken: () => { spokenForTest.length=0; },
       parseTour, saveTour, tourTrains, nextTourTrain, tourFromHistory, renderTourSuggest, prefillFromTour, fetchNextTour, tourStatus,
-      setAutoStartForTest: on => { autoStartEnabled=!!on; autoState.blockedKey=''; autoState.moving=null; }
+      setAutoStartForTest: on => { autoStartEnabled=!!on; autoState.blockedKey=''; autoState.moving=null; },
+      loadPlaceNotes, setPlaceNote, placeNoteFor, haltSummary, checkPlaceReminders, syncPlaceNotes, mergePlaceNotes
     };
   }
 
@@ -1872,6 +1874,7 @@
     state.aborted=false;
     state.startedBy='';   // 'auto' när resan startade av sig själv
     state.nextTour=null;  // nästa tåg i dagens tur (fetchNextTour)
+    state.reminded=new Set(); // platsminnen och haltmarkeringar som redan meddelats under resan
     state.journeyId=Date.now().toString(36); // blir körningens id när resan sparas
     state.interruptions=[];
     state.lastFix=null;
@@ -2302,6 +2305,7 @@
       trackClosestApproach(idx);
     });
     processSpeedTriggers(speed);
+    if(state.running) checkPlaceReminders();
     renderRouteCards();
     renderRouteMap();
     saveActiveJourney(); // Auto-save journey state
@@ -3618,6 +3622,7 @@
             <label><input type="checkbox" data-action="slip-out" data-idx="${idx}"> Halt: slirade vid starten härifrån</label>
           </div>
           <textarea class="station-note" data-action="station-note" data-idx="${idx}" placeholder="Anteckning (t.ex. signal, möte...)">${escapeHtml(station.notes||'')}</textarea>
+          <input type="text" class="place-note" data-action="place-note" data-idx="${idx}" maxlength="120" placeholder="📌 Kom ihåg vid platsen – visas och läses upp nästa gång" value="${escapeHtml(placeNoteFor(station))}">
           <div class="card-foot">
             <span class="meta" data-role="geo"></span>
             <button class="link-btn" data-action="update-pos" data-idx="${idx}">Flytta stationens mittpunkt hit</button>
@@ -3667,6 +3672,13 @@
     else if(!station.shouldStop) note='passeras';
     else if(station.slideIn || station.slipOut) note='halt: '+[station.slideIn?'gled in':'', station.slipOut?'slirade ut':''].filter(Boolean).join(', ');
     else if(station.notes) note='📝 '+station.notes;
+    // Kommande stationer: platsminnet och förarnas haltmarkeringar de senaste två veckorna
+    if(!done && !station.missedReason){
+      const memo=placeNoteFor(station);
+      const halt=haltSummary(idx);
+      const extra=[memo?'📌 '+memo:'', halt?halt.short:''].filter(Boolean).join(' · ');
+      if(extra) note = note ? `${note} · ${extra}` : extra;
+    }
     const arr = idx>0 || station.actualArrival ? timeCell(station.actualArrival, planArr(station), station.arrivalWindow) : '<span class="st-t plan"><b></b></span>';
     const dep = !isLast || station.actualDeparture ? timeCell(station.actualDeparture, planDep(station), station.departureWindow) : '<span class="st-t plan"><b></b></span>';
     card.querySelector('.card-main').innerHTML=`<div class="st-row">
@@ -4318,7 +4330,7 @@
      hämtat behöver appen inte hämta igen. Körningarna sparas kompakt (bara det som används) under REPO_RUNS_KEY.
      Aldrig under en pågående resa, högst var 30:e minut utom efter en resa. */
   const STORAGE_KEY_REPO_SYNC = 'railtimer_repo_sync_v1'; // { at, count, newFiles, error }
-  const REPO_RUNS_KEY = 'app:korningar-v1';
+  const REPO_RUNS_KEY = 'app:korningar-v2'; // v2 (2026-11-25t): med förarnas haltmarkeringar
   const REPO_SYNC_MIN_MS = 30*60*1000;
   let repoRuns = [];
   let repoSyncPromise = null;
@@ -4377,7 +4389,8 @@
       startStation:r.startStation||'', endStation:r.endStation||'', startedAt:r.startedAt||null, aborted:!!r.aborted,
       stops:(Array.isArray(r.stops)?r.stops:[]).map(st=>({
         name:st.name||'', actualArrival:st.actualArrival||null, actualDeparture:st.actualDeparture||null,
-        excludeInboundRun:!!st.excludeInboundRun
+        excludeInboundRun:!!st.excludeInboundRun,
+        ...(st.slideIn ? { slideIn:true } : {}), ...(st.slipOut ? { slipOut:true } : {})
       }))
     };
   }
@@ -4409,6 +4422,7 @@
         const r=await GH.loadRunsFromRepo({ client, cache:AppBlobCache, concurrency:4 });
         repoRuns=r.runs.map(compactRun);
         await AppBlobCache.set(REPO_RUNS_KEY, { at:Date.now(), runs:repoRuns });
+        await syncPlaceNotes(client).catch(e=>console.warn('Platsminnena kunde inte synkas', e));
         const st={ at:Date.now(), count:repoRuns.length, newFiles:r.newFiles, error:null };
         saveRepoSyncState(st);
         return st;
@@ -4819,6 +4833,11 @@
   // === Station Notes ===
   function handleCardInput(ev){
     const target = ev.target;
+    if(target.dataset.action === 'place-note'){
+      const idx = parseInt(target.dataset.idx, 10);
+      if(state.route[idx]) setPlaceNote(state.route[idx], target.value);
+      return;
+    }
     if(target.dataset.action === 'station-note'){
       const idx = parseInt(target.dataset.idx, 10);
       if(state.route[idx]){
@@ -5363,6 +5382,133 @@
     showTourInForm();
     renderAutoStartStatus();
   }
+  /* ── Platsminnen och halt (2026-11-25t) ──
+     Platsminne: en kort anteckning per station ("ofta rött vid infarten") som visas i stationsraden och
+     meddelas och läses upp när tåget är högst 2 km från stationen. Sparas på telefonen och i railtimer-data
+     (platsminnen.json), så att alla telefoner med samma inloggning har dem.
+     Halt: förarnas markeringar (gled in, slirade ut – 2026-11-25q) de senaste 14 dagarna i samma riktning,
+     ur alla körningar. Meddelas på samma sätt: inbromsningen när tåget närmar sig, starten när det står vid
+     stationen. Bara förarnas egna markeringar – inget som räknats fram. */
+  const STORAGE_KEY_PLACE_NOTES = 'railtimer_place_notes_v1'; // { 'sig:Vaa': { text, at, name } }, text '' = borttaget
+  const PLACE_NOTES_PATH = 'platsminnen.json';
+  const PLACE_REMIND_M = 2000;
+  const HALT_DAYS = 14;
+  let placeNotesCache=null; // läses en gång, stationsraderna ritas vid varje position
+  function loadPlaceNotes(){
+    if(!placeNotesCache){
+      try{ placeNotesCache=JSON.parse(localStorage.getItem(STORAGE_KEY_PLACE_NOTES)||'{}')||{}; }catch(e){ placeNotesCache={}; }
+    }
+    return Object.assign({}, placeNotesCache);
+  }
+  function savePlaceNotes(notes){
+    placeNotesCache=Object.assign({}, notes);
+    try{ localStorage.setItem(STORAGE_KEY_PLACE_NOTES, JSON.stringify(notes)); }catch(e){}
+  }
+  function placeNoteFor(st){
+    const n=st ? loadPlaceNotes()[stationCenterKey(st)] : null;
+    return n && n.text ? n.text : '';
+  }
+  function setPlaceNote(st, text){
+    const notes=loadPlaceNotes();
+    const key=stationCenterKey(st);
+    const clean=String(text||'').replace(/\s+/g,' ').trim().slice(0, 120);
+    if(!clean && !notes[key]) return;
+    notes[key]={ text:clean, at:new Date().toISOString(), name:st.name };
+    savePlaceNotes(notes);
+  }
+  // Nyast vinner per station, även borttagna (text '')
+  function mergePlaceNotes(a, b){
+    const out=Object.assign({}, a);
+    for(const [k, v] of Object.entries(b||{})){
+      if(!v || typeof v!=='object') continue;
+      if(!out[k] || String(v.at||'')>String(out[k].at||'')) out[k]=v;
+    }
+    return out;
+  }
+  async function syncPlaceNotes(client){
+    const remote=await client.getFile(PLACE_NOTES_PATH);
+    let theirs={};
+    try{ theirs = remote && remote.text ? (JSON.parse(remote.text).notes||{}) : {}; }catch(e){ theirs={}; }
+    const merged=mergePlaceNotes(theirs, loadPlaceNotes());
+    savePlaceNotes(merged);
+    const sorted=o=>JSON.stringify(Object.keys(o).sort().map(k=>[k, o[k]]));
+    if(sorted(merged)!==sorted(theirs)){
+      const body=JSON.stringify({ format:1, updatedAt:new Date().toISOString(), notes:merged }, null, 1);
+      await client.putFile(PLACE_NOTES_PATH, body, 'Platsminnen', remote ? remote.sha : undefined);
+    }
+  }
+
+  // Förarnas haltmarkeringar för resans stationer räknas en gång per resa (körningarna läses då en gång)
+  let haltCache={ key:'', list:[] };
+  function haltSummary(idx){
+    const key=`${state.journeyId}|${state.route.length}`;
+    if(haltCache.key!==key) haltCache={ key, list:computeHaltSummaries() };
+    return haltCache.list[idx] || null;
+  }
+  function computeHaltSummaries(){
+    const runs=allRuns();
+    return state.route.map((_, idx)=>haltSummaryFrom(runs, idx));
+  }
+  // Förarnas haltmarkeringar vid stationen idx i resans riktning, de senaste HALT_DAYS dagarna
+  function haltSummaryFrom(runs, idx){
+    const st=state.route[idx];
+    if(!st || !st.shouldStop) return null;
+    const prev=idx>0 ? state.route[idx-1].name : null;
+    const next=idx+1<state.route.length ? state.route[idx+1].name : null;
+    const since=Date.now()-HALT_DAYS*86400000;
+    const key=n=>String(n||'').trim().toLowerCase();
+    let slide=0, slip=0, last=0;
+    for(const r of runs){
+      if(String(r.id)===String(state.journeyId)) continue;
+      const t=r.startedAt ? new Date(r.startedAt).getTime() : NaN;
+      if(!(t>=since)) continue;
+      const stops=Array.isArray(r.stops) ? r.stops : [];
+      for(let i=0;i<stops.length;i++){
+        if(key(stops[i].name)!==key(st.name)) continue;
+        if(prev && stops[i].slideIn && i>0 && key(stops[i-1].name)===key(prev)){ slide++; last=Math.max(last, t); }
+        if(next && stops[i].slipOut && i+1<stops.length && key(stops[i+1].name)===key(next)){ slip++; last=Math.max(last, t); }
+      }
+    }
+    if(!slide && !slip) return null;
+    const what=[slide?`gled in ${slide}×`:'', slip?`slirade ut ${slip}×`:''].filter(Boolean).join(', ');
+    return { slide, slip, last, short:`❄ halt: ${what}` };
+  }
+  const timesWord = n => ({ 1:'en gång', 2:'två gånger', 3:'tre gånger' })[n] || `${n} gånger`;
+
+  // Meddelas en gång per resa: platsminne och glidning vid inbromsningen när tåget närmar sig nästa station,
+  // slirning vid starten när tåget står vid stationen
+  function checkPlaceReminders(){
+    if(!state.reminded) state.reminded=new Set();
+    const said=[];
+    const once=(key, text, say)=>{
+      if(state.reminded.has(key)) return;
+      state.reminded.add(key);
+      said.push({ text, say });
+    };
+    const next=state.nextIndex;
+    const ns=next!=null ? state.route[next] : null;
+    if(ns && ns.lastSeenDistance!=null && ns.lastSeenDistance<=PLACE_REMIND_M && !ns.actualArrival){
+      const memo=placeNoteFor(ns);
+      if(memo) once(`memo|${next}`, `📌 ${ns.name}: ${memo}`, `${ns.name}: ${memo}.`);
+      const h=haltSummary(next);
+      if(h && h.slide) once(`slide|${next}`, `❄ ${ns.name}: halt vid inbromsningen markerat ${h.slide} gång${h.slide>1?'er':''} senaste ${HALT_DAYS} dagarna`,
+        `${ns.name}: förare har markerat halt vid inbromsningen ${timesWord(h.slide)} de senaste två veckorna.`);
+    }
+    const here=currentStationIndex();
+    if(here!=null && here+1<state.route.length){
+      const h=haltSummary(here);
+      const st=state.route[here];
+      if(h && h.slip) once(`slip|${here}`, `❄ ${st.name}: halt vid starten mot ${state.route[here+1].name} markerat ${h.slip} gång${h.slip>1?'er':''} senaste ${HALT_DAYS} dagarna`,
+        `${st.name}: förare har markerat halt vid starten härifrån ${timesWord(h.slip)} de senaste två veckorna.`);
+    }
+    if(!said.length) return;
+    vibrate([120,80,120]);
+    speak(said.map(x=>x.say).join(' '));
+    const text=said.map(x=>x.text).join(' · ');
+    showJourneyMessage(text, false);
+    setTimeout(()=>{ if(els.journeyMsg.textContent===text) els.journeyMsg.style.display='none'; }, 10000);
+  }
+
   let nextTourPrepared=null;
   function renderNextTourCard(){
     const card=document.getElementById('nextTourCard');
@@ -6107,6 +6253,7 @@
         lastFix: state.lastFix,
         interruptionTipShown: state.interruptionTipShown,
         startedBy: state.startedBy || '',
+        reminded: state.reminded ? Array.from(state.reminded) : [],
         lastSaveTime: Date.now()
       };
       const json=JSON.stringify(journeyState);
@@ -6236,6 +6383,7 @@
     state.prunedAtStart = prunedIds.size;
     state.startedBy = saved.startedBy || '';
     state.nextTour = null;
+    state.reminded = new Set(Array.isArray(saved.reminded) ? saved.reminded : []);
 
     // Update UI
     hideSetupError();

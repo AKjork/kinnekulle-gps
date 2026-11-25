@@ -2276,6 +2276,70 @@ test('info: mötande tågets position, anslutningar längs vägen och färdigt u
   assertEqual(mt.position.side, 'beyond', 'positionen sparas med mötet');
 });
 
+// ── Platsminnen och halt (2026-11-25t) ──
+test('platsminne: visas i stationsraden, läses upp när tåget är nära och synkas med GitHub', async () => {
+  const fixes = buildJourney();
+  const stopT = fixes.find(f => f.dwellAt === 3).t + 4000; // strax efter ankomsten till Blomberg
+  let fake;
+  const r = await runJourney(fixes, {
+    trainNumber: '3344',
+    drop: f => f.t > stopT,
+    beforeStart: async w => {
+      fake = browserFakeGitHub(w);
+      configureUpload(w, fake);
+      w.__railtimer.setPlaceNote({ sig: 'Bmb', name: 'Blomberg' }, 'ofta rött vid infarten');
+    }
+  });
+  const { w, rt } = r;
+  const rowText = i => w.document.querySelectorAll('#cards .card')[i].querySelector('.st-name').textContent;
+  assert(rt.spoken().includes('Blomberg: ofta rött vid infarten.'), rt.spoken().join(' | '));
+  assertEqual(rt.spoken().filter(t => t.includes('ofta rött')).length, 1, 'en gång per resa');
+  // Föraren skriver ett platsminne för Råbäck i kortet
+  const input = w.document.querySelector('[data-action="place-note"][data-idx="4"]');
+  input.value = 'Växel 2 trög';
+  input.dispatchEvent(new w.Event('input', { bubbles: true }));
+  assertEqual(rt.placeNoteFor({ sig: 'Rbk' }), 'Växel 2 trög', 'sparat');
+  rt.renderRouteCards();
+  assert(rowText(4).includes('📌 Växel 2 trög'), rowText(4));
+  // Synk: GitHub har ett nyare minne för Hällekis och ett äldre för Blomberg
+  fake.put('platsminnen.json', JSON.stringify({ format: 1, notes: {
+    'sig:Hlk': { text: 'Spår 2 kort', at: '2030-01-01T00:00:00.000Z', name: 'Hällekis' },
+    'sig:Bmb': { text: 'gammal text', at: '2000-01-01T00:00:00.000Z', name: 'Blomberg' }
+  } }));
+  rt.stopJourney(true, 'test');
+  await rt.whenUploadIdle();
+  await rt.syncFromGithub(true);
+  assertEqual(rt.placeNoteFor({ sig: 'Hlk' }), 'Spår 2 kort', 'nyare minne från GitHub');
+  assertEqual(rt.placeNoteFor({ sig: 'Bmb' }), 'ofta rött vid infarten', 'telefonens nyare minne gäller');
+  const saved = JSON.parse(fake.files.get('platsminnen.json').text).notes;
+  assertEqual([saved['sig:Bmb'].text, saved['sig:Rbk'].text, saved['sig:Hlk'].text], ['ofta rött vid infarten', 'Växel 2 trög', 'Spår 2 kort'], 'sammanslaget i GitHub');
+});
+
+test('halt: förarnas markeringar senaste två veckorna i samma riktning meddelas vid inbromsningen och starten', async () => {
+  const fixes = buildJourney();
+  const stopT = fixes.find(f => f.dwellAt === 4).t + 6000; // står i Råbäck
+  const day = 86400000;
+  const run = (id, ago, stops) => ({ id, trainNumber: '3344', startStation: stops[0].name, endStation: stops[stops.length - 1].name,
+    startedAt: new Date(START - ago * day).toISOString(), stops });
+  const r = await runJourney(fixes, {
+    trainNumber: '3344',
+    drop: f => f.t > stopT,
+    beforeStart: async w => {
+      w.localStorage.setItem('kmon_gps_logs_v1', JSON.stringify([
+        run('h1', 3, [{ name: 'Källby' }, { name: 'Blomberg', slideIn: true }, { name: 'Råbäck', slipOut: true }, { name: 'Hällekis' }]),
+        run('h2', 30, [{ name: 'Källby' }, { name: 'Blomberg', slideIn: true }]),          // för gammal
+        run('h3', 2, [{ name: 'Råbäck' }, { name: 'Blomberg', slideIn: true }])            // andra hållet
+      ]));
+    }
+  });
+  const said = r.rt.spoken().join(' | ');
+  assert(said.includes('Blomberg: förare har markerat halt vid inbromsningen en gång de senaste två veckorna.'), said);
+  assert(said.includes('Råbäck: förare har markerat halt vid starten härifrån en gång de senaste två veckorna.'), said);
+  assertEqual(r.rt.haltSummary(3).slide, 1, 'bara samma riktning och de senaste 14 dagarna');
+  const hlkRow = r.w.document.querySelectorAll('#cards .card')[4].querySelector('.st-name').textContent;
+  assert(hlkRow.includes('❄ halt: slirade ut 1×'), hlkRow);
+});
+
 // ── Automatisk start, uppläsning och dagens tur (2026-11-25q) ──
 const gpsPos = (f, extra) => ({ coords: Object.assign({ latitude: f.lat, longitude: f.lon, accuracy: 5, speed: f.speed, heading: null }, extra || {}), timestamp: f.t });
 

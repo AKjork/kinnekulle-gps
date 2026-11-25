@@ -1228,3 +1228,31 @@ André 2026-11-25: fortsättning på "Gör allt" (se 2026-11-25r). Appversion `2
 - `node tests/run-browser-tests.mjs` (111), nytt: *info: mötande tågets position, anslutningar längs vägen och färdigt utrop*.
 - Bild: `--shot=info-utrop`.
 - Inte provat mot riktiga svar: positionsfrågan med flera tågnummer (OR-filter på `Train.OperationalTrainNumber`), och anslutningar vid mellanstationer med riktiga tåg. Kontrollera vid nästa resa med möte att mötesraden visar avståndet.
+
+## Uppdatering (2026-11-25t): platsminnen och förarnas haltmarkeringar under resan
+
+André 2026-11-25: sista delen av "Gör allt" (se 2026-11-25r och s). Appversion `2026-11-25t`.
+
+### Platsminnen
+- **Fältet** *📌 Kom ihåg vid platsen* i det utfällda stationskortet, högst 120 tecken. Det sparas per station (`railtimer_place_notes_v1`, nyckel `sig:<signatur>`, annars `namn:<namn>`, som egna mittpunkter) med tid.
+  - Ett tömt fält tar bort minnet (`text: ''`), så att borttagningen också synkas.
+- **Visas** i stationsraden för kommande stationer: *📌 ofta rött vid infarten*.
+- **Meddelas en gång per resa** när tåget är högst 2 km från stationen (`PLACE_REMIND_M`): vibration, toast i 10 s och uppläsning, till exempel *Blomberg: ofta rött vid infarten.* (`checkPlaceReminders`). Vad som meddelats sparas med resan (`reminded`), så att det inte upprepas efter Återuppta.
+- **Synkas** via `platsminnen.json` i `railtimer-data` när körningarna synkas (`syncPlaceNotes` i `syncFromGithub`): nyast per station gäller (`mergePlaceNotes`), och filen skrivs bara när något ändrats. Alla telefoner med samma inloggning får minnena.
+
+### Förarnas haltmarkeringar (från 2026-11-25q)
+- Markeringarna **gled in** och **slirade ut** i alla körningar från de senaste 14 dagarna (`HALT_DAYS`), även körningar från GitHub, i samma riktning som resan (`haltSummary`):
+  - gled in vid stationen med samma föregående station;
+  - slirade ut från stationen mot samma nästa station.
+- **Visas** i stationsraden: *❄ halt: gled in 1×, slirade ut 2×*.
+- **Meddelas en gång per resa**: glidning när tåget är högst 2 km från stationen, slirning när tåget står vid stationen före avgång. Exempel: *Blomberg: förare har markerat halt vid inbromsningen en gång de senaste två veckorna.*
+- Bara förarnas egna markeringar används, inget framräknat (som 2026-11-25q: "datan måste stämma"). Var tågen brukar börja bromsa finns i analysverktygets Broms och gas, inte i resvyn.
+- Räknas en gång per resa (`computeHaltSummaries`), så att körningarna inte läses vid varje position.
+- **Körningarna från GitHub** sparas nu med `slideIn`/`slipOut` (`compactRun`). Nyckeln är bytt till `app:korningar-v2`, så de hämtas om vid första starten (`syncFromGithub(true)` när inga finns sparade).
+
+### Tester
+- `node --test "tests/*.test.js"` (162).
+- `node tests/run-browser-tests.mjs` (113), nya:
+  - *platsminne: visas i stationsraden, läses upp när tåget är nära och synkas med GitHub*;
+  - *halt: förarnas markeringar senaste två veckorna i samma riktning meddelas vid inbromsningen och starten*.
+- Inte provat på telefon. Kontrollera vid första resan med ett platsminne att det läses upp ungefär 2 km före stationen.
