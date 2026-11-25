@@ -567,6 +567,20 @@ test('uppladdning: inställningsvyn testar anslutningen och sparar repo och toke
   assert(fake.files.has('.railtimer/anslutning.json'), 'anslutningsfilen skrevs');
 });
 
+test('meny: Analysverktyg öppnar analysverktyget, men inte under en resa', async () => {
+  const w = await loadApp();
+  const btn = w.document.getElementById('btnAnalysis');
+  assert(btn && btn.textContent === 'Analysverktyg', 'menyvalet finns');
+  w.__railtimer.state.running = true;
+  btn.click();
+  assert(w.location.pathname.endsWith('/index.html'), 'stannar kvar under resan');
+  w.__railtimer.state.running = false;
+  const frame = document.getElementById('app');
+  await new Promise(resolve => { frame.onload = resolve; btn.click(); });
+  assert(frame.contentWindow.location.pathname.endsWith('/Analys.html'), 'analysverktyget: ' + frame.contentWindow.location.pathname);
+  assertEqual(frame.contentWindow.document.querySelector('header .app-link').getAttribute('href'), './', 'länk tillbaka till appen');
+});
+
 test('uppladdning: inloggningslänken sparar repo och token igen, öppnad eller inklistrad', async () => {
   let w = await loadApp();
   await clearAppStorage(w);

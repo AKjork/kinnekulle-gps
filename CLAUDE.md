@@ -915,3 +915,11 @@ Dataunderlag (`railtimer-data`, 214 körningar): uppehåll över 2 min vid mella
 - `node --test "tests/*.test.js"` (149), nya i `tests/railtimer-info.test.js` (21): linjen, körningen, möte, väntan med sent tåg, Trafikverkets beräknade tid, dubbelspår (även sparat), inställt och flyttat möte, passerat möte, prognos aldrig före nu, egna gångtider, anslutningar (ok, knappt, missas, avgått, tillbaka längs linjen, bytestid), tåg som ansluter till oss, avvikelser, störningar (OperativeEvent), frågorna (även utan de oprovade fälten) och annonserad tid när tågorderns saknas.
 - `node tests/run-browser-tests.mjs info` (6): sent mötande tåg i panelen och fliken med vibration, toast, anslutningar och bytestid; möte i tid; ingen kontakt; Trafikverket godtar inte tågorderns tid; mötena i körningen; utan tågnummer. Simulerat Trafikverket: `fakeTrafikverketInfo` i `tests/replay.html`. Alla webbläsartester: 93.
 - Bilder: `--shot=info` (fliken) och `--shot=resa-info` (stationerna med raden i panelen).
+
+## Uppdatering (2026-11-25l): vägen mellan appen och analysverktyget
+
+André 2026-11-25 kom in i appen via inloggningslänken men hittade inte analysverktyget. Appversion `2026-11-25l`.
+
+- Appens ⋮-meny har **Analysverktyg** (`btnAnalysis`) under Statistik. Valet öppnar `Analys.html` i samma flik, men inte under en resa ("Öppnas när resan är klar"), eftersom mätningen stannar när sidan byts.
+- Analysverktygets rubrikrad har länken **← Till appen** (`./`). Den visas inte i utskriften.
+- Tester: `node --test "tests/*.test.js"` (149). `node tests/run-browser-tests.mjs` (94), nytt: *meny: Analysverktyg öppnar analysverktyget, men inte under en resa*.

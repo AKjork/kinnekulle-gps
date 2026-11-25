@@ -610,6 +610,7 @@
         <button id="btnTextSize" class="menu-toggle" aria-pressed="false">Stor text <span class="toggle-state">Av</span></button>
         <hr>
         <button id="btnStatistics">Statistik</button>
+        <button id="btnAnalysis">Analysverktyg</button>
         <button id="btnUploadSettings">Uppladdning</button>
         <button id="btnTrvCheck">Trafikverket-data</button>
         <button id="btnExportCSV">Exportera CSV (Excel)</button>
@@ -823,7 +824,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25k';
+  const APP_VERSION = '2026-11-25l';
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1510,6 +1511,12 @@
     document.getElementById('btnCloseStats').addEventListener('click', hideStatistics);
 
     // Uppladdning
+    // Analysverktyget (Analys.html) – inte under en resa, eftersom sidan byts och mätningen stannar
+    document.getElementById('btnAnalysis').addEventListener('click', () => {
+      closeAllMenus();
+      if(state.running){ showHeaderStatus('Öppnas när resan är klar', true); return; }
+      location.href='Analys.html';
+    });
     document.getElementById('btnTrvCheck').addEventListener('click', () => {
       closeAllMenus();
       if(state.running){ showHeaderStatus('Öppnas när resan är klar', true); return; }
