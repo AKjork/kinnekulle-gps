@@ -974,8 +974,9 @@ test('analys: GPS-spår visar stopp mellan stationerna och dem räknas inte i St
 /* Broms och gas: körning rakt norrut med GPS-spår (1 punkt/s). Tåget står 20 s, gasar 0,4 m/s² till 20 m/s och
    bromsar 0,5 m/s² så att det står vid varje station (400 m inbromsning, 500 m gas), står 30 s. */
 const BRAKE_LINE = [{ name: 'Lidköping', x: 0 }, { name: 'Filsbäck', x: 3000 }, { name: 'Källby', x: 6000 }, { name: 'Blomberg', x: 9000 }];
-function brakeRun(id, day, reverse, part) {
-  let stations = part ? BRAKE_LINE.filter(st => part.includes(st.name)) : BRAKE_LINE;
+function brakeRun(id, day, reverse, part, line) {
+  const all = line || BRAKE_LINE;
+  let stations = part ? all.filter(st => part.includes(st.name)) : all;
   if (reverse) stations = stations.slice().reverse();
   const t0 = new Date(2026, 9, day, 7, 0, 0);
   const sign = reverse ? -1 : 1;
@@ -1021,6 +1022,7 @@ test('analys: Broms och gas visar var tågen bromsar och gasar vid uppehållen',
   assertEqual(Array.from(w.document.querySelectorAll('.tab.active')).map(t => t.dataset.tab), ['motion'], 'fliken är vald');
   assert(w.document.getElementById('motionSummary').textContent.includes('Inga GPS-spår'), 'utan spår');
   w.__analys.setTracks(sims.map(s => s.track));
+  w.__analys.setMotionMode('detail');
   const summary = w.document.getElementById('motionSummary').textContent;
   assert(summary.startsWith('7 körningar med GPS-spår') && summary.includes('Lidköping → Blomberg, 9,0 km'), 'sammanfattning: ' + summary);
   const sel = id => w.document.getElementById(id);
@@ -1031,10 +1033,7 @@ test('analys: Broms och gas visar var tågen bromsar och gasar vid uppehållen',
     .map(r => Array.from(r.querySelectorAll('.mz-name, .mz-sub, .mz-nums > span')).map(e => e.textContent.trim()).join(' '));
   const names = () => Array.from(w.document.querySelectorAll('#motionList .mz-row .mz-name')).map(e => e.textContent.trim());
   assertEqual(names(), ['Lidköping', 'Filsbäck', 'Källby', 'Blomberg'], 'en rad per station');
-  assert(/^Filsbäck 3,0 km från Lidköping · 3 uppehåll Bromsar från (400|450) m före Gasar till (500|550) m efter$/.test(rows()[1]), 'Filsbäck: ' + rows()[1]);
-  // Utan Trafikverkets km-tal: km längs spåret från linjens ände, och det står varför
-  assert(sel('motionKmNote').textContent.startsWith('Km = avstånd längs spåret från Lidköping'), 'km-raden: ' + sel('motionKmNote').textContent);
-  assertEqual(Array.from(w.document.querySelectorAll('#motionTableEl thead th')).map(th => th.textContent)[1], 'Km från Lidköping', 'kolumnen');
+  assert(/^Filsbäck km 88\+000 · 3 uppehåll Bromsar från (400|450) m före stoppet Gasar till (500|550) m efter stoppet$/.test(rows()[1]), 'Filsbäck: ' + rows()[1]);
   assert(rows()[0].includes('Bromsar –'), 'ingen inbromsning vid start: ' + rows()[0]);
   assert(w.document.querySelectorAll('#motionOverview rect.h-broms').length > 0, 'linjebandet visar inbromsningen');
   // Lista för halkbekämpningen med koordinater
@@ -1061,7 +1060,7 @@ test('analys: Broms och gas visar var tågen bromsar och gasar vid uppehållen',
   choose('motionFrom', 'Filsbäck');
   choose('motionTo', 'Källby');
   assertEqual(names(), ['Filsbäck', 'Källby'], 'Filsbäck → Källby');
-  assert(/^Källby 6,0 km från Lidköping · 4 uppehåll Bromsar från (400|450) m före/.test(rows()[1]), 'även körningar som går en del av sträckan: ' + rows()[1]);
+  assert(/^Källby km 83\+974 · 4 uppehåll Bromsar från (400|450) m före stoppet/.test(rows()[1]), 'även körningar som går en del av sträckan: ' + rows()[1]);
   assert(w.document.getElementById('motionSummary').textContent.includes('Filsbäck → Källby, 3,0 km'), 'sammanfattningen');
   assertEqual(sel('btnMotionWhole').style.display, '', 'Hela linjen visas');
   sel('btnMotionSwap').click();
@@ -1078,7 +1077,7 @@ test('analys: Broms och gas visar var tågen bromsar och gasar vid uppehållen',
   assertEqual(names(), ['Lidköping', 'Filsbäck', 'Källby', 'Blomberg'], 'hela linjen igen');
   // Export (båda riktningarna) och utskrift
   const csv = w.__analys.exportMotionCsv();
-  assert(csv.includes('"Lidköping → Blomberg";"Filsbäck";"";"";"3,0";"3"') && csv.includes('"Blomberg → Lidköping";"Filsbäck"') && csv.includes('"Alla zoner"'), 'csv');
+  assert(csv.includes('"Lidköping → Blomberg";"Filsbäck";"88+000";"3"') && csv.includes('"Blomberg → Lidköping";"Filsbäck"') && csv.includes('"Alla zoner"'), 'csv');
   assert(/"58,52\d+";"13,10000"/.test(csv), 'koordinater med decimalkomma');
   assert(/^broms-och-gas_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn');
   w.dispatchEvent(new w.Event('beforeprint'));
@@ -1089,75 +1088,78 @@ test('analys: Broms och gas visar var tågen bromsar och gasar vid uppehållen',
   assert(w.document.getElementById('motionSummary').textContent.includes('Inga körningar med GPS-spår i urvalet'), 'tomt urval');
 });
 
-// Plankorsningar längs BRAKE_LINE som Trafikverket skickar dem: bandel 641, km-talet minskar norrut (272+000 vid Lidköping)
-function brakeCrossings() {
-  const list = [300, 900, 1500, 2100, 2700, 3600, 4500, 5400, 6600, 7500, 8400].map(x => {
-    const m = 272000 - x;
-    return { Kilometer: Math.floor(m / 1000), Meter: m % 1000, TrackPortion: 641, Geometry: { WGS84: `POINT (13.1 ${58.5 + x / 111195})` } };
-  });
-  // En korsning på en annan linje 500 m bort
-  list.push({ Kilometer: 12, Meter: 0, TrackPortion: 650, Geometry: { WGS84: 'POINT (13.11 58.52)' } });
-  return list;
-}
-function fakeCrossings(calls) {
-  return async (url, init) => {
-    calls.push(init.body);
-    return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ RailCrossing: brakeCrossings() }] } }) };
-  };
-}
+// Linjen Vara – Järpås: Vara ligger utanför sträckan med km-tal (Håkantorp – Gårdsjö)
+const KMTAL_LINE = [{ name: 'Vara', x: 0 }, { name: 'Håkantorp', x: 3000 }, { name: 'Stora Levene', x: 6000 }, { name: 'Järpås', x: 9000 }];
 
-test('analys: Broms och gas visar Trafikverkets km-tal från plankorsningarna', async () => {
+test('analys: Broms och gas – enkla listan med linjebokens km-tal, och Detaljerad', async () => {
   const sims = brakeRuns();
   const w = await loadAnalysWith(sims.map(s => s.run));
   w.__analys.showTab('motion');
   w.__analys.setTracks(sims.map(s => s.track));
   const sel = id => w.document.getElementById(id);
-  const note = () => sel('motionKmNote').textContent;
-  const head = () => Array.from(w.document.querySelectorAll('#motionTableEl thead th')).map(th => th.textContent);
-  const rows = () => Array.from(w.document.querySelectorAll('#motionList .mz-row'))
-    .map(r => Array.from(r.querySelectorAll('.mz-name, .mz-sub')).map(e => e.textContent.trim()).join(' '));
-  assert(note().includes('Trafikverkets km-tal är inte hämtat'), 'utan km-tal: ' + note());
-
-  // Ingen kontakt: km längs spåret, felet och Försök igen
-  w.__analys.setKmTalFetch(async () => { throw new TypeError('Failed to fetch'); });
-  await w.__analys.loadKmTal();
-  assertEqual(w.__analys.getKmTal().status, 'error', 'fel');
-  assert(note().includes('Trafikverkets km-tal kunde inte hämtas (Ingen kontakt med Trafikverket)'), 'felet: ' + note());
-  assertEqual(head()[1], 'Km från Lidköping', 'kolumnen utan km-tal');
-
-  // Försök igen: rektangeln runt spåren, km-talet visas
-  const calls = [];
-  w.__analys.setKmTalFetch(fakeCrossings(calls));
-  sel('btnKmTalRetry').click();
-  for (let i = 0; i < 50 && w.__analys.getKmTal().status !== 'ok'; i++) await realSleep(20);
-  assertEqual(w.__analys.getKmTal().status, 'ok', 'hämtat');
-  assert(/<WITHIN name="Geometry\.WGS84" shape="box" value="13\.08 58\.48, 13\.12 58\.6\d*"/.test(calls[0]), 'rektangeln: ' + calls[0]);
-  assert(note().includes('Km-tal enligt Trafikverket') && note().includes('bandel 641 (Lidköping – Blomberg)') && note().includes('11 plankorsningar'), 'km-raden: ' + note());
-  assert(/^Filsbäck km 26(8\+99\d|9\+00\d) · 3 uppehåll$/.test(rows()[1]), 'Filsbäck: ' + rows()[1]);
-  assert(/^Lidköping km 27(1\+99\d|2\+00\d) · /.test(rows()[0]), 'Lidköping, räknat vidare längs spåret: ' + rows()[0]);
-  assertEqual([head()[1], head()[5], head()[10]], ['Km-tal', 'Km-tal', 'Km-tal'], 'kolumnerna');
-  const list = tableRows(w, 'motionTableEl');
-  assert(/^26(8\+99\d|9\+00\d)$/.test(list[1][1]), 'Filsbäck i listan: ' + list[1][1]);
-  assert(/^269\+[34]\d\d–26(8\+9\d\d|9\+0\d\d)$/.test(list[1][5]), 'inbromsningen ca 400 m före: ' + list[1][5]);
-  const ticks = Array.from(w.document.querySelectorAll('#motionOverview text.km')).map(t => t.textContent);
-  assert(ticks.includes('270') && ticks.includes('265') && ticks.some(t => t.startsWith('km-tal (Trafikverket)')), 'linjebandet: ' + ticks.join(' | '));
-  // Fartprofilen visar km-talet vid pekaren
-  w.__analys.showMotion('Filsbäck|1');
-  assert(w.document.querySelector('#motionDetail .balance').textContent.includes('börjar km 269+'), 'rutan: ' + w.document.querySelector('#motionDetail .balance').textContent);
-  // Export och utskrift
+  const report = sel('motionReport');
+  assert(report.classList.contains('mode-simple') && getComputedStyle(sel('motionDetailView')).display === 'none', 'enkla listan är förvald');
+  assertEqual(sel('motionSimple').querySelector('h3').textContent, 'Behandla rälsen här · Lidköping – Blomberg', 'rubriken');
+  // En tabell per riktning, vald riktning först
+  assertEqual(Array.from(sel('motionSimple').querySelectorAll('h4')).map(h => h.textContent), ['Lidköping → Blomberg', 'Blomberg → Lidköping'], 'båda riktningarna');
+  const tables = Array.from(sel('motionSimple').querySelectorAll('table.mz-simple'));
+  const cells = t => Array.from(t.querySelectorAll('tbody tr')).map(tr => Array.from(tr.cells).map(td => td.textContent.trim()));
+  const up = cells(tables[0]), down = cells(tables[1]);
+  assertEqual(up.map(r => r[0].split('km')[0]), ['Lidköping', 'Filsbäck', 'Källby', 'Blomberg'], 'mot Blomberg');
+  assertEqual(down.map(r => r[0].split('km')[0]), ['Blomberg', 'Källby', 'Filsbäck', 'Lidköping'], 'mot Lidköping');
+  assertEqual(up[1][0], 'Filsbäckkm 88+000 · 3 uppehåll', 'stationens km-tal enligt linjeboken');
+  assert(/^km 88\+[67]\d0 – 8[78]\+\d\d0(400|450) m$/.test(up[1][1]), 'bromsar in mot Filsbäck, km-tal i färdriktningen: ' + up[1][1]);
+  assert(/^km (88\+0\d0|87\+9\d0) – 87\+3\d0(450|500|550) m$/.test(up[1][2]), 'gasar ut: ' + up[1][2]);
+  assertEqual(up[0][1], '–', 'ingen inbromsning vid start');
+  assert(/^km 88\+0\d0 – 88\+[78]\d0(450|500|550) m$/.test(down[2][2]), 'gasar ut mot Lidköping: ' + down[2][2]);
+  // Export och utskrift av enkla listan
   const csv = w.__analys.exportMotionCsv();
-  assert(/"Lidköping → Blomberg";"Filsbäck";"641";"26(8\+99\d|9\+00\d)";"3,0";"3"/.test(csv), 'csv: bandel och km-tal');
-  assert(csv.includes('"Km";"Km-tal enligt Trafikverket (banans längdmätning): bandel 641 (Lidköping – Blomberg)'), 'csv: förklaringen');
+  assert(/"Lidköping → Blomberg";"Filsbäck";"88\+000";"3";"88\+[67]\d0";"8[78]\+\d\d0";"(400|450)";"";"(88\+0\d0|87\+9\d0)";"87\+3\d0";"(450|500|550)";"";"58,5\d+";"13,10000"/.test(csv), 'csv: ' + csv.split('\n').find(l => l.includes('Filsbäck')));
+  assert(csv.includes('"Blomberg → Lidköping";"Filsbäck"'), 'csv: andra riktningen');
+  assert(/^behandla-ralsen_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn');
   w.dispatchEvent(new w.Event('beforeprint'));
-  assert(w.document.querySelector('#motionReport .print-header').textContent.includes('Km: Km-tal enligt Trafikverket'), 'utskriften');
-  // Sparat: nästa gång behövs ingen hämtning
-  const saved = JSON.parse(w.localStorage.getItem('railtimer_kmtal_v1'));
-  assertEqual(saved.list.length, 12, 'korsningarna inom rektangeln sparas, även den på andra linjen');
-  // Uppdateringen misslyckas: det sparade km-talet används och det står att det inte kunde uppdateras
-  w.__analys.setKmTalFetch(async () => ({ ok: false, status: 503, json: async () => { throw new Error('x'); } }));
-  await w.__analys.loadKmTal();
-  assert(rows()[1].startsWith('Filsbäck km 26'), 'km-talet finns kvar');
-  assert(note().includes('Kunde inte uppdateras (HTTP 503)'), 'gammalt km-tal: ' + note());
+  const printed = report.querySelector('.print-header').textContent;
+  assert(printed.includes('Km-tal: Trafikverkets linjebok för Håkantorp – Gårdsjö'), 'utskrift: ' + printed);
+  // Detaljerad
+  w.document.querySelector('[data-motion-mode="detail"]').click();
+  assert(report.classList.contains('mode-detail') && getComputedStyle(sel('motionSimple')).display === 'none', 'Detaljerad');
+  assertEqual(w.document.querySelector('[data-motion-mode="detail"]').getAttribute('aria-pressed'), 'true', 'knappen');
+  const ticks = Array.from(w.document.querySelectorAll('#motionOverview text.km')).map(t => t.textContent);
+  assert(ticks.includes('90') && ticks.includes('85') && ticks.some(t => t.startsWith('km-tal enligt linjeboken · övre bandet → mot Blomberg, undre ← mot Lidköping')), 'linjebandet: ' + ticks.join(' | '));
+  assertEqual(w.document.querySelectorAll('#motionOverview rect.track').length, 2, 'ett band per riktning');
+  assert(sel('motionKmNote').textContent.includes('Km-tal enligt Trafikverkets linjebok för Håkantorp – Gårdsjö'), 'km-raden: ' + sel('motionKmNote').textContent);
+  assertEqual(tableRows(w, 'motionTableEl')[1][1], '88+000', 'Filsbäck i tabellen');
+  // Klick i enkla listan: Detaljerad med stationen öppen
+  w.__analys.setMotionMode('simple');
+  w.document.querySelector('#motionSimple tr[data-motion-key="Källby|1"]').click();
+  assert(report.classList.contains('mode-detail') && w.document.querySelector('.mz-row.open[data-motion-key="Källby|1"]') && sel('motionDetail'), 'Källby öppen');
+  assert(sel('motionDetail').querySelector('.balance').textContent.includes('börjar km 84+'), 'rutan: ' + sel('motionDetail').querySelector('.balance').textContent);
+  // Rimlighet: medelretardation till stopp (simuleringen bromsar med 0,5 m/s²)
+  assert(/från (400|450) m före stoppet · börjar km 84\+\d+ · från \d+ km\/h · ca 0,[45]\d m\/s²/.test(sel('motionDetail').querySelector('.balance').textContent) && !sel('motionDetail').textContent.includes('kontrollera'), 'rimligt: ' + sel('motionDetail').querySelector('.balance').textContent);
+});
+
+test('analys: Broms och gas – förvalt Håkantorp – Gårdsjö, och inget km-tal utanför', async () => {
+  const sims = [1, 2, 3].map(d => brakeRun('v' + d, 10 + d, false, null, KMTAL_LINE)).concat([4, 5, 6].map(d => brakeRun('v' + d, 10 + d, true, null, KMTAL_LINE)));
+  const w = await loadAnalysWith(sims.map(s => s.run));
+  w.__analys.showTab('motion');
+  w.__analys.setTracks(sims.map(s => s.track));
+  const sel = id => w.document.getElementById(id);
+  assertEqual([sel('motionFrom').value, sel('motionTo').value], ['Håkantorp', 'Järpås'], 'förvalt: sträckan med km-tal');
+  assertEqual(sel('btnMotionWhole').style.display, '', 'Hela linjen kan väljas');
+  const tbl = dir => Array.from(sel('motionSimple').querySelectorAll(`table[data-dir="${dir}"] tbody tr`)).map(tr => Array.from(tr.cells).map(td => td.textContent.trim()));
+  assertEqual(tbl(1).map(r => r[0].split('km')[0]), ['Håkantorp', 'Stora Levene', 'Järpås'], 'Vara är inte med');
+  assertEqual(tbl(1)[0][0], 'Håkantorpkm 121+021 · 3 uppehåll', 'Håkantorp');
+  assert(/^km (121\+0[0-2]0|120\+9\d0) – 120\+[56]\d0(450|500|550) m$/.test(tbl(1)[0][2]), 'gasar ut från Håkantorp mot Stora Levene: ' + tbl(1)[0][2]);
+  assert(/^–(450|500|550) m, utan km-tal$/.test(tbl(-1)[2][2]), 'gasar ut från Håkantorp mot Vara: ' + tbl(-1)[2][2]);
+  sel('btnMotionWhole').click();
+  assertEqual([sel('motionFrom').value, sel('motionTo').value], ['Vara', 'Järpås'], 'hela linjen');
+  assertEqual(tbl(1)[0][0], 'Vara3 uppehåll', 'Vara utan km-tal');
+  assert(/^–(450|500|550) m, utan km-tal$/.test(tbl(1)[0][2]), 'Vara: ' + tbl(1)[0][2]);
+  w.__analys.setMotionMode('detail');
+  const rows = Array.from(w.document.querySelectorAll('#motionList .mz-row')).map(r => r.querySelector('.mz-sub').textContent);
+  assertEqual(rows[0], '3 uppehåll', 'Vara utan km');
+  assertEqual(tableRows(w, 'motionTableEl')[0][1], '–', 'Vara i tabellen');
+  assert(Array.from(w.document.querySelectorAll('#motionOverview line.bandel-sep')).length === 1, 'streck där km-talet börjar');
 });
 
 test('analys: Jämför perioder per tåg och sträcka, med export', async () => {
@@ -2509,7 +2511,7 @@ window.prepareShot = async function (name) {
     const start = w.document.getElementById('ttStart');
     start.value = '07:15';
     start.dispatchEvent(new w.Event('input'));
-  } else if (name === 'broms-och-gas' || name === 'broms-och-gas-mobil' || name === 'broms-och-gas-utskrift') {
+  } else if (name === 'broms-och-gas' || name === 'broms-och-gas-mobil' || name === 'broms-och-gas-utskrift' || name === 'broms-och-gas-enkel' || name === 'broms-och-gas-enkel-mobil') {
     const frame = document.getElementById('app');
     const mobile = name.endsWith('-mobil');
     frame.style.width = mobile ? '390px' : '1200px';
@@ -2518,9 +2520,9 @@ window.prepareShot = async function (name) {
     const w = await loadAnalysWith(sims.map(s => s.run));
     w.__analys.setTracks(sims.map(s => s.track));
     w.__analys.showTab('motion');
-    w.__analys.setKmTalFetch(fakeCrossings([]));
-    await w.__analys.loadKmTal();
-    w.__analys.showMotion('Filsbäck|1');
+    const simple = name.includes('-enkel');
+    frame.style.height = simple ? (mobile ? '2500px' : '1350px') : frame.style.height;
+    if (!simple) { w.__analys.setMotionMode('detail'); w.__analys.showMotion('Filsbäck|1'); }
     if (name.endsWith('-utskrift')) w.dispatchEvent(new w.Event('beforeprint'));
   } else if (name === 'tidtabell-alla-utskrift') {
     const frame = document.getElementById('app');

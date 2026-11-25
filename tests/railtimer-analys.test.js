@@ -812,45 +812,42 @@ test('motionZones: inbromsning i steg räknas ihop när tåget inte gasar emella
   assert.ok(between.zones.some(x => x.kind === 'gas' && x.to < 0), 'gasen emellan');
 });
 
-// ── Km-tal (appversion 2026-11-25m) ──
+// ── Km-tal (appversion 2026-11-25p) ──
 
-test('km-tal: linjen som punkter längs spåren, och plankorsningarnas km-tal per bandel', () => {
-  const back = ABC.slice().reverse();
-  const sims = [simulateRun('k1', ABC, { day: 1 }), simulateRun('k2', ABC, { day: 2 }), simulateRun('k3', back, { day: 3 })];
-  const runs = sims.map(s => s.run);
-  const L = AN.motionZones(runs, AN.motionTracks(runs, sims.map(s => s.track))).lines[0];
-  within(L.trace.length, 235, 241, 'en punkt var 25:e meter');
-  assert.ok(L.trace.every((p, k) => k === 0 || (p.km > L.trace[k - 1].km && p.lat > L.trace[k - 1].lat)), 'km och läge i ordning');
-  within(L.trace[120].lat, 58 + 2990 / M_PER_DEG_LAT, 58 + 3035 / M_PER_DEG_LAT, 'läget vid 3 km');
-
-  const at = (x, east) => ({ lat: 58 + x / M_PER_DEG_LAT, lon: 13 + (east || 0) / 58700 });
-  const crossings = [
-    // Bandel 641: km-talet minskar norrut, 250+000 vid A
-    ...[200, 700, 1200, 2200, 2800].map(x => Object.assign(at(x, 6), { bandel: 641, m: 250000 - x })),
-    Object.assign(at(1700, -5), { bandel: 641, m: 250000 - 1700 + 2000 }),   // fel post: 2 km fel
-    // Bandel 631: km-talet ökar norrut från 3,4 km
-    ...[3400, 4300, 5100, 5800].map(x => Object.assign(at(x, -8), { bandel: 631, m: 10000 + (x - 3200) * 1.01 })),
-    Object.assign(at(1500, 200), { bandel: 641, m: 1 }),                   // annan linje 200 m bort
-    Object.assign(at(2500, 3), { bandel: 999, m: 77000 }), Object.assign(at(2600, 3), { bandel: 999, m: 77100 }) // för få
-  ];
-  const ax = AN.kmTalAxis(L, crossings);
-  assert.deepEqual(ax.segs.map(s => [s.bandel, s.sign, s.refs.length]), [[641, -1, 5], [631, 1, 4]], 'bandelarna');
-  const kt = km => AN.kmTalAt(ax, km);
-  within(kt(1.0).m, 248990, 249010, 'mellan korsningarna');
-  assert.equal(kt(1.0).bandel, 641);
-  within(kt(0).m, 249990, 250010, 'vid A: räknat vidare längs spåret');
-  within(kt(3.0).m, 246990, 247010, 'vid B: närmaste bandelen');
-  assert.equal(kt(3.0).outside, 200);
-  assert.equal(kt(3.2).bandel, 631, 'närmare bandel 631');
-  within(kt(6.0).m, 12820, 12835, 'vid C');
-  assert.equal(kt(9.5), null, 'längre än 3 km från korsningarna');
-  assert.equal(AN.kmTalAxis(L, crossings.filter(c => c.bandel === 999)), null, 'för få korsningar');
-  assert.equal(AN.kmTalAxis(L, []), null);
-  assert.equal(AN.formatKmTal(247000), '247+000');
-  assert.equal(AN.formatKmTal(12805.4), '12+805');
+test('km-tal: linjebokens km-tal vid stationerna och däremellan längs linjen', () => {
+  // Linjen som motionZones ger den: stationerna med linjens km (från GPS-spåren)
+  const line = { stations: [
+    { name: 'Vara', km: 21.38 }, { name: 'Håkantorp', km: 27.07 }, { name: 'Stora Levene', km: 29.72 },
+    { name: 'Framnäs city', km: 53.92 }, { name: 'Lidköping', km: 55.03 }, { name: 'Filsbäck', km: 60.01 },
+    { name: 'Källby', km: 64.03 }, { name: 'Råbäck', km: 76.39 }, { name: 'Hällekis', km: 80.48 }, { name: 'Gårdsjö', km: 147.8 }
+  ] };
+  const ax = AN.kmTalAxis(line);
+  assert.equal(ax.segs.length, 1);
+  assert.equal(ax.segs[0].name, 'Håkantorp – Gårdsjö');
+  assert.equal(ax.segs[0].sign, -1, 'km-talet minskar mot Gårdsjö');
+  assert.deepEqual(ax.segs[0].refs.map(r => r.name), ['Håkantorp', 'Stora Levene', 'Framnäs city', 'Lidköping', 'Filsbäck', 'Källby', 'Råbäck', 'Hällekis', 'Gårdsjö']);
+  // Vid stationerna: linjeboken (André: Hällekis 67+510, Råbäck 71+620, Källby 83+974)
+  assert.equal(AN.kmTalAt(ax, 80.48).m, 67510);
+  assert.equal(AN.kmTalAt(ax, 76.39).m, 71620);
+  assert.equal(AN.kmTalAt(ax, 64.03).m, 83974);
+  assert.deepEqual(AN.kmTalStation(ax, 'Källby'), { section: 'Håkantorp – Gårdsjö', m: 83974 });
+  assert.equal(AN.kmTalStation(ax, 'Vara'), null, 'Vara ligger inte på sträckan');
+  // Däremellan: längs linjen. Halvvägs Källby–Råbäck
+  const mid = AN.kmTalAt(ax, (64.03 + 76.39) / 2).m;
+  assert.equal(mid, Math.round((83974 + 71620) / 2));
+  // Utanför sträckan gäller en annan bana: inget km-tal
+  assert.equal(AN.kmTalAt(ax, 25), null, 'mellan Vara och Håkantorp');
+  assert.equal(AN.kmTalAt(ax, 150), null, 'efter Gårdsjö');
+  assert.equal(AN.kmTalAt(ax, 27.07).m, 121021, 'Håkantorp');
+  // Utan stationer på sträckan
+  assert.equal(AN.kmTalAxis({ stations: [{ name: 'Vara', km: 0 }, { name: 'Vedum', km: 10 }] }), null);
+  // Station i fel ordning tas inte med
+  const odd = AN.kmTalAxis({ stations: [{ name: 'Lidköping', km: 0 }, { name: 'Källby', km: 5 }, { name: 'Filsbäck', km: 6 }] });
+  assert.deepEqual(odd.segs[0].refs.map(r => r.name), ['Lidköping', 'Källby']);
+  assert.equal(AN.formatKmTal(83974), '83+974');
+  assert.equal(AN.formatKmTal(83974, 10), '83+970');
   assert.equal(AN.formatKmTal(950), '0+950');
   assert.equal(AN.formatKmTal(null), '');
-  assert.equal(AN.formatKmTal(268996, 10), '269+000', 'avrundat till 10 m');
 });
 
 // ── Tågorderns tider (appversion 2026-11-25f) ──

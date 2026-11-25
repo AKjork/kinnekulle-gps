@@ -39,12 +39,11 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  // Filter: { op: 'EQ'|'NE'|'GT'|'GTE'|'LT'|'LTE'|'LIKE'|'IN'|'EXISTS'|'WITHIN', name, value, shape? } eller { op: 'AND'|'OR', items: [...] }
+  // Filter: { op: 'EQ'|'NE'|'GT'|'GTE'|'LT'|'LTE'|'LIKE'|'IN'|'EXISTS', name, value } eller { op: 'AND'|'OR', items: [...] }
   function filterXml(f) {
     if (!f) return '';
     if (f.op === 'AND' || f.op === 'OR') return `<${f.op}>${(f.items || []).map(filterXml).join('')}</${f.op}>`;
-    const shape = f.shape ? ` shape="${xmlEscape(f.shape)}"` : '';
-    return `<${f.op} name="${xmlEscape(f.name)}"${shape} value="${xmlEscape(f.value)}" />`;
+    return `<${f.op} name="${xmlEscape(f.name)}" value="${xmlEscape(f.value)}" />`;
   }
 
   function buildQuery(q) {
@@ -398,52 +397,6 @@
     return m ? { lon: Number(m[1]), lat: Number(m[2]) } : null;
   }
 
-  // ── Km-tal: plankorsningarna (RailCrossing) har banans km-tal och bandel ──
-
-  const CROSSING_QUERY = { objecttype: 'RailCrossing', schemaversion: '1.5' };
-  const CROSSING_FIELDS = ['Kilometer', 'Meter', 'TrackPortion', 'Geometry.WGS84', 'Deleted'];
-  const CROSSING_TIMEOUT_MS = 30000; // utan rektangel kommer hela landet (ca 1 MB)
-
-  // [{ lat, lon, bandel, m }], m = km-talet i meter (Kilometer · 1000 + Meter). Raderade och ofullständiga tas inte med.
-  function parseCrossings(list) {
-    const out = [];
-    for (const c of list || []) {
-      if (!c || c.Deleted === true) continue;
-      const p = wgs84(c.Geometry && c.Geometry.WGS84);
-      const km = Number(c.Kilometer);
-      const meter = c.Meter == null ? 0 : Number(c.Meter);
-      const bandel = c.TrackPortion == null || c.TrackPortion === '' ? null : Number(c.TrackPortion);
-      if (!p || !isFinite(p.lat) || !isFinite(p.lon) || c.Kilometer == null || !isFinite(km) || !isFinite(meter) || bandel == null || !isFinite(bandel)) continue;
-      out.push({ lat: p.lat, lon: p.lon, bandel, m: Math.round(km * 1000 + meter) });
-    }
-    return out;
-  }
-
-  function inBox(p, box) {
-    return !box || (p.lat >= box.minLat && p.lat <= box.maxLat && p.lon >= box.minLon && p.lon <= box.maxLon);
-  }
-
-  /* Plankorsningarna inom rektangeln box { minLat, minLon, maxLat, maxLon }. Först med ett geometriskt filter
-     (WITHIN box i WGS84). Godtar Trafikverket inte filtret, eller blir svaret tomt, hämtas hela landet och
-     rektangeln väljs här. Nätfel och tidsgräns ger undantag (TrvError). opts: { fetch, key, timeoutMs }.
-     Ger { crossings, filtered } där filtered = Trafikverket godtog filtret. */
-  async function fetchRailCrossings(box, opts) {
-    const o = opts || {};
-    const base = Object.assign({ include: CROSSING_FIELDS }, CROSSING_QUERY);
-    if (box) {
-      const value = `${box.minLon} ${box.minLat}, ${box.maxLon} ${box.maxLat}`;
-      try {
-        const list = await query(Object.assign({}, base, { filter: { op: 'WITHIN', name: 'Geometry.WGS84', shape: 'box', value } }), o);
-        const crossings = parseCrossings(list).filter(p => inBox(p, box));
-        if (crossings.length) return { crossings, filtered: true };
-      } catch (e) {
-        if (!(e instanceof TrvError) || (e.kind !== 'api' && e.kind !== 'http')) throw e;
-      }
-    }
-    const list = await query(base, Object.assign({}, o, { timeoutMs: o.timeoutMs || CROSSING_TIMEOUT_MS }));
-    return { crossings: parseCrossings(list).filter(p => inBox(p, box)), filtered: false };
-  }
-
   /* Kontrollen i api-koll.html. opts: { fetch, key, trainNumber, date (ÅÅÅÅ-MM-DD), logs, nowMs, onProgress(text),
      recentRuns, sleep, pauseMs }. Varje del körs för sig, så att ett fel i en del inte stoppar de andra. */
   async function runCheck(opts) {
@@ -610,7 +563,6 @@
     xmlEscape, filterXml, buildQuery, buildRequest, request, query,
     toMs, swedishLocal, swedishDay, runWindow, runQuery, fetchRunAnnouncements,
     matchAnnouncement, trafikverketTimes, applyTrafikverket, needsTrafikverket, wholeMinute, signaturesIn,
-    compareRun, stats, summarizeComparison, fieldSummary, pickRuns, wgs84, runCheck,
-    CROSSING_QUERY, CROSSING_FIELDS, parseCrossings, fetchRailCrossings
+    compareRun, stats, summarizeComparison, fieldSummary, pickRuns, wgs84, runCheck
   };
 });

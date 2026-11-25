@@ -1533,7 +1533,6 @@
     const axis = lineAxis(entries, minRuns);
     const groups = new Map();
     const lineBins = new Map();
-    const traceBins = new Map(); // linje → längdsteg (TRACE_STEP_M) → läget i spåren, för km-talet
     for (const e of entries) {
       const info = runInfo(e.run);
       const stops = e.run.stops;
@@ -1571,21 +1570,15 @@
         if (!segs.length) continue;
         const L = axis.lines[line];
         const bins = { 1: new Map(), '-1': new Map() };
-        if (!traceBins.has(line)) traceBins.set(line, new Map());
-        const trace = traceBins.get(line);
         let j = 0;
         for (const p of pts) {
-          if (p.d < segs[0][0].d - ANCHOR_MAX_M || p.d > segs[segs.length - 1][1].d + ANCHOR_MAX_M) continue;
+          if (!p.action || p.d < segs[0][0].d - ANCHOR_MAX_M || p.d > segs[segs.length - 1][1].d + ANCHOR_MAX_M) continue;
           while (j < segs.length - 1 && p.d > segs[j][1].d) j++;
           const [a, b] = segs[j];
           const dir = b.km > a.km ? 1 : -1;
           const km = a.km + (p.d - a.d) / (b.d - a.d) * (b.km - a.km);
           if (km < 0 || km * 1000 > L.length) continue;
-          const tk = Math.floor(km * 1000 / TRACE_STEP_M);
-          let tb = trace.get(tk);
-          if (!tb) { tb = { lat: [], lon: [] }; trace.set(tk, tb); }
-          if (tb.lat.length < TRACE_MAX_RUNS) { tb.lat.push(p.lat); tb.lon.push(p.lon); }
-          if (p.action) vote(bins[dir], Math.floor(km * 1000 / LINE_BIN_M), p);
+          vote(bins[dir], Math.floor(km * 1000 / LINE_BIN_M), p);
         }
         for (const dir of [1, -1]) {
           const key = line + '|' + dir;
@@ -1670,137 +1663,75 @@
         from: dir > 0 ? L.stations[0].name : L.stations[L.stations.length - 1].name,
         toward: dir > 0 ? L.stations[L.stations.length - 1].name : L.stations[0].name,
         bins: finishBins(lineBins.get(L.index + '|' + dir) || new Map())
-      })),
-      // Linjen som punkter var TRACE_STEP_M: km och medianläget i spåren (km-talet räknas mot den)
-      trace: [...(traceBins.get(L.index) || new Map())].sort((a, b) => a[0] - b[0])
-        .map(([k, tb]) => ({ km: (k + 0.5) * TRACE_STEP_M / 1000, lat: stats(tb.lat).median, lon: stats(tb.lon).median }))
+      }))
     }));
     return { runCount: entries.length, lines, stations };
   }
 
-  // ── Km-tal: Trafikverkets längdmätning längs linjen, från plankorsningarna (RailCrossing) ──
+  // ── Km-tal: Trafikverkets längdmätning (linjeboken) ──
 
-  /* Plankorsningarna har km-tal och bandel. De som ligger på linjen (högst KMTAL_MAX_OFFSET_M från spåren) blir
-     referenspunkter med linjens km. Per bandel behålls den längsta kedjan där km-talet följer spåret (ökar eller
-     minskar lika mycket som sträckan längs spåren, ±15 %, minst ±60 m), så att felaktiga poster och korsningar på
-     andra linjer inte kommer med. Mellan referenspunkterna interpoleras km-talet; utanför dem räknas det vidare
-     längs spåret högst KMTAL_EXTRAPOLATE_M. Mellan två bandelar gäller den närmaste. */
-  const TRACE_STEP_M = 25;
-  const TRACE_MAX_RUNS = 15;
-  const KMTAL_MAX_OFFSET_M = 40;
-  const KMTAL_MIN_REFS = 3;
-  const KMTAL_EXTRAPOLATE_M = 3000;
-  const KMTAL_TOL = 0.15;
-  const KMTAL_TOL_M = 60;
+  /* Stationernas km-tal enligt Trafikverkets Underlag till linjebok, TC Göteborg, version 2026-09-01,
+     sid D813–D822 (Gårdsjö – Håkantorp). Hasslerör: km-talet gäller växeln. André 2026-11-25: Gårdsjö –
+     Håkantorp räcker. Mellan stationerna räknas km-talet längs GPS-spåren (linjens km), så där är det ungefärligt. */
+  const KMTAL_SECTIONS = [{
+    name: 'Håkantorp – Gårdsjö',
+    source: 'Trafikverket, Underlag till linjebok TC Göteborg 2026-09-01, sid D813–D822',
+    stations: [
+      ['Gårdsjö', 0], ['Hova', 8730], ['Torved', 16845], ['Lyrestad', 21024], ['Hasslerör', 30640], ['Mariestad', 39045],
+      ['Lugnås', 50252], ['Äskekärr', 56250], ['Österäng', 59400], ['Forshem', 63774], ['Hällekis', 67510], ['Råbäck', 71620],
+      ['Trolmen', 74087], ['Blomberg', 80399], ['Källby', 83974], ['Filsbäck', 88000], ['Lidköping', 93111],
+      ['Framnäs city', 94160], ['Lovene', 103790], ['Järpås', 111937], ['Stora Levene', 118435], ['Håkantorp', 121021]
+    ]
+  }];
 
-  // Närmaste läge på linjen: { km, offset (m från spåret) } eller null
-  function projectOnTrace(trace, grid, cell, p) {
-    const i0 = Math.floor(p.lat / cell), j0 = Math.floor(p.lon / cell);
-    let best = -1, bestD = Infinity;
-    for (let di = -1; di <= 1; di++) {
-      for (let dj = -1; dj <= 1; dj++) {
-        for (const k of grid.get((i0 + di) + ':' + (j0 + dj)) || []) {
-          const d = distanceM(trace[k], p);
-          if (d < bestD) { bestD = d; best = k; }
-        }
-      }
-    }
-    if (best < 0) return null;
-    const cos = Math.cos(p.lat * Math.PI / 180);
-    const xy = q => ({ x: (q.lon - p.lon) * 111320 * cos, y: (q.lat - p.lat) * 110574 });
-    let km = trace[best].km, off = bestD;
-    for (const [i, j] of [[best - 1, best], [best, best + 1]]) {
-      if (i < 0 || j >= trace.length || trace[j].km - trace[i].km > 2 * TRACE_STEP_M / 1000 + 1e-9) continue;
-      const A = xy(trace[i]), B = xy(trace[j]);
-      const len2 = (B.x - A.x) ** 2 + (B.y - A.y) ** 2;
-      if (len2 < 1) continue;
-      const f = Math.max(0, Math.min(1, -(A.x * (B.x - A.x) + A.y * (B.y - A.y)) / len2));
-      const o = Math.hypot(A.x + f * (B.x - A.x), A.y + f * (B.y - A.y));
-      if (o < off) { off = o; km = trace[i].km + f * (trace[j].km - trace[i].km); }
-    }
-    return { km, offset: off };
-  }
-
-  // Längsta kedjan (i linjens km-ordning) där km-talet följer spåret i riktningen sign
-  function kmTalChain(list, sign) {
-    const ok = (a, b) => {
-      const own = (b.km - a.km) * 1000;
-      const tal = sign * (b.m - a.m);
-      return own >= 0 && tal >= -10 && Math.abs(tal - own) <= Math.max(KMTAL_TOL_M, KMTAL_TOL * own);
-    };
-    const len = list.map(() => 1);
-    const prev = list.map(() => -1);
-    for (let j = 0; j < list.length; j++) {
-      for (let i = 0; i < j; i++) if (len[i] + 1 > len[j] && ok(list[i], list[j])) { len[j] = len[i] + 1; prev[j] = i; }
-    }
-    let k = len.indexOf(Math.max(...len));
-    const chain = [];
-    for (; k >= 0; k = prev[k]) chain.unshift(list[k]);
-    return chain;
-  }
-
-  /* Km-talet längs en linje (line från motionZones, med trace). crossings: [{ lat, lon, bandel, m }].
-     Ger { refs, segs: [{ bandel, sign, refs, lo, hi }] } eller null när inga bandelar har minst KMTAL_MIN_REFS. */
-  function kmTalAxis(line, crossings) {
-    const trace = line && line.trace;
-    if (!trace || trace.length < 2 || !crossings || !crossings.length) return null;
-    const cell = 0.005; // ca 550 m i nord-sydlig och 290 m i öst-västlig led
-    const grid = new Map();
-    trace.forEach((q, k) => {
-      const key = Math.floor(q.lat / cell) + ':' + Math.floor(q.lon / cell);
-      if (!grid.has(key)) grid.set(key, []);
-      grid.get(key).push(k);
-    });
-    const refs = [];
-    for (const c of crossings) {
-      if (!c || c.bandel == null || !isFinite(c.m)) continue;
-      const pr = projectOnTrace(trace, grid, cell, c);
-      if (!pr || pr.offset > KMTAL_MAX_OFFSET_M) continue;
-      refs.push({ km: pr.km, offset: pr.offset, bandel: c.bandel, m: c.m, lat: c.lat, lon: c.lon });
-    }
-    refs.sort((a, b) => a.km - b.km);
-    const byBandel = new Map();
-    for (const r of refs) {
-      if (!byBandel.has(r.bandel)) byBandel.set(r.bandel, []);
-      byBandel.get(r.bandel).push(r);
-    }
+  /* Km-talet längs en linje från motionZones (stationer med linjens km). Stationerna i sections är fasta punkter;
+     stationer som inte följer linjebokens ordning tas inte med. Ger { segs: [{ name, source, sign, refs, lo, hi }] }
+     eller null när ingen sträcka har minst två av linjens stationer. */
+  function kmTalAxis(line, sections) {
+    if (!line || !Array.isArray(line.stations)) return null;
+    const at = new Map(line.stations.map(s => [String(s.name).toLowerCase(), s]));
     const segs = [];
-    for (const [bandel, list] of byBandel) {
-      const up = kmTalChain(list, 1);
-      const down = kmTalChain(list, -1);
-      const chain = up.length >= down.length ? up : down;
-      if (chain.length < KMTAL_MIN_REFS) continue;
-      segs.push({ bandel, sign: up.length >= down.length ? 1 : -1, refs: chain, lo: chain[0].km, hi: chain[chain.length - 1].km });
+    for (const sec of sections || KMTAL_SECTIONS) {
+      // name = linjebokens namn, station = linjens (stavningen kan skilja i stor och liten bokstav)
+      const all = sec.stations.map(([name, m]) => { const st = at.get(String(name).toLowerCase()); return { name, m, station: st && st.name, km: st && st.km }; })
+        .filter(r => r.km != null && isFinite(r.km)).sort((a, b) => a.km - b.km);
+      if (all.length < 2) continue;
+      const sign = Math.sign(all[all.length - 1].m - all[0].m);
+      const refs = [];
+      for (const r of all) if (!refs.length || (r.km > refs[refs.length - 1].km && sign * (r.m - refs[refs.length - 1].m) > 0)) refs.push(r);
+      if (!sign || refs.length < 2) continue;
+      segs.push({ name: sec.name, source: sec.source || '', sign, refs, lo: refs[0].km, hi: refs[refs.length - 1].km });
     }
-    if (!segs.length) return null;
-    segs.sort((a, b) => a.lo - b.lo);
-    return { refs, segs };
+    return segs.length ? { segs } : null;
   }
 
-  /* Km-talet vid linjens km: { bandel, m, outside } (outside = meter utanför referenspunkterna) eller null.
-     Täcker flera bandelar samma ställe gäller den med flest referenspunkter. */
+  // Km-talet vid linjens km: { section, m } eller null utanför sträckorna (där gäller en annan bana och ett annat km-tal)
   function kmTalAt(axis, km) {
     if (!axis || km == null || !isFinite(km)) return null;
-    let seg = null, best = Infinity;
-    for (const s of axis.segs) {
-      const out = km < s.lo ? s.lo - km : km > s.hi ? km - s.hi : 0;
-      if (out < best - 1e-9 || (Math.abs(out - best) <= 1e-9 && seg && s.refs.length > seg.refs.length)) { best = out; seg = s; }
-    }
-    if (!seg || best * 1000 > KMTAL_EXTRAPOLATE_M) return null;
+    const eps = 1e-6;
+    const segs = axis.segs.filter(s => km >= s.lo - eps && km <= s.hi + eps);
+    const seg = segs.find(s => km > s.lo + eps && km < s.hi - eps) || segs[0];
+    if (!seg) return null;
     const r = seg.refs;
-    let m;
-    if (km <= r[0].km) m = r[0].m + seg.sign * (km - r[0].km) * 1000;
-    else if (km >= r[r.length - 1].km) m = r[r.length - 1].m + seg.sign * (km - r[r.length - 1].km) * 1000;
-    else {
-      let k = 0;
-      while (k + 1 < r.length && r[k + 1].km < km) k++;
-      const a = r[k], b = r[k + 1];
-      m = b.km - a.km < 1e-9 ? a.m : a.m + (km - a.km) / (b.km - a.km) * (b.m - a.m);
-    }
-    return { bandel: seg.bandel, m: Math.round(m), outside: Math.round(best * 1000) };
+    let k = 0;
+    while (k + 2 < r.length && r[k + 1].km < km) k++;
+    const a = r[k], b = r[k + 1];
+    const f = Math.max(0, Math.min(1, (km - a.km) / (b.km - a.km)));
+    return { section: seg.name, m: Math.round(a.m + f * (b.m - a.m)) };
   }
 
-  // 23 450 m → "23+450" (som på kilometertavlorna och i linjeboken). step: avrunda till så många meter.
+  // Stationens km-tal enligt linjeboken, eller null
+  function kmTalStation(axis, name) {
+    if (!axis) return null;
+    const key = String(name).toLowerCase();
+    for (const s of axis.segs) {
+      const r = s.refs.find(x => x.name.toLowerCase() === key);
+      if (r) return { section: s.name, m: r.m };
+    }
+    return null;
+  }
+
+  // 23 450 m → "23+450" (som i linjeboken och på kilometertavlorna). step: avrunda till så många meter.
   function formatKmTal(m, step) {
     if (m == null || !isFinite(m)) return '';
     const st = step > 0 ? step : 1;
@@ -1936,7 +1867,7 @@
     trackPoints, analyzeTrack, analyzeTracks, unplannedStops, distanceM,
     MOTION_ACCEL, ZONE_BIN_M, LINE_BIN_M, ZONE_WINDOW_M, ZONE_SHARE, ZONE_MIN_RUNS,
     motionPoints, motionTracks, stationAnchor, motionZones,
-    TRACE_STEP_M, KMTAL_MAX_OFFSET_M, KMTAL_EXTRAPOLATE_M, kmTalAxis, kmTalAt, formatKmTal,
+    KMTAL_SECTIONS, kmTalAxis, kmTalAt, kmTalStation, formatKmTal,
     comparePeriods, defaultPeriods,
     stats, directedRuns, sliceRuns,
     formatMinutes, csvDocument

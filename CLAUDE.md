@@ -926,6 +926,8 @@ André 2026-11-25 kom in i appen via inloggningslänken men hittade inte analysv
 
 ## Uppdatering (2026-11-25m): Trafikverkets km-tal i Broms och gas (Analys.html)
 
+> **Ersatt (2026-11-25o):** plankorsningarna (RailCrossing) och linjens eget km används inte längre. Km-talet kommer från linjeboken, se 2026-11-25p.
+
 André 2026-11-25: gör om kilometrarna till järnvägens egna km-tal, han förstod inte kolumnen Km. Appversion `2026-11-25m`.
 
 - Förut var **Km** RailTimers eget mått: sträckan längs GPS-spåren från linjens sydligaste ände (Herrljunga C = 0, Vara 21,4, Hallsberg 200,3).
@@ -1002,3 +1004,60 @@ André 2026-11-25: "Absolut allt som gör det mer smidigt och automatiserat." Ap
   - *synk: körningarna i GitHub hämtas till telefonen …*: fyra körningar i fyra filer, kompakt, inga nya filer andra gången, inte under resa, fordonstyp, Uppladdning, Statistik, kvar efter omstart och förarens val av fordon.
   - *startformulär: tågnumret fyller i rutten …*.
 - Inte provat mot riktiga GitHub från telefonen. Kontrollera i ⋮ → Uppladdning att *Hämtat från GitHub* visar ungefär lika många körningar som analysverktyget.
+
+## Uppdatering (2026-11-25p): km-tal från linjeboken och enkel lista för halkbekämpningen (Analys.html)
+
+André 2026-11-25:
+- "Så enkelt underlag som möjligt till halkbekämpningen men ska kunna bli mer avancerat om man vill nörda ned sig."
+- "Vi kan inte utgå från annat än Trafikverkets verkliga km." Exempel: Hällekis 67+510, Råbäck 71+620, Källby 83+974.
+- "Vi kan följa GPS-spåret och åtminstone presentera ungefärliga kilometrar. Det räcker med Gårdsjö–Håkantorp och omvänt."
+
+Appversion `2026-11-25p`.
+
+### Km-tal
+- **Källa:** Trafikverkets *Underlag till linjebok*, TC Göteborg, version 2026-09-01, sid D813–D822 (Gårdsjö – Håkantorp). Dokumentet är publikt på bransch.trafikverket.se. Stationernas km-tal finns i `AN.KMTAL_SECTIONS` och stämmer med Andrés exempel.
+  - Exempel: Gårdsjö 0+000, Hova 8+730, Mariestad 39+045, Hällekis 67+510, Källby 83+974, Lidköping 93+111 och Håkantorp 121+021.
+  - Hasslerörs km-tal gäller växeln.
+- `kmTalAxis(line)`: stationerna på linjen med linjebokens km-tal blir fasta punkter. Stationer som inte följer linjebokens ordning tas inte med.
+- `kmTalAt(axis, km)` interpolerar längs linjens km, som räknas ur GPS-spåren.
+  - Utanför Håkantorp – Gårdsjö ges inget km-tal, eftersom där gäller en annan bana med andra km.
+  - Sträckorna mellan stationerna i spåren stämmer med linjeboken på i regel några tiotal meter, högst 151 m (Mariestad–Hasslerör, där linjebokens km-tal gäller växeln).
+- **Visas:**
+  - vid stationerna exakt (`kmTalStation`), annars avrundat till 10 m;
+  - inget eget km någonstans, utan "–" där km-tal saknas.
+- **Borttaget:** `fetchRailCrossings`, `parseCrossings`, `WITHIN` i `filterXml` (`railtimer-trv.js`), `trace` i `motionZones`, `railtimer_kmtal_v1` och knappen Försök igen.
+- Övriga banor:
+  - Herrljunga C – Håkantorp: Vara 69+179, Vedum 79+836 och Herrljunga C 90+565, i linjeboken D684–D687.
+  - Gårdsjö – Hallsberg: Gårdsjö 252+267, Laxå 229+398 och Hallsberg pbg 199+419.
+  - De är inte inlagda. Mellan Gårdsjö och Laxå skiljer spåren 352 m från linjeboken (1,5 %).
+
+### Enkel lista (förvald) och Detaljerad
+- Knapparna **Enkel lista** och **Detaljerad** överst i fliken. Valet sparas (`railtimer_motion_mode_v1`, inte i testläge).
+- **Enkel lista** (`#motionSimple`). André 2026-11-25: "vill kunna se åt båda håll, broms och gas kan se väldigt annorlunda ut."
+  - En tabell per riktning, vald riktning först, till exempel Håkantorp → Gårdsjö och Gårdsjö → Håkantorp.
+  - En rad per station med uppehåll i den riktningen.
+  - **Bromsar in** och **Gasar ut** i km-tal i färdriktningen, med längd.
+  - Delen utanför Håkantorp – Gårdsjö räknas inte. Cellen säger då "och utanför …", eller "–, utan km-tal".
+  - Klick på en rad öppnar stationen i Detaljerad.
+- *Exportera till Excel* i enkla läget ger `behandla-ralsen_<datum>.csv`: en rad per station och riktning, med km-tal, längd, anmärkning och koordinater. *Skriv ut / PDF* skriver bara listan.
+- **Detaljerad** är den tidigare vyn.
+  - Linjebandet visar båda riktningarna ovanför varandra: överst vald riktning →, under den andra ←.
+  - Tabellen heter nu *Inbromsning och gas per station*.
+- **Förvald sträcka** är Håkantorp → Gårdsjö när linjen har den (`motionRouteChosen`), tills Från/Till, ⇄, Hela linjen eller Station 1 och 2 väljer en annan.
+
+### Från stoppet och rimlighet
+- André 2026-11-25 om Lovene: "tror inte vi bromsar så sent? Finns det någon kontroll på rimligheten?"
+  - Vid Lovene stannar tågen 132 m efter stationens koordinat söderifrån och 99 m före den norrifrån.
+  - Förut stod det därför "Bromsar 350 m före – 100 m efter". Räknat från stoppet är det 500 respektive 550 m, med 0,50 och 0,44 m/s².
+- **Inbromsning och gas räknas från stoppet**: medianen för var tågen stannar (`g.stopAt`), avrundat till 50 m. Det gäller texterna i Detaljerad (`brakeText`/`gasText`: "från 500 m före stoppet", "till 650 m efter stoppet") och rutornas längd. Fartprofilen och stapeln räknar som förut från stationens koordinat.
+- **Rimlighet** (`brakeCheck`): medelretardationen från farten där inbromsningen börjar till stopp, v²/2s, visas i rutan ("ca 0,44 m/s²").
+  - Utanför 0,15–1,0 m/s² står *kontrollera* i stationsraden och i rutan.
+  - Inbromsning i steg flaggas inte för låga värden, eftersom tåget rullar mellan stegen.
+  - Spåren 2026-11: 0,15–0,55 m/s², de flesta 0,35–0,50. Låga värden finns där tågen bromsar i steg (Mariestad, Lyrestad, Forshem, Lidköping norrifrån).
+
+### Tester
+- `node --test "tests/*.test.js"` (157), nytt: *km-tal: linjebokens km-tal vid stationerna och däremellan längs linjen*.
+- `node tests/run-browser-tests.mjs`, nya:
+  - *analys: Broms och gas – enkla listan med linjebokens km-tal, och Detaljerad*;
+  - *analys: Broms och gas – förvalt Håkantorp – Gårdsjö, och inget km-tal utanför*.
+- Bilder: `--shot=broms-och-gas-enkel` och `--shot=broms-och-gas-enkel-mobil`. Bilderna `--shot=broms-och-gas…` visar Detaljerad.
