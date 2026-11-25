@@ -258,6 +258,17 @@ test('avvikelser för vårt tåg längre fram visas', () => {
   assert.equal(m.end.track, '5');
 });
 
+test('avvikelser: preliminär tid och biljettinformation är inga avvikelser för tåget', () => {
+  // Riktiga svar 2026-11-25: "Prel. tid" i Lidköping och Framnäs city för 13355, "Movingo gäller ej." för 23349
+  const dev = { Vr: 'Prel. tid', Vdm: 'Movingo gäller ej.', Hr: 'Spårändrat' };
+  const rows = OUR().map(a => dev[a.LocationSignature] ? Object.assign({}, a, { Deviation: [{ Code: 'X', Description: dev[a.LocationSignature] }] }) : a);
+  const trains = I.groupTrains(rows);
+  const our = I.nearestRun(trains, '23349', at('11:00'));
+  const m = I.compute({ line: I.buildLine(our, 'Lkp', 'Hr'), trains, ourKey: our.key, known: new Map(), now: at('10:55'), routeNames: ROUTE });
+  assert.deepEqual(m.deviations.map(d => [d.sig, d.text]), [['Hr', 'Spårändrat']]);
+  assert.equal(m.attention, 1);
+});
+
 test('störningar (OperativeEvent): bara de som berör resten av vår linje och pågår', () => {
   // Formen som kontrollsidan läser: signaturer på valfri nivå, text i TrafficImpact.PublicMessage
   const messages = [

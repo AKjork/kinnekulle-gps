@@ -21,6 +21,8 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 | `railtimer-avbrott.js`, `railtimer-github.js`, `railtimer-karta.js`, `railtimer-analys.js` | Avbrott, uppladdning, kartans linje längs spåret, analysens beräkningar |
 | `railtimer-trv.js` | Trafikverkets API: frågor, rapporterade tider för en körning, jämförelse, kontrollen |
 | `railtimer-info.js` | Infofliken: möten, enkel- eller dubbelspår, prognos och anslutningar under resan |
+| `railtimer-push.js` | Notiser i bakgrunden, appens del: prenumeration, VAPID-nyckel, begäran till bevakningen och när den startas och stoppas |
+| `bevakning/bevaka.js`, `bevakning/webpush.js` | Bevakningen i bakgrunden (körs i GitHub Actions i railtimer-data) och webbpush utan beroenden |
 | `api-koll.html` | Trafikverket-data: visar vad API:t svarar och appens tider mot Trafikverkets |
 | `kinnekulle-gps.webmanifest` | PWA manifest |
 
@@ -1312,3 +1314,36 @@ André 2026-11-25 under resan: "Jag hör inte att något läses upp alls?"
   - Tryck på Start läses upp, men en start som inte blir av läses inte upp.
 - Bilder: `--shot=info`, `--shot=resa-info` och `--shot=resa-liggande`.
 
+## Uppdatering (2026-11-25v): notiser i bakgrunden
+
+André 2026-11-25: han får inte installera appar på jobbmobilen (Android), bara utvalda. Han saknar att kunna stänga appen och ändå få en notis, till exempel vid risk för missad anslutning. Privat har han iPhone. Appversion `2026-11-25v`.
+
+### Hur det fungerar
+- En webbsida kan inte räkna när den är stängd: telefonen fryser den, och GPS:en stannar. Bevakningen körs därför på en server: **GitHub Actions i `railtimer-data`**, som appen redan har token till. Inget nytt konto och inga hemligheter att lägga in.
+- **Telefonen** prenumererar på webbpush med en egen VAPID-nyckel (ECDSA P-256, skapas med WebCrypto och sparas i `railtimer_push_v1`). Android: Chrome direkt. iPhone: bara från hemskärmen (iOS 16.4+); hemskärmsappen har egen lagring, så inloggningslänken klistras in där.
+- **När appen lämnas** under en resa med tågnummer (`visibilitychange` → hidden) skickar appen `repository_dispatch` `bevaka` till `railtimer-data` (`PUSH.dispatchRequest`), via service workern med nya försök (`RT_DISPATCH` i `sw.js`), eftersom sidan kan frysas direkt. Service workern lägger in den prenumeration som gäller just då (`freshSubscription`).
+  - Begäran (`PUSH.buildPayload`, högst 10 fält och 60 kB): telefonens id (`device`), resan (tåg, start- och slutsignatur, start, `announce`), prenumerationen och VAPID-nyckeln, appens egna tider (`known`), det appen redan meddelat (`notified`), stationernas namn, egna gångtider för resans sträckor och kända dubbelspår.
+- **Bevakningen** (`bevakning/bevaka.js`, workflow `.github/workflows/bevakning.yml` i `railtimer-data`, checkar ut `kinnekulle-gps` från `main`) gör samma hämtningar som infofliken varje minut och samma beräkning (`railtimer-info.js`: `compute`). Det som blivit värre (`INFO.alerts` + `INFO.newAlerts`, samma regler och texter som appens `notifyInfo`) skickas som webbpush (`bevakning/webpush.js`: RFC 8291 aes128gcm och VAPID ES256, utan beroenden).
+  - Våra tider: appens fram till att appen lämnades, sedan Trafikverkets rapporter. Vårt läge: Trafikverkets tågposition (TrainPosition), inte telefonens GPS.
+  - Första gången under resan en tyst bekräftelse (*Bevakar i bakgrunden: Herrljunga C 11:40 i tid*), om inte en riktig notis kommer direkt.
+  - Notisen: rubrik *Tåg 23349 → Herrljunga C*, upp till tre rader (*Anslutning 11:45 Borås C: missas*, *Möte Vara: 24360 är 6 min sent – vi väntar ca 6 min*), och prognosen sist. Klockslag i svensk tid (GitHubs datorer går i UTC).
+  - Slutar när Trafikverket rapporterat ankomsten till slutstationen, 3 h efter planerad ankomst, efter 350 min, när prenumerationen är borta (404/410), eller när tåget inte hittas (efter 3 försök, med en notis). Ingen kontakt med Trafikverket i 5 min: en notis, och bevakningen försöker igen.
+- **Appen tar över** när den visats i 3 min (`STOP_AFTER_VISIBLE_MS`): `bevaka-stopp`. En kort titt stoppar inget. Resan slut (`stopJourney`) eller **Kasta bort** stoppar också. Workflowets `concurrency` (`bevakning-<device>-resa`, `cancel-in-progress`) gör att en ny begäran från samma telefon avbryter den som körs. Läget i `PUSH.plan` (`railtimer_push_v1.watch`), så att det överlever omladdning och Återuppta.
+- **Inget meddelas två gånger:** notisen har nycklarna för det som meddelats. Service workern sparar dem per resa (cachen `railtimer-push`, `./push-state`, rensas inte vid ny version), och appen lägger in dem i `infoState.notified` när den syns igen (`readPushState`, `RT_PUSH`). Syns appen när en notis kommer är notisen tyst.
+- **Service workern** (`sw.js`): `push` visar notisen (nivå 2 ligger kvar tills den läses), `notificationclick` öppnar appen. `activate` tar bara bort appens egna gamla kopior.
+- ⋮ → **Notiser i bakgrunden**: Slå på (frågar om tillåtelse i tryckningen, prenumererar och beställer en testnotis), Skicka testnotis, Stäng av, senaste notis och senaste begäran till GitHub. Kräver uppladdningen. Infoflikens sista rad säger om notiserna är på.
+- **Kostnad:** körningarna räknas mot GitHubs gratisminuter för privata repon (2 000 min/månad), men bara medan appen är stängd under en resa. Körningarna i `railtimer-data` var 1 100–3 000 min/månad, så att bevaka hela resor alltid hade kunnat ta slut på minuterna.
+
+### Avvikelser
+- *Prel. tid* och *Movingo gäller ej.* är inga avvikelser för tåget (`NOT_DEVIATION` i `compute`): preliminär tid finns redan som beräknad tid, och biljettinformation rör resenärerna. Båda sågs i riktiga svar 2026-11-25 och gav meddelanden i onödan. De visas inte i Info, räknas inte och meddelas inte.
+
+### Provat
+- Krypteringen dekrypteras av referensbiblioteket `http_ece`, och `web-push`s kryptering dekrypteras av vår (lokalt, inte i repot). VAPID-signaturen kontrolleras.
+- **På GitHub mot Trafikverkets riktiga API** (prov 2026-11-25, tåg 13355 Lidköping → Herrljunga C, 6 min): linjen och prognosen (*Herrljunga C 18:12 +2 min*, 2 möten), en notis om möte vid start och en om knapp anslutning (*Anslutning 18:16 Stockholm C: knappt (3 min)*). Notiserna gick till en provadress, inte en telefon.
+- **Inte provat:** notis till en riktig telefon (FCM/Apple), och att `repository_dispatch` med Andrés token startar körningen (utvecklingsmiljöns token startar inga körningar; Andrés finkorniga token med Contents: write ska enligt GitHub räcka). Provas med *Skicka testnotis*.
+- Provgrenarna `actions-prov` (railtimer-data) och `bevakning-test` (kinnekulle-gps) kunde inte tas bort härifrån.
+
+### Tester
+- `node --test "tests/*.test.js"` (190): `tests/bevakning.test.js` (bevakningen med simulerat Trafikverket, webbpush, meddelandena), `tests/railtimer-push.test.js` (nyckel, stöd, begäran, nya försök, när bevakningen startar och stoppas) och `tests/sw-push.test.js` (notis, tyst när appen syns, tryck, begäran med nya försök, ny prenumeration, cachen kvar).
+- `node tests/run-browser-tests.mjs notiser` (3); alla webbläsartester: 116.
+- Bilder: `--shot=notiser` och `--shot=notiser-iphone`.

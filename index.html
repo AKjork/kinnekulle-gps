@@ -642,6 +642,7 @@
         <button id="btnStatistics">Statistik</button>
         <button id="btnAnalysis">Analysverktyg</button>
         <button id="btnUploadSettings">Uppladdning</button>
+        <button id="btnPushSettings">Notiser i bakgrunden</button>
         <button id="btnTrvCheck">Trafikverket-data</button>
         <button id="btnExportCSV">Exportera CSV (Excel)</button>
         <button id="btnExport">Exportera JSON</button>
@@ -853,6 +854,23 @@
     </div>
   </section>
 
+  <section id="pushSettings" style="display:none">
+    <h2>Notiser i bakgrunden</h2>
+    <p class="hint">Lämnar du appen under en resa med tågnummer fortsätter bevakningen hos GitHub. Du får en notis när något blir värre: anslutning som blir knapp eller missas, möte med väntan, avvikelser och störningar – samma som infofliken. Kommer du tillbaka till appen tar appen över efter 3 minuter.</p>
+    <p id="pushStatus" class="meta" role="status" aria-live="polite"></p>
+    <div class="settings-actions">
+      <button id="btnPushOn" class="primary">Slå på notiser</button>
+      <button id="btnPushTest" class="ghost">Skicka testnotis</button>
+    </div>
+    <p id="pushResult" class="meta" role="status" aria-live="polite"></p>
+    <p id="pushLast" class="meta"></p>
+    <p class="hint">Bygger på Trafikverkets rapporter och tågets position, inte telefonens GPS, så en notis kan komma någon minut senare än appens egen varning. Bevakningen körs i GitHub Actions i ditt repo railtimer-data och räknas mot GitHubs gratisminuter (2 000 minuter i månaden för privata repon), men bara medan appen är stängd under en resa.</p>
+    <div class="settings-actions">
+      <button id="btnPushOff" class="danger">Stäng av notiser</button>
+      <button id="btnClosePush" class="ghost">Stäng</button>
+    </div>
+  </section>
+
 </main>
 
 <footer>
@@ -864,11 +882,12 @@
 <script src="railtimer-karta.js"></script>
 <script src="railtimer-trv.js"></script>
 <script src="railtimer-info.js"></script>
+<script src="railtimer-push.js"></script>
 <script>
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25u'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25v'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -998,7 +1017,7 @@
     const linked=consumeLoginLink();
     updateLogCount();
     bindEvents();
-    if(!TEST_MODE) setupPWA();
+    if(!TEST_MODE){ setupPWA(); refreshPushSubscription(); }
     updateWakeButton();
     setupOnlineStatus();
     setupStationSearch();
@@ -1056,7 +1075,10 @@
       autoStartFix, autoStartArmed, renderAutoStartStatus, spoken: () => spokenForTest.slice(), clearSpoken: () => { spokenForTest.length=0; },
       parseTour, saveTour, tourTrains, nextTourTrain, tourFromHistory, renderTourSuggest, prefillFromTour, fetchNextTour, tourStatus,
       setAutoStartForTest: on => { autoStartEnabled=!!on; autoState.blockedKey=''; autoState.moving=null; },
-      loadPlaceNotes, setPlaceNote, placeNoteFor, haltSummary, checkPlaceReminders, syncPlaceNotes, mergePlaceNotes
+      loadPlaceNotes, setPlaceNote, placeNoteFor, haltSummary, checkPlaceReminders, syncPlaceNotes, mergePlaceNotes,
+      setPushForTest: (api, fetchFn) => { pushApiForTest=api; pushFetchForTest=fetchFn; },
+      showPushSettings, enablePush, disablePush, sendTestPush, pushWatchEvent, pushWatch: () => pushWatch, applyPushState,
+      infoNotified: () => infoState.notified, discardActiveJourney
     };
   }
 
@@ -1684,6 +1706,12 @@
     document.getElementById('btnGhRemove').addEventListener('click', removeGithubToken);
     document.getElementById('btnGhLink').addEventListener('click', copyLoginLink);
     document.getElementById('btnCloseSettings').addEventListener('click', closeOverlay);
+    document.getElementById('btnPushSettings').addEventListener('click', () => { closeAllMenus(); showPushSettings(); });
+    document.getElementById('btnPushOn').addEventListener('click', enablePush);
+    document.getElementById('btnPushOff').addEventListener('click', disablePush);
+    document.getElementById('btnPushTest').addEventListener('click', () => sendTestPush());
+    document.getElementById('btnClosePush').addEventListener('click', closeOverlay);
+    setupPushMessages();
     window.addEventListener('online', () => { scheduleUpload(); });
     document.getElementById('statsVehicleFilter').addEventListener('change', renderStatistics);
     document.getElementById('statsRouteFilter').addEventListener('change', renderStatistics);
@@ -2963,6 +2991,7 @@
       if(!state.running) return;
       updateNextStopUI();
       if(++panelTicks%5===0) updateInfo();
+      pushTick();
     }, 1000);
   }
   function stopPanelTimer(){
@@ -3471,7 +3500,8 @@
     const notShown=(m.messagesHidden||[]).filter(h=>h.reason!=='inte under resan').length;
     const transferNote=`Anslutningar: tåg som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. `;
     html+=`<p class="info-foot">${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Tågklareraren kan flytta möten.` +
-      `${infoState.error?` Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).`:''}</p>`;
+      `${infoState.error?` Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).`:''}` +
+      ` ${pushEnabled() ? 'Notiser i bakgrunden är på: lämnar du appen bevakas resan och du får en notis om något blir värre.' : 'Vill du få notiser när appen är stängd: ⋮ → Notiser i bakgrunden.'}</p>`;
     return html;
   }
 
@@ -3534,38 +3564,15 @@
   // avvikelse eller störning. Samma sak meddelas bara en gång per nivå.
   // Det viktigaste läses också upp (speak), i ord som går att höra: inga tågnummer, "minuter" utskrivet.
   function notifyInfo(m){
-    const alerts=[];
-    const add=(key, level, text, say)=>{
-      const prev=infoState.notified.get(key)||0;
-      if(level>prev){ alerts.push({ level, text, say }); infoState.notified.set(key, level); }
-    };
+    // Samma regler och texter som bevakningen i bakgrunden (INFO.alerts), plus nästa tur
+    const list=INFO.alerts(m, { name:sigName, clock:roundClock });
     const minutes = n => `${n} minut${n===1?'':'er'}`;
-    for(const mt of m.meetings) if(mt.level) add(`m|${mt.otn}|${mt.sig}`, mt.level,
-      `Möte ${sigName(mt.sig)}: ${mt.ident||mt.otn} är ${mt.theirDelayMin} min sent – vi väntar ca ${mt.waitMin} min`,
-      `Möte i ${sigName(mt.sig)}. Mötande tåg ${minutes(mt.theirDelayMin)} sent. Vi väntar cirka ${minutes(mt.waitMin)}.`);
-    for(const c of m.connections) if(c.level) add(`c|${c.otn}`, c.level,
-      `Anslutning ${roundClock(c.adv)} ${placesText(c.to)}: ${c.status==='knappt'?`knappt (${Math.max(c.transferMin,0)} min)`:c.status}`,
-      `Anslutningen mot ${placesText(c.to)} ${roundClock(c.adv)} ${({ knappt:'blir knapp', missas:'hinns inte', 'avgått':'har gått', 'inställt':'är inställd' })[c.status]||c.status}.`);
-    for(const c of m.incoming||[]) if(c.level) add(`i|${c.otn}`, c.level,
-      `${trainText(c)} från ${placesText(c.from)}: ${c.status==='knappt'?'knappt byte till oss':(c.status==='inställt'?'inställt':'hinner inte till oss')}`,
-      `Tåget från ${placesText(c.from)} ${c.status==='knappt'?'ger ett knappt byte till oss':(c.status==='inställt'?'är inställt':'hinner inte till oss')}.`);
-    for(const st of m.stops||[]){
-      const where=sigName(st.sig);
-      for(const c of st.connections) if(c.level) add(`c|${c.otn}|${st.sig}`, c.level,
-        `Anslutning i ${where} ${roundClock(c.adv)} ${placesText(c.to)}: ${c.status==='knappt'?`knappt (${Math.max(c.transferMin,0)} min)`:c.status}`,
-        `Anslutningen i ${where} mot ${placesText(c.to)} ${({ knappt:'blir knapp', missas:'hinns inte', 'avgått':'har gått', 'inställt':'är inställd' })[c.status]||c.status}.`);
-      for(const c of st.incoming) if(c.level) add(`i|${c.otn}|${st.sig}`, c.level,
-        `${trainText(c)} från ${placesText(c.from)} till oss i ${where}: ${c.status==='knappt'?'knappt':(c.status==='inställt'?'inställt':'hinner inte')}`,
-        `Tåget från ${placesText(c.from)} ${c.status==='knappt'?'ger ett knappt byte till oss':(c.status==='inställt'?'är inställt':'hinner inte till oss')} i ${where}.`);
-    }
-    for(const d of m.deviations) add(`d|${d.sig}|${d.text}`, 1, `${sigName(d.sig)}: ${d.text}`, `${sigName(d.sig)}: ${d.text}.`);
-    for(const msg of m.messages) add(`t|${msg.id}`, 1, msg.header, `${msg.header}.`);
     const t=tourStatus();
-    if(t && t.level) add(`tour|${t.otn}`, t.level,
-      t.turnMin<TOUR_LATE_MIN ? `Nästa tur ${t.otn} ${formatClock(t.dep)}: vändtiden räcker inte` : `Nästa tur ${t.otn} ${formatClock(t.dep)}: vändtid ca ${t.turnMin} min`,
-      t.turnMin<TOUR_LATE_MIN ? `Vändtiden i ${t.fromName} räcker inte. Nästa tur blir sen.` : `Vändtiden i ${t.fromName} blir cirka ${minutes(t.turnMin)}.`);
+    if(t && t.level) list.push({ key:`tour|${t.otn}`, level:t.level,
+      text:t.turnMin<TOUR_LATE_MIN ? `Nästa tur ${t.otn} ${formatClock(t.dep)}: vändtiden räcker inte` : `Nästa tur ${t.otn} ${formatClock(t.dep)}: vändtid ca ${t.turnMin} min`,
+      say:t.turnMin<TOUR_LATE_MIN ? `Vändtiden i ${t.fromName} räcker inte. Nästa tur blir sen.` : `Vändtiden i ${t.fromName} blir cirka ${minutes(t.turnMin)}.` });
+    const alerts=INFO.newAlerts(list, infoState.notified);
     if(!alerts.length) return;
-    alerts.sort((a,b)=>b.level-a.level);
     const top=alerts[0];
     vibrate(top.level>=2 ? [150,80,150,80,150] : [120,80,120]);
     playTone(660, 120, top.level>=2 ? 3 : 2);
@@ -3856,6 +3863,7 @@
     releaseWakeLockAfterJourney();
     stopPanelTimer();
     stopInfo();
+    pushWatchEvent('end'); // bevakningen i bakgrunden behövs inte längre
     els.journeyMsg.style.display='none';
     const logEntry=saveLog(aborted);
     renderReport(logEntry);
@@ -3881,6 +3889,7 @@
     els.report.style.display = view==='report' ? 'block' : 'none';
     document.getElementById('statistics').style.display = view==='statistics' ? 'block' : 'none';
     document.getElementById('settings').style.display = view==='settings' ? 'block' : 'none';
+    document.getElementById('pushSettings').style.display = view==='pushSettings' ? 'block' : 'none';
     window.scrollTo(0,0);
     renderAutoStartStatus();
   }
@@ -4003,7 +4012,7 @@
   }
 
   function rememberOverlayReturn(){
-    if(currentView!=='statistics' && currentView!=='settings') overlayReturnView=currentView;
+    if(currentView!=='statistics' && currentView!=='settings' && currentView!=='pushSettings') overlayReturnView=currentView;
   }
 
   // Tillbaka till vyn som var öppen – en pågående resa ska alltid gå att komma tillbaka till
@@ -4319,6 +4328,241 @@
       }catch(e2){ setGhResult('Kunde inte kopiera länken.', true); }
     }
     return link;
+  }
+
+  /* ── Notiser i bakgrunden (2026-11-25v) ──
+     Telefonen prenumererar på webbpush (railtimer-push.js). Lämnas appen under en resa med tågnummer startar
+     appen bevakningen i railtimer-data (repository_dispatch "bevaka", GitHub Actions, bevakning/bevaka.js),
+     som hämtar Trafikverket varje minut, räknar som infofliken och skickar en notis när något blir värre.
+     Har appen visats i 3 min igen tar appen över och bevakningen stoppas ("bevaka-stopp"); likaså när resan är slut.
+     Det bevakningen meddelat läggs till i infoState.notified (via service workern), så att appen inte
+     meddelar samma sak igen. */
+  const PUSH = window.RailTimerPush || null;
+  let pushFetchForTest = null;  // simulerat GitHub i testerna
+  let pushApiForTest = null;    // simulerad prenumeration i testerna: { permission, subscribe(pub), unsubscribe() }
+  let pushWatch = null;         // { journeyId, active, announced, visibleSince } – sparas i railtimer_push_v1.watch
+  let pushLast = null;          // senaste läget från service workern: { last, dispatch, keys, journeyId }
+  let pushResultText = '';
+  let pushTickAt = 0;
+
+  function loadPushSettings(){
+    if(!PUSH) return {};
+    try{ return JSON.parse(localStorage.getItem(PUSH.STORAGE_KEY)||'null')||{}; }catch(e){ return {}; }
+  }
+  function savePushSettings(next){
+    try{ localStorage.setItem(PUSH.STORAGE_KEY, JSON.stringify(next)); }catch(e){ console.warn('Kunde inte spara notisinställningarna', e); }
+  }
+  function pushEnv(){
+    if(pushApiForTest) return { ua:navigator.userAgent||'', hasServiceWorker:true, hasPushManager:true, hasNotification:true, permission:pushApiForTest.permission };
+    return {
+      ua:navigator.userAgent||'', touch:(navigator.maxTouchPoints||0)>1,
+      standalone:!!(navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)),
+      hasServiceWorker:'serviceWorker' in navigator, hasPushManager:'PushManager' in window, hasNotification:'Notification' in window,
+      permission:'Notification' in window ? Notification.permission : 'default'
+    };
+  }
+  function pushEnabled(){
+    const s=loadPushSettings();
+    return !!(PUSH && s.enabled && s.sub && s.jwk && s.device);
+  }
+  function pushRegistration(){
+    if(!navigator.serviceWorker) return Promise.reject(new Error('Webbläsaren saknar service worker'));
+    return Promise.race([navigator.serviceWorker.ready,
+      new Promise((_, reject)=>setTimeout(()=>reject(new Error('Appen är inte klar att ta emot notiser – ladda om sidan och försök igen')), 10000))]);
+  }
+  // Prenumeration med telefonens egen VAPID-nyckel (skapas första gången och sparas)
+  async function pushSubscribe(s){
+    if(!s.jwk || !s.pub) Object.assign(s, await PUSH.createVapid(crypto.subtle));
+    if(!s.device) s.device=PUSH.newDevice(b=>crypto.getRandomValues(b));
+    if(pushApiForTest) return pushApiForTest.subscribe(s.pub);
+    const reg=await pushRegistration();
+    let sub=await reg.pushManager.getSubscription();
+    if(sub){
+      const key=sub.options && sub.options.applicationServerKey ? PUSH.b64url(sub.options.applicationServerKey) : null;
+      if(key && key!==s.pub){ await sub.unsubscribe(); sub=null; }
+    }
+    if(!sub) sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:PUSH.fromB64url(s.pub) });
+    return JSON.parse(JSON.stringify(sub));
+  }
+  // Vid start: finns prenumerationen kvar? Webbläsaren kan byta eller ta bort den.
+  async function refreshPushSubscription(){
+    const s=loadPushSettings();
+    if(!PUSH || !s.enabled || TEST_MODE || !PUSH.support(pushEnv()).ok || Notification.permission!=='granted') return;
+    try{
+      const sub=await pushSubscribe(s);
+      if(sub && sub.endpoint!==(s.sub && s.sub.endpoint)){ s.sub=sub; savePushSettings(Object.assign(loadPushSettings(), { sub, jwk:s.jwk, pub:s.pub, device:s.device })); }
+    }catch(e){ console.warn('Notiser: kunde inte förnya prenumerationen', e); }
+  }
+
+  function showPushSettings(){
+    rememberOverlayReturn();
+    pushResultText='';
+    showView('pushSettings');
+    renderPushSettings();
+    readPushState();
+  }
+  function renderPushSettings(){
+    const el=id=>document.getElementById(id);
+    if(!el('pushStatus')) return;
+    const s=loadPushSettings();
+    const sup=PUSH ? PUSH.support(pushEnv()) : { ok:false, reason:'saknas' };
+    const gh=loadGithubSettings();
+    let status='', bad=false;
+    if(!PUSH){ status='Notismodulen kunde inte laddas – ladda om sidan.'; bad=true; }
+    else if(!sup.ok){ status=PUSH.SUPPORT_TEXT[sup.reason]; bad=sup.reason==='blockerad'; }
+    else if(!gh){ status='Kräver uppladdningen till GitHub: ⋮ → Uppladdning.'; bad=true; }
+    else if(s.enabled) status=pushWatch && pushWatch.active && state.running ? 'På – resan bevakas i bakgrunden just nu.' : 'På för den här telefonen.';
+    else status='Av.';
+    el('pushStatus').textContent=status;
+    el('pushStatus').className='meta'+(bad ? ' err' : (s.enabled && sup.ok ? ' ok' : ''));
+    el('btnPushOn').hidden=!(PUSH && sup.ok && gh && !s.enabled);
+    el('btnPushTest').hidden=!(s.enabled && gh);
+    el('btnPushOff').hidden=!s.enabled;
+    el('pushResult').textContent=pushResultText;
+    const parts=[];
+    const last=pushLast && pushLast.last;
+    if(last && last.at) parts.push(`Senaste notis ${formatClock(last.at)}: ${String(last.body||last.title||'').split('\n')[0]}`);
+    const d=pushLast && pushLast.dispatch;
+    if(d && d.at) parts.push(`Senaste begäran till GitHub ${formatClock(d.at)}: ${d.ok ? 'skickad' : `misslyckades (${d.error||d.status})`}`);
+    el('pushLast').textContent=parts.join(' · ');
+  }
+  function setPushResult(text){
+    pushResultText=text;
+    renderPushSettings();
+  }
+
+  async function enablePush(){
+    if(!PUSH) return;
+    const sup=PUSH.support(pushEnv());
+    if(!sup.ok){ setPushResult(PUSH.SUPPORT_TEXT[sup.reason]); return; }
+    if(!loadGithubSettings()){ setPushResult('Ställ in uppladdningen först: ⋮ → Uppladdning.'); return; }
+    setPushResult('Slår på…');
+    try{
+      // Frågan om tillåtelse måste komma direkt i tryckningen (iPhone)
+      const perm=pushApiForTest ? pushApiForTest.permission : await Notification.requestPermission();
+      if(perm!=='granted'){ setPushResult(perm==='denied' ? PUSH.SUPPORT_TEXT.blockerad : 'Notiserna tilläts inte.'); return; }
+      const s=loadPushSettings();
+      const sub=await pushSubscribe(s);
+      if(!sub || !sub.endpoint) throw new Error('Ingen prenumeration');
+      Object.assign(s, { enabled:true, sub, at:Date.now() });
+      savePushSettings(s);
+      await sendTestPush('Notiserna är på. En testnotis är på väg – den kommer inom ungefär en minut.');
+    }catch(e){
+      setPushResult(`Kunde inte slå på notiserna: ${e && e.message || e}`);
+    }
+  }
+  async function disablePush(){
+    if(!PUSH) return;
+    if(state.running) await pushWatchEvent('end');
+    const s=loadPushSettings();
+    try{
+      if(pushApiForTest) await pushApiForTest.unsubscribe();
+      else if(navigator.serviceWorker){ const reg=await pushRegistration(); const sub=await reg.pushManager.getSubscription(); if(sub) await sub.unsubscribe(); }
+    }catch(e){ console.warn('Notiser: kunde inte avsluta prenumerationen', e); }
+    delete s.sub;
+    s.enabled=false;
+    s.watch=null;
+    pushWatch=null;
+    savePushSettings(s);
+    setPushResult('Notiserna är avstängda på den här telefonen.');
+  }
+  async function sendTestPush(okText){
+    const s=loadPushSettings();
+    if(!pushEnabled()){ setPushResult('Slå på notiserna först.'); return null; }
+    setPushResult(okText || 'Skickar…');
+    const r=await pushDispatch(PUSH.EVENTS.test, PUSH.buildPayload({ device:s.device, sub:s.sub, jwk:s.jwk }), false);
+    if(r && r.ok) setPushResult(okText || 'Testnotisen är på väg – den kommer inom ungefär en minut.');
+    else setPushResult(`Testnotisen kunde inte beställas: ${r && r.error || 'okänt fel'}.`);
+    return r;
+  }
+
+  /* Begäran till bevakningen. viaWorker: skickas av service workern (med nya försök) när appen lämnas,
+     eftersom sidan kan frysas direkt. I testläge och utan service worker skickar sidan själv. */
+  function pushDispatch(event, payload, viaWorker){
+    const gh=loadGithubSettings();
+    if(!PUSH || !gh) return Promise.resolve({ ok:false, error:'uppladdningen är inte inställd' });
+    const req=PUSH.dispatchRequest(gh, event, payload);
+    const ctrl=!TEST_MODE && !pushFetchForTest && navigator.serviceWorker && navigator.serviceWorker.controller;
+    const journeyId=payload && payload.journey ? payload.journey.id : null;
+    if(viaWorker && ctrl){
+      ctrl.postMessage({ type:'RT_DISPATCH', req, event, journeyId, id:Date.now() });
+      return Promise.resolve({ ok:true, queued:true });
+    }
+    return PUSH.sendWithRetry(pushFetchForTest || window.fetch.bind(window), req, TEST_MODE ? { delays:[0] } : undefined).then(r=>{
+      pushLast=Object.assign({}, pushLast, { dispatch:{ event, journeyId, at:Date.now(), ok:r.ok, status:r.status, error:r.error } });
+      return r;
+    });
+  }
+  function watchPayload(announce){
+    const s=loadPushSettings();
+    const known=state.route.filter(st=>st.sig)
+      .map(st=>[st.sig, timeMs(st.actualArrival), timeMs(st.actualDeparture)])
+      .filter(k=>k[1]!=null || k[2]!=null);
+    const names={};
+    for(const st of state.route) if(st.sig) names[st.sig]=st.name;
+    for(const l of infoState.line||[]) if(!names[l.sig]) names[l.sig]=sigName(l.sig);
+    const first=state.route[0], last=state.route[state.route.length-1];
+    return PUSH.buildPayload({
+      device:s.device, sub:s.sub, jwk:s.jwk,
+      journey:{ id:String(state.journeyId), train:String(state.trainNumber), startSig:first.sig, endSig:last.sig,
+        startedAt:state.startedAt ? new Date(state.startedAt).getTime() : Date.now(), announce:!!announce, app:APP_VERSION },
+      known, notified:Array.from(infoState.notified||[]), names, history:infoState.history, double:loadInfoSettings().double
+    });
+  }
+  /* hidden: appen lämnas → starta bevakningen. visible: appen syns → stoppa efter 3 min (tick).
+     end: resan är slut eller notiserna avstängda → stoppa. Ger begäran som skickades, eller null. */
+  function pushWatchEvent(ev){
+    if(!PUSH) return null;
+    const s=loadPushSettings();
+    if(!pushWatch) pushWatch=s.watch||null;
+    const first=state.route[0], last=state.route[state.route.length-1];
+    const r=PUSH.plan(pushWatch, ev, {
+      now:Date.now(), enabled:pushEnabled(), running:!!state.running,
+      train:state.trainNumber && first && first.sig && last && last.sig ? String(state.trainNumber) : '',
+      journeyId:state.journeyId ? String(state.journeyId) : null
+    });
+    const changed=JSON.stringify(r.watch)!==JSON.stringify(s.watch||null);
+    pushWatch=r.watch;
+    if(changed) savePushSettings(Object.assign(s, { watch:pushWatch }));
+    if(r.action==='start') return pushDispatch(PUSH.EVENTS.start, watchPayload(r.announce), true);
+    if(r.action==='stop') return pushDispatch(PUSH.EVENTS.stop, { v:1, device:s.device }, true);
+    return null;
+  }
+  function pushTick(){
+    const now=Date.now();
+    if(now-pushTickAt<15000) return;
+    pushTickAt=now;
+    if(document.visibilityState!=='hidden') pushWatchEvent('tick');
+  }
+  // Det service workern sparat: senaste notisen, senaste begäran och vad bevakningen meddelat under resan
+  async function readPushState(){
+    if(!PUSH || !('caches' in window)) return null;
+    try{
+      const cache=await caches.open('railtimer-push');
+      const resp=await cache.match('./push-state');
+      if(!resp) return null;
+      applyPushState(await resp.json());
+    }catch(e){ /* inget sparat */ }
+    return pushLast;
+  }
+  function applyPushState(st){
+    if(!st) return;
+    pushLast=Object.assign({}, pushLast, st);
+    if(st.journeyId && String(st.journeyId)===String(state.journeyId) && infoState.notified) PUSH.mergeNotified(infoState.notified, st.keys);
+    if(currentView==='pushSettings') renderPushSettings();
+  }
+  function setupPushMessages(){
+    if(!navigator.serviceWorker || !PUSH) return;
+    navigator.serviceWorker.addEventListener('message', ev=>{
+      const d=ev.data||{};
+      if(d.type==='RT_PUSH'){
+        const p=d.data||{};
+        applyPushState({ journeyId:p.journeyId||null, keys:p.keys||[], last:{ kind:p.kind, title:p.title, body:p.body, at:Date.now() } });
+        if(p.kind==='test') setPushResult('Testnotisen kom fram – notiserna fungerar på den här telefonen.');
+      }else if(d.type==='RT_DISPATCH_RESULT'){
+        applyPushState({ dispatch:d.result });
+      }
+    });
   }
 
   function removeGithubToken(){
@@ -6233,9 +6477,11 @@
       if(state.running && (!infoState.fetchedAt || Date.now()-infoState.fetchedAt>=INFO_REFRESH_MS)) refreshInfo();
       if(Date.now()-versionCheckedAt>=60000) checkForNewVersion(true);
       if(!state.running) Promise.resolve(uploadPromise).then(()=>syncFromGithub(false));
+      if(state.running){ pushWatchEvent('visible'); readPushState(); }
     }else if(document.visibilityState==='hidden'){
       stopGpsWarmup();
       onAppHidden();
+      if(state.running) pushWatchEvent('hidden'); // notiser i bakgrunden: bevakningen startar
     }
   }
 
@@ -6349,6 +6595,16 @@
   // telefonen för alltid och visas som "Väntar: 1 spår" under Uppladdning
   function discardActiveJourney(saved){
     clearActiveJourney();
+    // Bevakades resan i bakgrunden stoppas bevakningen
+    if(PUSH && saved && saved.journeyId){
+      const w=pushWatch || loadPushSettings().watch;
+      if(w && w.active && String(w.journeyId)===String(saved.journeyId)){
+        const s=loadPushSettings();
+        pushWatch=Object.assign({}, w, { active:false, visibleSince:null });
+        savePushSettings(Object.assign(s, { watch:pushWatch }));
+        pushDispatch(PUSH.EVENTS.stop, { v:1, device:s.device }, true);
+      }
+    }
     if(saved && saved.journeyId) TrackStore.remove(String(saved.journeyId)).catch(()=>{});
   }
 
@@ -6413,6 +6669,9 @@
 
     showJourneyMessage('Resa återupptagen!', false);
     setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
+    // Bevakades resan i bakgrunden: appen tar över efter 3 min, och det som redan meddelats meddelas inte igen
+    pushWatchEvent('visible');
+    readPushState();
   }
 
   function setupPWA(){
