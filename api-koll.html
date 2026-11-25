@@ -55,7 +55,7 @@
 <main>
   <p class="intro">Frågar Trafikverkets API från den här telefonen och visar vad som finns för tåget, och hur appens tider stämmer med Trafikverkets för körningarna som finns sparade här.</p>
   <form id="checkForm">
-    <label>Tågnummer<input id="train" inputmode="numeric" autocomplete="off" required></label>
+    <label>Tågnummer<input id="train" inputmode="numeric" autocomplete="off" placeholder="OTN eller ATN" required></label>
     <label>Datum<input id="date" type="date" required></label>
     <button id="btnRun" type="submit">Kör kontroll</button>
   </form>
@@ -167,7 +167,15 @@
     </section>`;
   }
 
-  function renderAnnouncements(a, train, date, names){
+  /* Numret kan vara operativt (OTN) eller annonserat (ATN): "3349 (OTN 23349)", "23349 (ATN 3349)" */
+  function trainLabel(train, ident){
+    if(!ident) return train;
+    const otns = (ident.otns && ident.otns.length ? ident.otns : [ident.otn]).join(' → ');
+    if(ident.by === 'atn' || otns !== train) return `${train} (OTN ${otns})`;
+    return ident.atn && ident.atn !== train ? `${train} (ATN ${ident.atn})` : train;
+  }
+
+  function renderAnnouncements(a, train, date, names, ident){
     if(a.error) return `<section class="card"><h2>Tåg ${escapeHtml(train)} ${escapeHtml(date)}</h2>${errorBlock(a.error)}</section>`;
     if(!a.count) return `<section class="card"><h2>Tåg ${escapeHtml(train)} ${escapeHtml(date)}</h2><p class="sub">Trafikverket har inga annonseringar för tåget den dagen.</p></section>`;
     const rows = a.records.map(r => {
@@ -192,8 +200,9 @@
     const from = (first.FromLocation || []).map(l => names.get(l.LocationName) || l.LocationName).join(', ');
     const to = (first.ToLocation || []).map(l => names.get(l.LocationName) || l.LocationName).join(', ');
     return `<section class="card" id="secAnnouncements">
-      <h2>Tåg ${escapeHtml(train)} ${escapeHtml(date)}</h2>
-      <p class="sub">${[from && to ? `${escapeHtml(from)} → ${escapeHtml(to)}` : '', escapeHtml(product), first.Operator ? `kör: ${escapeHtml(first.Operator)}` : '', first.AdvertisedTrainIdent ? `annonserat nummer ${escapeHtml(first.AdvertisedTrainIdent)}` : ''].filter(Boolean).join(' · ')}</p>
+      <h2>Tåg ${escapeHtml(trainLabel(train, ident))} ${escapeHtml(date)}</h2>
+      <p class="sub">${[from && to ? `${escapeHtml(from)} → ${escapeHtml(to)}` : '', escapeHtml(product), first.Operator ? `kör: ${escapeHtml(first.Operator)}` : '',
+        a.otherTrains ? `${a.otherTrains} annonseringar för ett annat tåg med numret ${escapeHtml(train)} visas inte` : ''].filter(Boolean).join(' · ')}</p>
       <p class="sub">${plural(a.count, 'annonsering', 'annonseringar')}. Plan = annonserad tid, Faktisk = Trafikverkets rapport med sekunder, Operativ = tågläget när det skiljer.</p>
       <div class="scroll"><table><thead><tr><th>Station</th><th></th><th>Plan</th><th>Faktisk</th><th class="num">Avvik.</th><th>Spår</th><th>Operativ</th><th>Prognos</th><th>Övrigt</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${fieldsDetails('Alla fält i TrainAnnouncement', a.fields, a.count)}
@@ -281,8 +290,8 @@
     const s = res.sections;
     const myTrains = Array.from(new Set(loadLogs().map(l => String(l && l.trainNumber || '').trim()).filter(Boolean)));
     $('result').innerHTML = renderComparison(s.comparison, names)
-      + renderAnnouncements(s.announcements, res.trainNumber, res.date, names)
-      + renderPositions(s.positions, res.trainNumber, myTrains)
+      + renderAnnouncements(s.announcements, res.trainNumber, res.date, names, res.train)
+      + renderPositions(s.positions, res.train ? res.train.otn : res.trainNumber, myTrains)
       + renderStations(s.stations)
       + renderMessages(s.messages, s.stationMessages, s.reasonCodes, names)
       + renderNamespaces(s.namespaces);

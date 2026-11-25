@@ -109,12 +109,20 @@
     return day === 0 || day === 6 ? 'helg' : 'vardag';
   }
 
+  /* Körningen gäller tågnumret: operativt (trainNumber, OTN) eller annonserat (advertisedTrainNumber, ATN, sparas
+     sedan 2026-11-25zg). Föraren skriver OTN, tågvärden ATN, till exempel 23349 och 3349. */
+  function runTrainMatches(run, train) {
+    const t = String(train == null ? '' : train).trim();
+    if (!t) return true;
+    return String(run.trainNumber || '').trim() === t || String(run.advertisedTrainNumber || '').trim() === t;
+  }
+
   // filter: { vehicle, train, dateFrom, dateTo, timeOfDay, dayType } – tomt värde betyder alla
   function runMatches(run, filter) {
     const f = filter || {};
     if (!run || run.aborted) return false;
     if (f.vehicle && run.vehicleType !== f.vehicle) return false;
-    if (f.train && String(run.trainNumber || '') !== String(f.train)) return false;
+    if (f.train && !runTrainMatches(run, f.train)) return false;
     const start = runStart(run);
     if (f.dateFrom || f.dateTo) {
       const d = localDate(start);
@@ -660,7 +668,8 @@
   function segmentPlans(obs, needs, opts) {
     const tol = opts && opts.tolerance != null ? opts.tolerance : DEFAULT_TOLERANCE;
     const stationType = (opts && opts.stationType) || '';
-    const train = opts && opts.train ? String(opts.train) : '';
+    // train: ett tågnummer eller flera (OTN för ett ATN, se runTrainMatches)
+    const trains = opts && opts.train ? new Set([].concat(opts.train instanceof Set ? Array.from(opts.train) : opts.train).map(String)) : null;
     const labels = (opts && opts.labels) || null;
     const needsByKey = needMap(needs);
     const groups = new Map();
@@ -675,7 +684,7 @@
       const pattern = list[0].plannedPattern;
       if (stationType === 'stopp' && pattern !== 'SS') continue;
       if (stationType === 'passage' && pattern === 'SS') continue;
-      if (train && !list.some(o => String(o.trainNumber) === train)) continue;
+      if (trains && !list.some(o => trains.has(String(o.trainNumber)))) continue;
       const need = needFor(needsByKey, list[0].key, pattern);
       const byPlan = new Map();
       for (const o of list) {
@@ -1939,6 +1948,7 @@
   }
 
   return {
+    runTrainMatches,
     DEFAULT_TOLERANCE, MIN_SAMPLES, STATION_ALIASES,
     canonicalStation, normalizeRuns,
     localDate, clockMinutes, runStart, timeOfDay, dayType, runMatches, period,

@@ -92,7 +92,11 @@ test('swedishLocal: svensk tid oavsett datorns tidszon, även sommartid', () => 
 test('runQuery: tågnummer utan mellanslag och fönster ± 3 h i svensk tid', () => {
   const q = TRV.runQuery(run());
   const items = q.filter.items;
-  assert.deepEqual(items[0], { op: 'EQ', name: 'OperationalTrainNumber', value: '24360' });
+  // Operativt eller annonserat tågnummer (OTN eller ATN)
+  assert.deepEqual(items[0], { op: 'OR', items: [
+    { op: 'EQ', name: 'OperationalTrainNumber', value: '24360' },
+    { op: 'EQ', name: 'AdvertisedTrainIdent', value: '24360' }
+  ] });
   assert.equal(items[1].value, '2026-11-24T16:24:45'); // start 19:24:45 svensk tid − 3 h
   assert.equal(items[2].value, '2026-11-25T00:19:41'); // slut 21:19:41 svensk tid + 3 h
   assert.ok(q.include.includes('TimeAtLocationWithSeconds'));
@@ -269,4 +273,112 @@ test('signaturesIn: signaturer på alla nivåer i en OperativeEvent', () => {
 test('wgs84: läser punkt från Trafikverkets format', () => {
   assert.deepEqual(TRV.wgs84('POINT (12.99868 58.16898)'), { lon: 12.99868, lat: 58.16898 });
   assert.equal(TRV.wgs84(''), null);
+});
+
+// ── Operativt (OTN) och annonserat tågnummer (ATN) ──
+// Som Trafikverket svarade 2026-11-25 (tools/trafikverket-tagnummer.mjs): 23349 annonseras som 3349.
+function tAnn(otn, atn, sig, act, hhmm, date) {
+  return { OperationalTrainNumber: otn, AdvertisedTrainIdent: atn, DepartureDateOTN: `${date || '2026-11-25'}T00:00:00.000+01:00`,
+    LocationSignature: sig, ActivityType: act, AdvertisedTimeAtLocation: `${date || '2026-11-25'}T${hhmm}:00.000+01:00` };
+}
+const T23349 = [
+  tAnn('23349', '3349', 'Hpbg', 'Avgang', '09:25'), tAnn('23349', '3349', 'Lkp', 'Ankomst', '10:20'), tAnn('23349', '3349', 'Lkp', 'Avgang', '10:22'),
+  tAnn('23349', '3349', 'Vaa', 'Avgang', '11:54'), tAnn('23349', '3349', 'Hrc', 'Ankomst', '12:09')
+];
+const AT = Date.parse('2026-11-25T10:00:00+01:00');
+
+test('pickTrain: OTN 23349 och ATN 3349 ger samma tåg; föraren och tågvärden ser vilket nummer som är vilket', () => {
+  const byOtn = TRV.pickTrain(T23349, '23349', { at: AT });
+  assert.equal(byOtn.by, 'otn');
+  assert.equal(byOtn.otn, '23349');
+  assert.equal(byOtn.atn, '3349');
+  assert.deepEqual(byOtn.keys, ['23349|2026-11-25']);
+  assert.equal(byOtn.list.length, 5);
+  const byAtn = TRV.pickTrain(T23349, '3349', { at: AT });
+  assert.equal(byAtn.by, 'atn');
+  assert.equal(byAtn.otn, '23349');
+  assert.equal(byAtn.atn, '3349');
+  assert.deepEqual(byAtn.from, { sig: 'Hpbg', t: Date.parse('2026-11-25T09:25:00+01:00') });
+  assert.equal(byAtn.to.sig, 'Hrc');
+  assert.deepEqual(byAtn.alternatives, []);
+  // Samma nummer för båda (det vanliga)
+  const same = TRV.pickTrain([tAnn('3004', '3004', 'Kb', 'Avgang', '01:04')], '3004', { at: AT });
+  assert.equal(same.by, 'both');
+  assert.equal(TRV.pickTrain(T23349, '9999', { at: AT }), null);
+  assert.equal(TRV.pickTrain(T23349, '', { at: AT }), null);
+});
+
+test('pickTrain: ett ATN med flera OTN längs vägen blir ett tåg; OTN gäller bara sin del', () => {
+  // Som ATN 947 2026-11-25: 947 Nbt–Kju, 948 Et–Arb, 949 Jbk–Ör
+  const anns = [
+    tAnn('947', '947', 'Nbt', 'Avgang', '14:44'), tAnn('947', '947', 'Kju', 'Ankomst', '15:51'),
+    tAnn('948', '947', 'Kju', 'Avgang', '15:55'), tAnn('948', '947', 'Et', 'Avgang', '16:03'), tAnn('948', '947', 'Arb', 'Ankomst', '16:29'),
+    tAnn('949', '947', 'Arb', 'Avgang', '16:31'), tAnn('949', '947', 'Ör', 'Ankomst', '16:50')
+  ];
+  const at = Date.parse('2026-11-25T15:00:00+01:00');
+  const p = TRV.pickTrain(anns, '947', { at, startSig: 'Et', endSig: 'Ör' });
+  assert.equal(p.by, 'both');
+  assert.deepEqual(p.otns, ['947', '948', '949']);
+  assert.equal(p.otn, '948', 'OTN vid startstationen');
+  assert.equal(p.cover, 2);
+  assert.equal(p.list.length, 7);
+  // Tågvärden som skriver ett ATN som skiljer sig från alla OTN
+  const anns2 = anns.map(a => Object.assign({}, a, { AdvertisedTrainIdent: '1947' }));
+  assert.deepEqual(TRV.pickTrain(anns2, '1947', { at }).otns, ['947', '948', '949']);
+  // Föraren med OTN 949: bara den delen (ATN 1947 ≠ 949)
+  const d = TRV.pickTrain(anns2, '949', { at });
+  assert.equal(d.by, 'otn');
+  assert.deepEqual(d.otns, ['949']);
+  assert.equal(d.atn, '1947');
+});
+
+test('pickTrain: numret är ATN för ett tåg och OTN för ett annat – rutten, tiden och syftet avgör, och det andra visas', () => {
+  // Som 27632 2026-11-25: ATN för OTN 17623, och OTN för ett tåg med ATN 27631
+  const atnTrain = [tAnn('17623', '27632', 'Vö', 'Avgang', '10:10'), tAnn('17623', '27632', 'N', 'Ankomst', '10:50')];
+  const otnTrain = [tAnn('27632', '27631', 'N', 'Avgang', '10:47'), tAnn('27632', '27631', 'Ah', 'Ankomst', '11:30')];
+  const anns = atnTrain.concat(otnTrain);
+  const driver = TRV.pickTrain(anns, '27632', { at: AT, prefer: 'otn' });
+  assert.equal(driver.by, 'otn');
+  assert.equal(driver.otn, '27632');
+  assert.equal(driver.alternatives.length, 1);
+  assert.equal(driver.alternatives[0].by, 'atn');
+  assert.equal(driver.alternatives[0].otn, '17623');
+  const conductor = TRV.pickTrain(anns, '27632', { at: AT, prefer: 'atn' });
+  assert.equal(conductor.by, 'atn');
+  assert.equal(conductor.otn, '17623');
+  // Rutten går före syftet
+  assert.equal(TRV.pickTrain(anns, '27632', { at: AT, prefer: 'otn', startSig: 'Vö', endSig: 'N' }).otn, '17623');
+  // Ett valt OTN går före allt
+  assert.equal(TRV.pickTrain(anns, '27632', { at: AT, prefer: 'atn', startSig: 'Vö', endSig: 'N', otn: '27632' }).otn, '27632');
+  // Fel ordning på rutten räknas som en station
+  assert.equal(TRV.pickTrain(anns, '27632', { at: AT, startSig: 'Ah', endSig: 'N' }).cover, 1);
+  // Ett tåg långt bort i tid är inget alternativ
+  const far = atnTrain.concat([tAnn('27632', '27631', 'N', 'Avgang', '21:47'), tAnn('27632', '27631', 'Ah', 'Ankomst', '22:30')]);
+  const p = TRV.pickTrain(far, '27632', { at: AT, prefer: 'otn' });
+  assert.equal(p.otn, '17623', 'inom 2 h går före syftet');
+  assert.deepEqual(p.alternatives, []);
+});
+
+test('pickTrain: samma tåg i går och i dag – körningen närmast i tid, och gårdagens är inget alternativ', () => {
+  const y = T23349.map(a => Object.assign({}, a, { DepartureDateOTN: '2026-11-24T00:00:00.000+01:00', AdvertisedTimeAtLocation: a.AdvertisedTimeAtLocation.replace('2026-11-25', '2026-11-24') }));
+  const p = TRV.pickTrain(y.concat(T23349), '3349', { at: AT });
+  assert.equal(p.date, '2026-11-25');
+  assert.deepEqual(p.alternatives, []);
+});
+
+test('fetchRunAnnouncements: frågar OTN eller ATN och tar bara körningens tåg; en körning med båda numren frågas med det som skrevs', async () => {
+  const other = [tAnn('3349', '3349', 'Cst', 'Avgang', '10:00'), tAnn('3349', '3349', 'Lkp', 'Ankomst', '10:30')];
+  let body = '';
+  const fetch = async (url, init) => { body = init.body; return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: T23349.concat(other) }] } }) }; };
+  const r = { id: 'x', trainNumber: '23349', advertisedTrainNumber: '3349', trainNumberEntered: 'atn', startedAt: '2026-11-25T09:15:00Z', finishedAt: '2026-11-25T11:10:00Z',
+    stops: [{ sig: 'Lkp', scheduledDeparture: '2026-11-25T09:22:00Z' }, { sig: 'Hrc', scheduledArrival: '2026-11-25T11:09:00Z' }] };
+  const list = await TRV.fetchRunAnnouncements(r, { fetch });
+  assert.match(body, /<OR><EQ name="OperationalTrainNumber" value="3349" \/><EQ name="AdvertisedTrainIdent" value="3349" \/><\/OR>/);
+  assert.equal(list.length, 5);
+  assert.ok(list.every(a => a.OperationalTrainNumber === '23349'));
+  assert.equal(TRV.enteredNumber(r), '3349');
+  assert.deepEqual(TRV.trainNumbersOf(r), ['23349', '3349']);
+  assert.ok(TRV.isTrain(r, '3349') && TRV.isTrain(r, '23349') && !TRV.isTrain(r, '3350'));
+  // Gamla körningar: bara trainNumber
+  assert.equal(TRV.enteredNumber({ trainNumber: '24360' }), '24360');
 });

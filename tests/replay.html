@@ -1620,6 +1620,102 @@ test('tidtabell: hela vägen – startformuläret, tågorderns tider i resvyn oc
   assertEqual(saved.stops.map(s => s.scheduledArrival ? new Date(s.scheduledArrival).toISOString() : null), [null, t(6), t(11), t(15), t(24), t(30)], 'annonserade ankomster sparas oförändrade');
 });
 
+// Vårt tåg: OTN 23349, annonserat som 3349 (som Trafikverket 2026-11-25), Lidköping om 5 min → Hällekis.
+// Ett annat tåg har OTN 3349 (ATN 3350), Hällekis → Lidköping.
+function trains3349() {
+  const base = Math.floor(Date.now() / 60000) * 60000 + 5 * 60000;
+  const t = m => new Date(base + m * 60000).toISOString();
+  const otnDate = new Date(base).toISOString().slice(0, 10);
+  const row = (otn, atn, sig, act, m) => ({ OperationalTrainNumber: otn, AdvertisedTrainIdent: atn, LocationSignature: sig, ActivityType: act,
+    AdvertisedTimeAtLocation: t(m), LocationDateTimeOTN: t(m), DepartureDateOTN: otnDate, Advertised: true });
+  const ours = [row('23349', '3349', 'Lkp', 'Avgang', 0),
+    row('23349', '3349', 'Fiä', 'Ankomst', 5), row('23349', '3349', 'Fiä', 'Avgang', 6),
+    row('23349', '3349', 'Kll', 'Ankomst', 10), row('23349', '3349', 'Kll', 'Avgang', 11),
+    row('23349', '3349', 'Bmb', 'Ankomst', 15), row('23349', '3349', 'Bmb', 'Avgang', 16),
+    row('23349', '3349', 'Rbk', 'Ankomst', 23), row('23349', '3349', 'Rbk', 'Avgang', 24),
+    row('23349', '3349', 'Hlk', 'Ankomst', 30)];
+  const other = [row('3349', '3350', 'Hlk', 'Avgang', 20), row('3349', '3350', 'Lkp', 'Ankomst', 50)];
+  return { base, ours, other };
+}
+
+test('tågnummer: ATN fungerar som OTN – tipset säger vilket tåg, och resan, rubriken och körningen har båda numren; finns numret för två tåg väljs det i formuläret', async () => {
+  const { base, ours, other } = trains3349();
+  let withOther = false;
+  const asked = [];
+  const { w, rt } = await appWithStations(1, async (url, init) => {
+    const body = String(init && init.body || '');
+    if (body.includes('TrainAnnouncement')) {
+      asked.push(body);
+      const list = withOther ? ours.concat(other) : ours;
+      return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: list }] } }) };
+    }
+    throw new TypeError('Failed to fetch');
+  });
+  const d = w.document;
+  const type = async v => { const tn = d.getElementById('trainNumber'); tn.value = v; tn.dispatchEvent(new w.Event('input')); await realSleep(900); };
+  const hhmm = m => new Date(base + m * 60000).toTimeString().slice(0, 5);
+  assertEqual(d.getElementById('trainNumber').placeholder, 'OTN eller ATN, t.ex. 23349', 'fältet säger att båda fungerar');
+
+  // 1. Förarens nummer (OTN): appen frågar OTN eller ATN och säger vilket ATN tåget har
+  await type('23349');
+  assert(asked[0].includes('<EQ name="OperationalTrainNumber" value="23349" />') && asked[0].includes('<EQ name="AdvertisedTrainIdent" value="23349" />'), 'frågan gäller OTN eller ATN');
+  const ident = d.getElementById('trainIdent');
+  assert(!ident.hidden, 'tipset om numret syns');
+  assertEqual(ident.textContent, `OTN 23349 = ATN 3349 · Lidköping ${hhmm(0)} → Hällekis ${hhmm(30)}`, 'tipset med OTN');
+
+  // 2. Tågvärdens nummer (ATN) 3349, som också är OTN för ett annat tåg: den som skriver väljer
+  withOther = true;
+  await type('3349');
+  const buttons = () => Array.from(ident.querySelectorAll('button[data-train-otn]'));
+  assert(/^Numret 3349 finns för 2 tåg – välj:/.test(ident.textContent), ident.textContent);
+  assertEqual(buttons().map(b => b.textContent), [`OTN 3349 = ATN 3350 · Hällekis ${hhmm(20)} → Lidköping ${hhmm(50)}`, `ATN 3349 = OTN 23349 · Lidköping ${hhmm(0)} → Hällekis ${hhmm(30)}`], 'Mät tidtabell: OTN först');
+  assertEqual(buttons().map(b => b.getAttribute('aria-pressed')), ['true', 'false'], 'det första är valt');
+  buttons()[1].click();
+  await realSleep(900);
+  assertEqual(buttons().map(b => b.getAttribute('aria-pressed')), ['true', 'false'], 'efter valet');
+  assert(buttons()[0].textContent.startsWith('ATN 3349 = OTN 23349'), 'det valda tåget står först: ' + buttons()[0].textContent);
+
+  // 3. Resan med det valda tåget
+  pickStation(w, 'startStation', 'Lidköping');
+  pickStation(w, 'endStation', 'Hällekis');
+  d.getElementById('vehicleType').value = 'Y31';
+  await rt.startJourney();
+  assertEqual([rt.state.trainNumber, rt.state.advertisedTrainNumber, rt.state.trainNumberEntered], ['23349', '3349', 'atn'], 'resan har båda numren');
+  assertEqual(rt.state.route.map(s => s.name), STATIONS.map(s => s[0]), 'rutten med alla mellanstationer');
+  assert(d.getElementById('journeyTitle').textContent.startsWith('Tåg 3349 (OTN 23349) · Lidköping → Hällekis'), d.getElementById('journeyTitle').textContent);
+  rt.stopJourney(true, 'test');
+  await realSleep(100);
+  const saved = rt.loadLogs().slice(-1)[0];
+  assertEqual([saved.trainNumber, saved.advertisedTrainNumber, saved.trainNumberEntered], ['23349', '3349', 'atn'], 'körningen: OTN, ATN och vilket som skrevs');
+  assert(d.getElementById('reportHTML').textContent.includes('Tåg 3349 (OTN 23349)'), 'rapporten');
+  const csv = rt.logsCsv([saved]).split('\n').map(line => line.split(';').map(c => c.replace(/"/g, '')));
+  assertEqual([csv[1][csv[0].indexOf('Tåg')], csv[1][csv[0].indexOf('Annonserat tågnr')]], ['23349', '3349'], 'CSV');
+
+  // 4. Utan val: rutten avgör, annars syftet (föraren OTN, tågvärden ATN)
+  const at = new Date(base);
+  assertEqual((await rt.fetchTimetable('3349', at, { prefer: 'otn', startSig: 'Lkp', endSig: 'Hlk' })).train.otn, '23349', 'rutten Lidköping → Hällekis');
+  assertEqual((await rt.fetchTimetable('3349', at, { prefer: 'otn' })).train.otn, '3349', 'föraren');
+  assertEqual((await rt.fetchTimetable('3349', at, { prefer: 'atn' })).train.otn, '23349', 'tågvärden');
+});
+
+test('tågnummer: startade resan med ATN utan svar från Trafikverket tar Info reda på OTN:et, och vårt tåg räknas inte som mötande', async () => {
+  const r = await midJourney();
+  assertEqual([r.rt.state.trainNumber, r.rt.state.trainNumberEntered], ['3344', ''], 'resan startade utan svar från Trafikverket');
+  r.trv = fakeTrafikverketInfo(r.rt.state.route, { ourOtn: '13344' });
+  r.w.fetch = r.trv.fetch;
+  await r.rt.refreshInfo();
+  await realSleep(50);
+  assert(r.trv.calls[0].includes('<EQ name="AdvertisedTrainIdent" value="3344" />'), 'Info frågar OTN eller ATN');
+  const m = r.rt.infoModel();
+  assert(m, 'prognos finns');
+  assertEqual(m.meetings.map(x => x.otn), ['3347'], 'mötet med 3347, inte vårt eget tåg');
+  assertEqual([r.rt.state.trainNumber, r.rt.state.advertisedTrainNumber, r.rt.state.trainNumberEntered], ['13344', '3344', 'atn'], 'resan fick OTN:et');
+  assert(r.w.document.getElementById('journeyTitle').textContent.startsWith('Tåg 3344 (OTN 13344)'), r.w.document.getElementById('journeyTitle').textContent);
+  const saved = r.rt.loadActiveJourney();
+  assertEqual([saved.trainNumber, saved.advertisedTrainNumber, saved.trainNumberEntered], ['13344', '3344', 'atn'], 'sparat för Återuppta');
+  r.rt.stopJourney(true, 'test');
+});
+
 test('tidtabell: utan LocationDateTimeOTN i svaret blir tågorderns tider tomma', async () => {
   const w = await loadApp();
   w.fetch = async () => announcements([['Lkp', 'Avgang', [2026, 10, 25, 11, 22], '2026-11-25'], ['Hlk', 'Ankomst', [2026, 10, 25, 11, 40], '2026-11-25']]);
@@ -1931,9 +2027,12 @@ function fakeTrafikverketInfo(route, opts) {
     LocationSignature: sig, ActivityType: act, Advertised: true, AdvertisedTimeAtLocation: iso(t), LocationDateTimeOTN: iso(t)
   }, extra || {});
   const ours = [];
+  // opts.ourOtn: vårt tåg har ett annat operativt nummer (OTN) än det annonserade 3344 (ATN)
+  const ourOtn = o.ourOtn || '3344';
+  const ourExtra = o.ourOtn ? { AdvertisedTrainIdent: '3344' } : {};
   route.forEach((st, i) => {
-    if (i > 0) ours.push(row('3344', st.sig, 'Ankomst', Date.parse(st.scheduledArrival)));
-    if (i < route.length - 1) ours.push(row('3344', st.sig, 'Avgang', Date.parse(st.scheduledDeparture)));
+    if (i > 0) ours.push(row(ourOtn, st.sig, 'Ankomst', Date.parse(st.scheduledArrival), ourExtra));
+    if (i < route.length - 1) ours.push(row(ourOtn, st.sig, 'Avgang', Date.parse(st.scheduledDeparture), ourExtra));
   });
   const A4 = Date.parse(route[4].scheduledArrival);
   const E = Date.parse(route[5].scheduledArrival);
@@ -1969,7 +2068,8 @@ function fakeTrafikverketInfo(route, opts) {
     if (body.includes('objecttype="TrainPosition"')) return resp({ RESPONSE: { RESULT: [{ TrainPosition: o.positions || [] }] } });
     if (body.includes('objecttype="TrainStation"')) return resp({ RESPONSE: { RESULT: [{ TrainStation: [{ LocationSignature: 'Mst', AdvertisedLocationName: 'Mariestad' }] }] } });
     // Mina anslutningar: tågen som efterfrågas vid sina stationer (opts.ownRows finns bara här, utanför linjens fönster)
-    if (body.includes('name="AdvertisedTrainIdent"')) {
+    // (vårt tågs fråga har också AdvertisedTrainIdent, men utan station: OTN eller ATN sedan 2026-11-25zg)
+    if (/<EQ name="LocationSignature" value="[^"]+" \/><OR><EQ name="AdvertisedTrainIdent"/.test(body)) {
       const pairs = Array.from(body.matchAll(/<EQ name="LocationSignature" value="([^"]+)" \/><OR><EQ name="AdvertisedTrainIdent" value="([^"]+)"/g)).map(x => [x[1], x[2]]);
       const all = ours.concat(meet, conns, o.extraRows ? o.extraRows(row, dest) : [], o.ownRows ? o.ownRows(row, dest, E) : []);
       return resp({ RESPONSE: { RESULT: [{ TrainAnnouncement: only(all.filter(a => pairs.some(([sig, id]) => a.LocationSignature === sig && a.AdvertisedTrainIdent === id)), body) }] } });
@@ -3319,8 +3419,8 @@ test('trafikverket: efter resan hämtas tågets tider, sparas i körningen, visa
   const uploaded = JSON.parse(fake.files.get(r.w.RailTimerGitHub.runPath(log)).text);
   assertEqual(uploaded.stops[2].trv, log.stops[2].trv, 'Trafikverkets tider laddas upp med körningen');
   const rows = r.rt.logsCsv(r.rt.loadLogs()).split('\n').map(line => line.split(';').map(c => c.replace(/^"|"$/g, '')));
-  assertEqual(rows[0].slice(-3), ['TrV ankomst', 'TrV avgång', 'TrV spår'], 'CSV-kolumner');
-  const trvCols = rows[3].slice(-3);
+  assertEqual(rows[0].slice(-4), ['TrV ankomst', 'TrV avgång', 'TrV spår', 'Annonserat tågnr'], 'CSV-kolumner');
+  const trvCols = rows[3].slice(-4, -1);
   assert(/^\d\d:\d\d:\d\d$/.test(trvCols[0]) && /^\d\d:\d\d:\d\d$/.test(trvCols[1]) && trvCols[2] === '1', 'CSV: Trafikverkets tider och spår: ' + rows[3].join(';'));
 });
 
@@ -3578,6 +3678,18 @@ window.prepareShot = async function (name) {
     r.rt.saveTour(['3344', '3346', '3349']);
     r.w.document.getElementById('tourInput').value = '3344 3346 3349';
     r.rt.renderAutoStartStatus();
+  } else if (name === 'startformular-tagnummer') {
+    // Startformuläret i Bara info: 3349 är ATN för vårt tåg och OTN för ett annat – tågvärden väljer
+    const { ours, other } = trains3349();
+    const r = await appWithStations(1, async (url, init) => {
+      if (String(init && init.body || '').includes('TrainAnnouncement')) return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: ours.concat(other) }] } }) };
+      throw new TypeError('Failed to fetch');
+    });
+    r.w.document.getElementById('purposeInfo').click();
+    const tn = r.w.document.getElementById('trainNumber');
+    tn.value = '3349';
+    tn.dispatchEvent(new r.w.Event('input'));
+    await realSleep(900);
   } else if (name === 'startformular-info') {
     // Startformuläret med Bara info
     const r = await armedApp();

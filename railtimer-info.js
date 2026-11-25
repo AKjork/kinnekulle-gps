@@ -131,10 +131,11 @@
   function request(apiKey, queries) {
     return `<REQUEST><LOGIN authenticationkey="${xmlAttr(apiKey)}" />${queries.join('')}</REQUEST>`;
   }
-  // Vårt tåg, alla platser, ±12 h kring `at` (körningen väljs med nearestRun)
-  function queryOurTrain(otn, at, fields) {
+  /* Vårt tåg, alla platser, ±12 h kring `at`. Numret kan vara operativt (OTN, föraren) eller annonserat (ATN,
+     tågvärden); tåget väljs med RailTimerTrv.pickTrain och delarna slås ihop med mergeTrains. */
+  function queryOurTrain(n, at, fields) {
     return `<QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="1000"><FILTER><AND>` +
-      `<EQ name="OperationalTrainNumber" value="${xmlAttr(otn)}" />` +
+      `<OR><EQ name="OperationalTrainNumber" value="${xmlAttr(n)}" /><EQ name="AdvertisedTrainIdent" value="${xmlAttr(n)}" /></OR>` +
       `<GTE name="AdvertisedTimeAtLocation" value="${localIso(at - 12 * 3600000)}" />` +
       `<LTE name="AdvertisedTimeAtLocation" value="${localIso(at + 12 * 3600000)}" />` +
       `</AND></FILTER>${includes(fields)}</QUERY>`;
@@ -263,6 +264,28 @@
       if (d < bestD) { best = tr; bestD = d; }
     }
     return best;
+  }
+
+  /* Ett tåg av flera delar (ett OTN var, samma ATN): tågnumret byts längs vägen, till exempel 947 → 948 → 949.
+     Delarna i tidsordning slås ihop till ett tåg med alla OTN (otns). Vid platsen där numret byts har den
+     ena delen ankomsten och den andra avgången. Ett tåg i en del blir som det var. */
+  function mergeTrains(parts) {
+    const list = (parts || []).filter(Boolean);
+    if (!list.length) return null;
+    if (list.length === 1) return Object.assign({}, list[0], { otns: [list[0].otn] });
+    const first = list[0];
+    const tr = { key: first.key, otn: first.otn, otns: [], ident: first.ident, date: first.date, product: '', to: [], from: [], at: new Map() };
+    for (const p of list) {
+      if (!tr.otns.includes(p.otn)) tr.otns.push(p.otn);
+      if (!tr.product && p.product) tr.product = p.product;
+      if (!tr.from.length && p.from.length) tr.from = p.from;
+      if (p.to.length) tr.to = p.to; // sista delens destination
+      for (const [sig, loc] of p.at) {
+        const cur = tr.at.get(sig) || { arr: null, dep: null };
+        tr.at.set(sig, { arr: cur.arr || loc.arr, dep: cur.dep || loc.dep });
+      }
+    }
+    return tr;
   }
 
   const planArr = loc => loc.arr ? loc.arr.plan : (loc.dep ? loc.dep.plan : null);
@@ -802,13 +825,18 @@
      sagt att den gäller. */
   const lowestPlanned = o => o.match ? 0 : Math.max(o.minPlannedTransferMin, o.transferMin);
 
+  // Vårt eget tåg, även en annan del av det (eget OTN, samma tåg)
+  function isOurs(tr, our) {
+    return !!tr && !!our && (tr.key === our.key || tr.otn === our.otn || (Array.isArray(our.otns) && our.otns.includes(tr.otn)));
+  }
+
   // Tåg som går från slutstationen efter vår ankomst
   function outgoing(trains, our, endL, predArr, arrived, lineSigs, now, o) {
     const out = [];
     const ourAdv = endL.advArr != null ? endL.advArr : endL.plannedArr;
     if (ourAdv == null) return out;
     for (const tr of trains.values()) {
-      if (tr.otn === our.otn) continue;
+      if (isOurs(tr, our)) continue;
       if (o.match && !o.match('tåg', tr.ident, tr.otn)) continue;
       const loc = tr.at.get(endL.sig);
       const dep = loc && loc.dep;
@@ -842,7 +870,7 @@
     const ourAdv = startL.advDep != null ? startL.advDep : startL.plannedDep;
     if (ourAdv == null) return out;
     for (const tr of trains.values()) {
-      if (tr.otn === our.otn) continue;
+      if (isOurs(tr, our)) continue;
       if (o.match && !o.match('tåg', tr.ident, tr.otn)) continue;
       const loc = tr.at.get(startL.sig);
       const arr = loc && loc.arr;
@@ -1099,7 +1127,7 @@
     const newDouble = new Set();
     const raw = [];
     for (const tr of trains.values()) {
-      if (tr.key === input.ourKey || tr.otn === our.otn) continue;
+      if (tr.key === input.ourKey || isOurs(tr, our)) continue;
       const c = crossingOf(line, tr, idxOf, o);
       if (!c) continue;
       if (c.kind === 'line') {
@@ -1681,7 +1709,7 @@
         if (!sigs.has(sig)) continue;
         for (const r of [loc.arr, loc.dep]) {
           if (!r) continue;
-          trvLogPut(log, `a|${tr.key}|${sig}|${r.kind}`, 'a', now, [tr.otn, sig, r.kind === 'arr' ? 'a' : 'd', relS(log, r.plan),
+          trvLogPut(log, `a|${tr.key}|${sig}|${r.kind}`, 'a', now, [r.otn || tr.otn, sig, r.kind === 'arr' ? 'a' : 'd', relS(log, r.plan),
             relS(log, r.est), relS(log, r.actual), r.canceled ? 1 : 0, r.prelim ? 1 : 0, relS(log, r.modified), r.deviations.join(' | ')], opts);
         }
       }
@@ -1730,7 +1758,7 @@
   return {
     DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, alerts, newAlerts, actionText, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
     request, queryOurTrain, queryLine, queryOwnTrains, queryNames, queryMessages, resultOf,
-    parseAnnouncement, groupTrains, nearestRun, buildLine, crossingOf, latestDelay, theirArrival, theirDeparture,
+    parseAnnouncement, groupTrains, nearestRun, mergeTrains, isOurs, buildLine, crossingOf, latestDelay, theirArrival, theirDeparture,
     progressOf, meetingPlaces, travel, trvLogNew, PROFILE, legKey, trackPoints, runLegs, profileBuilder, remainingFrom, positionEstimate, trvLogTrains, trvLogPositions, trvLogModel, trvLogOut,
     historyMedians, recoveryRatios, plannedRun, predict, outgoing, incoming, signaturesIn, parseMessage, classifyMessages, messagesFor, compute,
     townKey, lineTownsExcept, busOutgoing, busIncoming, CONN_MODES, connShows, splitByMode, connKey, normOwn, ownMatcher, parseOwn

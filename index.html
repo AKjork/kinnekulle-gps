@@ -88,6 +88,10 @@
   .auto-start small{display:block;font-weight:400;color:var(--ink-dim)}
   .tour-group{margin-top:.6rem}
   .label-note{font-weight:400;color:var(--ink-dim);font-size:.8em}
+  .train-ident{color:var(--ink-dim)}
+  .train-choice{display:flex;flex-direction:column;align-items:flex-start;gap:.3rem;margin-top:.3rem}
+  .train-choice .chip{margin-top:0;border-radius:10px;border-color:var(--b);background:transparent}
+  .train-choice .chip[aria-pressed="true"]{border-color:var(--pri);background:var(--pri-glow);font-weight:600}
   .chip{margin-top:.4rem;padding:.35rem .7rem;border:1px solid var(--pri);border-radius:999px;background:var(--pri-glow);color:var(--ink);font-size:.85rem;text-align:left}
   .next-tour{margin:0 0 1rem;padding:.8rem;border:1px solid var(--pri);border-radius:8px;background:var(--pri-glow)}
   .next-tour .nt-label{font-size:.8rem;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.04em}
@@ -745,7 +749,7 @@
     <div class="row">
       <div class="form-group grow">
         <label for="trainNumber">Tågnummer</label>
-        <input id="trainNumber" type="text" inputmode="numeric" placeholder="t.ex. 8074">
+        <input id="trainNumber" type="text" inputmode="numeric" autocomplete="off" placeholder="OTN eller ATN, t.ex. 23349">
       </div>
       <div class="form-group grow" id="vehicleGroup">
         <label for="vehicleType">Fordonstyp *</label>
@@ -791,6 +795,7 @@
       </div>
     </div>
     <div class="hint" id="trainHint">Ger tidtabellen och stationerna längs vägen. Utan tågnummer mäts bara start och slut.</div>
+    <div class="hint train-ident" id="trainIdent" hidden></div>
     <div class="form-group tour-group">
       <label for="tourInput">Dagens tur <span class="label-note">valfritt</span></label>
       <input id="tourInput" type="text" inputmode="numeric" autocomplete="off" placeholder="t.ex. 23349 23334 23351">
@@ -1034,7 +1039,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25zf'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25zg'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1124,7 +1129,9 @@
     running: false,
     watchId: null,
     route: [],
-    trainNumber: '',
+    trainNumber: '',            // OTN när Trafikverket svarat, annars numret som skrevs
+    advertisedTrainNumber: '',  // ATN (annonserat tågnummer)
+    trainNumberEntered: '',     // vilket som skrevs: 'otn' eller 'atn' ('' = okänt)
     vehicleType: '',
     notes: '',
     startedAt: null,
@@ -1315,6 +1322,35 @@
       swedishVoice=voices.find(v=>/^sv(-|_|$)/i.test(v.lang)) || null;
     }catch(e){ swedishVoice=null; }
   }
+  /* ── Tågnummer: operativt (OTN) och annonserat (ATN) ──
+     Lokföraren skriver tågorderns operativa tågnummer (OTN), tågvärden det annonserade (ATN) som resenärerna ser,
+     till exempel 23349 och 3349. Appen tar båda (TRV.pickTrain). state.trainNumber och körningens trainNumber är
+     OTN när Trafikverket har svarat, annars numret som skrevs. advertisedTrainNumber är ATN och trainNumberEntered
+     säger vilket som skrevs ('otn'/'atn'). Analysen och historiken går på OTN som förut; det skrivna numret visas först. */
+  function enteredTrain(s){
+    s=s||state;
+    return s.trainNumberEntered==='atn' && s.advertisedTrainNumber ? String(s.advertisedTrainNumber) : String(s.trainNumber||'');
+  }
+  // "3349 (OTN 23349)" eller "23349 (ATN 3349)": numret som skrevs, det andra inom parentes när det skiljer
+  function trainLabel(s){
+    s=s||state;
+    const n=enteredTrain(s);
+    if(!n) return '';
+    const other = s.trainNumberEntered==='atn'
+      ? (s.trainNumber && String(s.trainNumber)!==n ? `OTN ${s.trainNumber}` : '')
+      : (s.advertisedTrainNumber && String(s.advertisedTrainNumber)!==n ? `ATN ${s.advertisedTrainNumber}` : '');
+    return other ? `${n} (${other})` : n;
+  }
+  // fetchTimetable().train → fälten för resan och körningen
+  function trainIdentity(train, entered){
+    if(!train || !train.otn) return { trainNumber:entered, advertisedTrainNumber:'', trainNumberEntered:'' };
+    return { trainNumber:String(train.otn), advertisedTrainNumber:String(train.atn||''), trainNumberEntered: String(train.otn)===String(entered) ? 'otn' : 'atn' };
+  }
+  // Körningens nummer (OTN och ATN) och om den gäller numret n
+  const trainNumbersOf = r => TRV ? TRV.trainNumbersOf(r) : (r && r.trainNumber ? [String(r.trainNumber)] : []);
+  const sameTrain = (r, n) => !!n && trainNumbersOf(r).includes(String(n));
+  const sameTrainAny = (r, nums) => (nums||[]).some(n => sameTrain(r, n));
+
   // Tågnummer siffra för siffra ("2 3 3 4 9"), som man säger dem i radion
   function spellTrain(otn){
     return String(otn||'').replace(/\D/g,'').split('').join(' ');
@@ -1927,6 +1963,10 @@
     els.cards.addEventListener('input', handleCardInput);
 
     document.getElementById('trainNumber').addEventListener('input', handleTrainNumberInput);
+    document.getElementById('trainIdent').addEventListener('click', e => {
+      const b=e.target.closest('button[data-train-otn]');
+      if(b) chooseTrain(b.dataset.trainOtn);
+    });
     document.getElementById('vehicleType').addEventListener('change', () => { vehicleChosenByUser = true; });
     document.getElementById('btnAcceptSuggestion').addEventListener('click', acceptSuggestion);
     document.getElementById('btnIgnoreSuggestion').addEventListener('click', () => {
@@ -1975,6 +2015,8 @@
     document.getElementById('vehicleGroup').hidden=info;
     document.getElementById('notesGroup').hidden=info;
     document.getElementById('btnStart').textContent = info ? 'Starta Bara info' : 'Starta GPS-resan';
+    // Föraren har tågorderns OTN, tågvärden det annonserade ATN; båda fungerar
+    document.getElementById('trainNumber').placeholder = info ? 'ATN eller OTN, t.ex. 3349' : 'OTN eller ATN, t.ex. 23349';
     const btnNew=document.getElementById('btnNew');
     if(btnNew) btnNew.textContent = info ? 'Starta ny resa' : 'Starta ny mätning';
   }
@@ -1984,7 +2026,10 @@
   function rememberInfoTrip(entry){
     const limit=Date.now()-40*86400000;
     const list=loadInfoTrips().filter(t=>t && Date.parse(t.startedAt)>limit);
-    list.push({ trainNumber:entry.trainNumber, startedAt:new Date(entry.startedAt).toISOString(), startStation:entry.startStation, endStation:entry.endStation, info:true });
+    list.push({ trainNumber:entry.trainNumber,
+      ...(entry.advertisedTrainNumber ? { advertisedTrainNumber:entry.advertisedTrainNumber } : {}),
+      ...(entry.trainNumberEntered ? { trainNumberEntered:entry.trainNumberEntered } : {}),
+      startedAt:new Date(entry.startedAt).toISOString(), startStation:entry.startStation, endStation:entry.endStation, info:true });
     try{ localStorage.setItem(STORAGE_KEY_INFO_TRIPS, JSON.stringify(list.slice(-200))); }catch(e){}
   }
   // Körningarna och resorna med Bara info – för dagens tur (vilka tåg som körts, samma veckodag förra gången)
@@ -2040,7 +2085,13 @@
       document.getElementById('btnStart').disabled = true;
       document.getElementById('btnStart').textContent = 'Hämtar tidtabell...';
 
-      timetableResult = await fetchTimetable(trainNumber, new Date());
+      // Numret kan vara OTN eller ATN: rutten avgör, sedan ett nummer valt i formuläret och syftet
+      // (föraren mäter med OTN, tågvärden kör Bara info med ATN)
+      timetableResult = await fetchTimetable(trainNumber, new Date(), {
+        startSig:selectedStartStation.sig, endSig:selectedEndStation.sig,
+        prefer: infoOnly ? 'atn' : 'otn',
+        otn: trainChoice && trainChoice.number===trainNumber ? trainChoice.otn : null
+      });
 
       document.getElementById('btnStart').disabled = false;
       document.getElementById('btnStart').textContent = infoOnly ? 'Starta Bara info' : 'Starta GPS-resan';
@@ -2060,8 +2111,9 @@
     }
 
     const route = slice.map(makeRouteStation);
+    const ident = trainNumber ? trainIdentity(timetableResult && timetableResult.success ? timetableResult.train : null, trainNumber) : null;
     initJourneyState(route, {
-      trainNumber,
+      ...(ident || { trainNumber }),
       vehicleType,
       notes: infoOnly ? '' : (document.getElementById('startNotes').value||'').trim(),
       purpose: infoOnly ? 'info' : 'measure'
@@ -2103,8 +2155,9 @@
       setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
     }else if(timetableResult && timetableResult.success){
       const stopCount = state.route.length;
-      showJourneyMessage(`Tidtabell hämtad! (${stopCount} stationer)`, false);
-      setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
+      const alt = trainAlternativeText(timetableResult.train);
+      showJourneyMessage(`Tidtabell hämtad! (${stopCount} stationer)` + (alt ? ` · ${alt}` : ''), !!alt);
+      setTimeout(() => { els.journeyMsg.style.display='none'; }, alt ? 8000 : 3000);
     }else if(trainNumber && timetableResult){
       showJourneyMessage(`Tidtabell: ${timetableResult.error} – bara start- och slutstation mäts`, true);
       setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
@@ -2164,6 +2217,8 @@
     state.route=route;
     state.running=true;
     state.trainNumber=meta.trainNumber||'';
+    state.advertisedTrainNumber=meta.advertisedTrainNumber||'';
+    state.trainNumberEntered=meta.trainNumberEntered||'';
     state.vehicleType=meta.vehicleType||'';
     state.notes=meta.notes||'';
     state.purpose=meta.purpose==='info' ? 'info' : 'measure'; // Bara info: sparas inte som mätning
@@ -2460,8 +2515,8 @@
   // Tidtabellens avgång från startstationen, om tidtabellen för tågnumret redan är hämtad
   function autoPlannedDeparture(r){
     const train=trainNumberValue().replace(/[^0-9A-Za-z]/g,'');
-    const hit=train ? timetableCache.get(train) : null;
-    const tt=hit && hit.result && hit.result.timetable;
+    const hit=train ? timetableResults.get(train) : null;
+    const tt=hit && hit.timetable;
     const t=tt && r.start.sig ? tt[r.start.sig] : null;
     const dep=t && (t.operationalDeparture || t.departure);
     return dep ? new Date(dep).getTime() : null;
@@ -3451,7 +3506,7 @@
 
   function startInfo(){
     stopInfo();
-    Object.assign(infoState, { our:null, ourKey:null, line:null, trains:null, fetchedAt:null, error:null, messages:[], messagesAt:0,
+    Object.assign(infoState, { our:null, ourKey:null, ourKeys:null, line:null, trains:null, fetchedAt:null, error:null, messages:[], messagesAt:0,
       model:null, lastHtml:'', notified:new Map(), meetLog:new Map(), eventLog:new Map(), markLog:new Map(), meetKeys:new Set(), trvLog:null, safeFields:false,
       positions:new Map(), positionsOff:false, utropLang:infoState.utropLang||'sv', utropOpen:null,
       buses:new Map(), vtAt:0, vtFetchedAt:null, vtError:null, vtBusy:false });
@@ -3489,14 +3544,23 @@
       if(!infoState.line){
         // Första gången: vårt tåg på alla platser, så att linjen får även driftplatserna där tåget bara passerar
         const at=state.startedAt ? new Date(state.startedAt).getTime() : now;
-        const list=await infoAnnouncements(fields=>INFO.queryOurTrain(state.trainNumber, at, fields));
-        const our=INFO.nearestRun(INFO.groupTrains(list), state.trainNumber, at);
         const startSig=state.route[0] && state.route[0].sig, endSig=state.route[state.route.length-1] && state.route[state.route.length-1].sig;
+        // Numret som skrevs (OTN eller ATN). Har resan båda numren gäller OTN:et; ett ATN med flera OTN längs
+        // vägen blir ett tåg (INFO.mergeTrains), och delarna räknas inte som andra tåg.
+        const n=enteredTrain();
+        const list=await infoAnnouncements(fields=>INFO.queryOurTrain(n, at, fields));
+        const pick=TRV ? TRV.pickTrain(list, n, { at, startSig, endSig, prefer: state.purpose==='info' ? 'atn' : 'otn',
+          otn: state.trainNumberEntered ? state.trainNumber : null }) : null;
+        const groups=INFO.groupTrains(pick ? pick.list : list);
+        const our=pick ? INFO.mergeTrains(pick.keys.map(k=>groups.get(k))) : INFO.nearestRun(groups, n, at);
         const line=INFO.buildLine(our, startSig, endSig);
-        if(!our || line.length<2) throw new Error(`tåg ${state.trainNumber} hittades inte på sträckan`);
+        if(!our || line.length<2) throw new Error(`tåg ${n} hittades inte på sträckan`);
         infoState.our=our;
         infoState.ourKey=our.key;
+        infoState.ourKeys=pick ? pick.keys : [our.key];
         infoState.line=line;
+        // Startade resan utan svar från Trafikverket vet appen nu vilket OTN och ATN numret är
+        if(pick && !state.trainNumberEntered) adoptTrainIdentity(pick, n);
       }
       let rows=await infoAnnouncements(fields=>lineQueryNow(now, fields));
       // Egna tåg (valet Mina) i ett längre fönster än linjens fråga. Går det inte syns de vanliga ändå.
@@ -3513,7 +3577,13 @@
         }
       }
       const trains=INFO.groupTrains(rows);
-      if(!trains.has(infoState.ourKey)) trains.set(infoState.ourKey, infoState.our);
+      // Vårt tåg: delarna (ett OTN var) ur den nya hämtningen ihop, annars som vid första hämtningen
+      const ourKeys=infoState.ourKeys || [infoState.ourKey];
+      const fresh=ourKeys.map(k=>trains.get(k)).filter(Boolean);
+      if(ourKeys.length>1){
+        for(const k of ourKeys) trains.delete(k);
+        trains.set(infoState.ourKey, fresh.length ? Object.assign(INFO.mergeTrains(fresh), { key:infoState.ourKey }) : infoState.our);
+      }else if(!trains.has(infoState.ourKey)) trains.set(infoState.ourKey, infoState.our);
       infoState.trains=trains;
       infoState.fetchedAt=now;
       infoState.error=null;
@@ -3537,6 +3607,17 @@
     await refreshPositions();
     await refreshBuses();
     if(infoState.line && now-infoState.messagesAt>=INFO_MESSAGES_MS) refreshTrainMessages(now);
+  }
+
+  // Resan startade med ett nummer som Trafikverket inte hann svara på: OTN och ATN från infons första hämtning
+  function adoptTrainIdentity(pick, entered){
+    const id=trainIdentity(pick, entered);
+    if(id.trainNumber===state.trainNumber && !id.advertisedTrainNumber) return;
+    state.trainNumber=id.trainNumber;
+    state.advertisedTrainNumber=id.advertisedTrainNumber;
+    state.trainNumberEntered=id.trainNumberEntered;
+    if(els.journeyTitle) els.journeyTitle.textContent=journeyTitleText();
+    saveActiveJourney();
   }
 
   /* Mötande tågs senaste position (TrainPosition), en gång per hämtning. Godtar Trafikverket inte frågan
@@ -4480,7 +4561,7 @@
   function journeyTitleText(){
     const startName=state.route[0]?.name || '?';
     const endName=state.route[state.route.length-1]?.name || '?';
-    return [state.trainNumber?`Tåg ${state.trainNumber}`:'Utan tågnummer', `${startName} → ${endName}`, state.purpose==='info' ? 'Bara info' : state.vehicleType].filter(Boolean).join(' · ');
+    return [state.trainNumber?`Tåg ${trainLabel()}`:'Utan tågnummer', `${startName} → ${endName}`, state.purpose==='info' ? 'Bara info' : state.vehicleType].filter(Boolean).join(' · ');
   }
 
   // En tidcell i stationsraden: faktisk tid med avvikelse under, annars tidtabellens tid nedtonad.
@@ -4769,7 +4850,8 @@
   // Bara info: inget sparas som mätning. Rapporten säger bara att resan är klar, och nästa tur fylls i.
   function finishInfoOnly(aborted, reason){
     const entry={
-      trainNumber:state.trainNumber, startStation:state.route[0]?.name||'', endStation:state.route[state.route.length-1]?.name||'',
+      trainNumber:state.trainNumber, advertisedTrainNumber:state.advertisedTrainNumber||'', trainNumberEntered:state.trainNumberEntered||'',
+      startStation:state.route[0]?.name||'', endStation:state.route[state.route.length-1]?.name||'',
       startedAt:state.startedAt, finishedAt:new Date(), aborted:!!aborted
     };
     rememberInfoTrip(entry);
@@ -4777,7 +4859,7 @@
     flushTrack().then(()=>TrackStore.remove(runId)).catch(()=>{});
     reportedLogId=null;
     els.reportHTML.innerHTML=`<div class="report-summary"><div class="rs-title">${aborted?'Resan avbruten':'Resan klar'}</div>` +
-      `<p class="hint">Tåg ${escapeHtml(entry.trainNumber)} · ${escapeHtml(entry.startStation)} → ${escapeHtml(entry.endStation)} · Bara info – inget sparades som mätning.</p></div>`;
+      `<p class="hint">Tåg ${escapeHtml(trainLabel(entry))} · ${escapeHtml(entry.startStation)} → ${escapeHtml(entry.endStation)} · Bara info – inget sparades som mätning.</p></div>`;
     prepareNextTour(entry);
     showView('report');
     if(!aborted && /^Slutstation/.test(reason||'')){
@@ -4880,7 +4962,7 @@
     const started=logEntry.startedAt?new Date(logEntry.startedAt):null;
     const finished=logEntry.finishedAt?new Date(logEntry.finishedAt):null;
     const when=started?`${started.toLocaleDateString('sv-SE')} ${formatClock(started)}${finished?`–${formatClock(finished)}`:''}`:'';
-    const meta=[logEntry.trainNumber?`Tåg ${escapeHtml(logEntry.trainNumber)}`:null, logEntry.vehicleType?escapeHtml(logEntry.vehicleType):null, when].filter(Boolean).join(' · ');
+    const meta=[logEntry.trainNumber?`Tåg ${escapeHtml(trainLabel(logEntry))}`:null, logEntry.vehicleType?escapeHtml(logEntry.vehicleType):null, when].filter(Boolean).join(' · ');
     const status=(state.aborted?'Avbruten':'Klar')+(state.autoReason?` – ${escapeHtml(state.autoReason)}`:'');
     let saveNote='';
     if(lastSaveProblem && lastSaveProblem.id===logEntry.id){
@@ -5340,6 +5422,8 @@
   function compactRun(r){
     return {
       id:String(r.id||''), trainNumber:r.trainNumber||'', vehicleType:r.vehicleType||'',
+      ...(r.advertisedTrainNumber ? { advertisedTrainNumber:String(r.advertisedTrainNumber) } : {}),
+      ...(r.trainNumberEntered ? { trainNumberEntered:r.trainNumberEntered } : {}),
       startStation:r.startStation||'', endStation:r.endStation||'', startedAt:r.startedAt||null, aborted:!!r.aborted,
       stops:(Array.isArray(r.stops)?r.stops:[]).map(st=>({
         name:st.name||'', actualArrival:st.actualArrival||null, actualDeparture:st.actualDeparture||null,
@@ -5872,6 +5956,8 @@
       format:3,
       appVersion:APP_VERSION,
       trainNumber:state.trainNumber,
+      ...(state.advertisedTrainNumber ? { advertisedTrainNumber:state.advertisedTrainNumber } : {}),
+      ...(state.trainNumberEntered ? { trainNumberEntered:state.trainNumberEntered } : {}),
       vehicleType:state.vehicleType,
       startStation:state.route[0]?.name||'',
       endStation:state.route[state.route.length-1]?.name||'',
@@ -6054,15 +6140,17 @@
     saveRouteHistory(history);
   }
 
+  // trainNumber: ett nummer eller flera (det skrivna, OTN och ATN när Trafikverket svarat)
   function analyzeRouteHistory(trainNumber, currentHour){
-    if(!trainNumber) return null;
+    const nums=Array.from(new Set((Array.isArray(trainNumber) ? trainNumber : [trainNumber]).map(n=>String(n||'').trim()).filter(Boolean)));
+    if(!nums.length) return null;
 
     const history = loadRouteHistory();
-    // Telefonens rutthistorik plus körningarna från GitHub för tågnumret
+    // Telefonens rutthistorik plus körningarna från GitHub för tågnumret (OTN eller ATN)
     const fromRepo = repoRuns
-      .filter(r=>String(r.trainNumber)===String(trainNumber) && r.startStation && r.endStation && !r.aborted)
+      .filter(r=>sameTrainAny(r, nums) && r.startStation && r.endStation && !r.aborted)
       .map(r=>({ start:r.startStation, end:r.endStation, hour:r.startedAt ? new Date(r.startedAt).getHours() : undefined }));
-    const routes = (history[trainNumber] || []).concat(fromRepo);
+    const routes = [].concat(...nums.map(n=>history[n] || [])).concat(fromRepo);
 
     if(!routes || routes.length === 0) return null;
 
@@ -6094,12 +6182,62 @@
     return sorted[0] || null;
   }
 
+  /* Vilket tåg numret är (OTN eller ATN), under fältet. Bara när numren skiljer, till exempel
+     "ATN 3349 = OTN 23349 · Hallsberg pbg 09:25 → Herrljunga C 12:09". Finns numret för flera tåg nu
+     (ATN för ett och OTN för ett annat) väljer föraren eller tågvärden med knapparna (trainChoice). */
+  let trainChoice = null; // { number, otn }
+  function trainKindText(t, n){
+    const otns=(t.otns && t.otns.length>1) ? t.otns.join(' → ') : t.otn;
+    if(t.by==='otn') return t.atn && t.atn!==n ? `OTN ${n} = ATN ${t.atn}` : `OTN ${n}`;
+    if(t.by==='atn' || String(t.otn)!==n || (t.otns && t.otns.length>1)) return `ATN ${n} = OTN ${otns}`;
+    return `${n}`;
+  }
+  function trainRouteText(t){
+    if(!t.from || !t.to) return '';
+    return `${sigName(t.from.sig)} ${formatClock(t.from.t)} → ${sigName(t.to.sig)} ${formatClock(t.to.t)}`;
+  }
+  function trainOptionText(t, n){
+    return [trainKindText(t, n), trainRouteText(t)].filter(Boolean).join(' · ');
+  }
+  // Numret finns för fler tåg än det valda: kort text till meddelandet när resan startar
+  function trainAlternativeText(t){
+    if(!t || !t.alternatives || !t.alternatives.length) return '';
+    if(trainChoice && trainChoice.number===t.entered && trainChoice.otn===t.otn) return '';
+    return `Obs: ${t.entered} är också ${trainOptionText(t.alternatives[0], t.entered)}`;
+  }
+  function renderTrainIdent(n, res){
+    const el=document.getElementById('trainIdent');
+    if(!el) return;
+    const t=res && res.success ? res.train : null;
+    const alts=t && t.alternatives ? t.alternatives : [];
+    const differs=t && (t.by==='atn' || String(t.otn)!==n || (t.atn && t.atn!==n) || (t.otns && t.otns.length>1));
+    if(!t || (!differs && !alts.length)){ el.hidden=true; el.innerHTML=''; return; }
+    let html='';
+    if(alts.length){
+      html=`<div>Numret ${escapeHtml(n)} finns för ${alts.length+1} tåg – välj:</div><div class="train-choice">` +
+        [t].concat(alts).map((o,i)=>`<button type="button" class="chip" data-train-otn="${escapeHtml(o.otn)}" aria-pressed="${i===0}">${escapeHtml(trainOptionText(o, n))}</button>`).join('') +
+        `</div>`;
+    }else{
+      html=escapeHtml(trainOptionText(t, n));
+    }
+    el.innerHTML=html;
+    el.hidden=false;
+  }
+  function chooseTrain(otn){
+    const n=trainNumberValue();
+    if(!n || !otn) return;
+    trainChoice={ number:n, otn:String(otn) };
+    handleTrainNumberInput({ target:document.getElementById('trainNumber') });
+  }
+
   async function handleTrainNumberInput(e){
     const trainNumber = e.target.value.trim();
+    if(trainChoice && trainChoice.number!==trainNumber) trainChoice=null;
 
     if(!trainNumber || trainNumber.length < 2) {
       document.getElementById('routeSuggestion').style.display='none';
       currentSuggestion = null;
+      renderTrainIdent(trainNumber, null);
       return;
     }
 
@@ -6113,8 +6251,17 @@
       let suggestion = null;
       let suggestionSource = '';
 
-      const timetableResult = await fetchTimetable(trainNumber, currentTime);
+      // Har föraren själv valt start och slut avgör de vilket tåg numret är; annars bestämmer tåget rutten
+      const ownRoute=!routeFieldsUntouched() && selectedStartStation && selectedEndStation;
+      const timetableResult = await fetchTimetable(trainNumber, currentTime, {
+        prefer: purpose()==='info' ? 'atn' : 'otn',
+        otn: trainChoice && trainChoice.number===trainNumber ? trainChoice.otn : null,
+        startSig: ownRoute ? selectedStartStation.sig : null, endSig: ownRoute ? selectedEndStation.sig : null
+      });
       if(!stillCurrent()) return;
+      renderTrainIdent(trainNumber, timetableResult);
+      const t = timetableResult.success ? timetableResult.train : null;
+      const nums = [trainNumber].concat(t ? [t.otn, t.atn] : []).filter(Boolean);
 
       if(timetableResult.success && timetableResult.timetable) {
         const nearestStation = await findNearestStation();
@@ -6136,7 +6283,7 @@
       }
 
       if(!suggestion) {
-        const historySuggestion = analyzeRouteHistory(trainNumber, currentHour);
+        const historySuggestion = analyzeRouteHistory(nums, currentHour);
         if(historySuggestion && historySuggestion.count >= 1) {
           suggestion = historySuggestion;
           suggestionSource = historySuggestion.count === 1
@@ -6145,7 +6292,7 @@
         }
       }
 
-      prefillVehicleType(trainNumber);
+      prefillVehicleType(nums);
 
       // Säkert förslag (föraren står vid en station på tågets väg nära avgångstiden): fyll i direkt,
       // om fälten är tomma eller fortfarande har det som fylldes i automatiskt
@@ -6206,9 +6353,10 @@
     if(!sel || vehicleChosenByUser || state.running) return;
     const runs=allRuns().filter(r=>r.vehicleType).sort((a,b)=>String(b.startedAt||'').localeCompare(String(a.startedAt||'')));
     let pick=null;
-    if(trainNumber){
+    const nums=(Array.isArray(trainNumber) ? trainNumber : [trainNumber]).filter(Boolean);
+    if(nums.length){
       const counts=new Map();
-      for(const r of runs) if(String(r.trainNumber)===String(trainNumber)) counts.set(r.vehicleType, (counts.get(r.vehicleType)||0)+1);
+      for(const r of runs) if(sameTrainAny(r, nums)) counts.set(r.vehicleType, (counts.get(r.vehicleType)||0)+1);
       let best=0;
       for(const [v,n] of counts) if(n>best){ best=n; pick=v; } // vid lika: den senaste (runs är nyast först)
     }
@@ -6249,9 +6397,11 @@
     try{ localStorage.setItem(STORAGE_KEY_TOUR, JSON.stringify({ date:ymd(new Date()), trains })); }catch(e){}
   }
   const tourTrains = () => loadTour();
-  function nextTourTrain(otn){
+  // Nästa tåg i turen efter tåget (turen kan ha OTN eller ATN: alla tågets nummer jämförs)
+  function nextTourTrain(train){
     const trains=tourTrains();
-    const i=trains.indexOf(String(otn||''));
+    const nums = train && typeof train==='object' ? [enteredTrain(train)].concat(trainNumbersOf(train)) : [String(train||'')];
+    const i=trains.findIndex(t=>nums.includes(String(t)));
     return i>=0 && i+1<trains.length ? trains[i+1] : null;
   }
   // Tågen samma veckodag förra gången, i den ordning de kördes (minst två)
@@ -6270,7 +6420,7 @@
     for(const k of days){
       const trains=[];
       for(const r of byDay.get(k).sort((a,b)=>String(a.startedAt).localeCompare(String(b.startedAt)))){
-        const t=String(r.trainNumber);
+        const t=enteredTrain(r); // numret som skrevs: OTN för föraren, ATN för tågvärden
         if(trains[trains.length-1]!==t) trains.push(t);
       }
       if(trains.length>=2) return { date:k, trains };
@@ -6304,7 +6454,8 @@
     const trains=tourTrains();
     if(!trains.length) return;
     const today=ymd(new Date());
-    const driven=new Set(tourRuns().filter(r=>r.startedAt && ymd(new Date(r.startedAt))===today).map(r=>String(r.trainNumber)));
+    const driven=new Set();
+    for(const r of tourRuns()) if(r.startedAt && ymd(new Date(r.startedAt))===today) for(const n of trainNumbersOf(r)) driven.add(n);
     const next=trains.find(t=>!driven.has(t));
     if(!next) return;
     tn.value=next;
@@ -6319,12 +6470,12 @@
   // Nästa tåg i turen: avgång från vår slutstation (annars tågets första station) och vart det går
   async function fetchNextTour(){
     state.nextTour=null;
-    const next=nextTourTrain(state.trainNumber);
+    const next=nextTourTrain(state);
     if(!next) return;
     const endSt=state.route[state.route.length-1];
     const runId=state.journeyId;
     const at=planArr(endSt) ? new Date(planArr(endSt)) : new Date();
-    const res=await fetchTimetable(next, at);
+    const res=await fetchTimetable(next, at, { startSig:endSt.sig, prefer: state.purpose==='info' ? 'atn' : 'otn' });
     if(!state.running || state.journeyId!==runId) return;
     if(!res.success || !res.timetable){
       state.nextTour={ otn:next, error:res.error||'tidtabellen saknas' };
@@ -6375,7 +6526,7 @@
 
   // Efter resan: nästa tåg i turen fylls i, och rapporten visar det överst
   function prepareNextTour(entry){
-    const next=entry && !entry.aborted ? nextTourTrain(entry.trainNumber) : null;
+    const next=entry && !entry.aborted ? nextTourTrain(entry) : null;
     nextTourPrepared=null;
     if(!next){ renderNextTourCard(); return; }
     const nt=state.nextTour && state.nextTour.otn===next && state.nextTour.dep!=null ? state.nextTour : null;
@@ -6735,11 +6886,12 @@
     // Schema Ank/Avg är tågorderns tider när de finns (kolumnen Tidtabell säger vilka); de annonserade står sist.
     // Utan tågorderns tider är Schema Ank tom vid mellanstationer där annonserad ankomst = avgång (se planArr).
     // TrV-kolumnerna är Trafikverkets rapporterade tider (stop.trv, hämtade efter resan).
-    const rows=[['Datum','Tåg','Fordon','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa','Tidtabell','Annonserad Ank','Annonserad Avg','TrV ankomst','TrV avgång','TrV spår']];
+    const rows=[['Datum','Tåg','Fordon','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa','Tidtabell','Annonserad Ank','Annonserad Avg','TrV ankomst','TrV avgång','TrV spår','Annonserat tågnr']];
     const clock=v=>v?new Date(v).toLocaleTimeString('sv-SE'):'';
     logs.forEach(log=>{
       const logDate=log.startedAt?new Date(log.startedAt).toLocaleDateString('sv-SE'):'';
       const trainNum=log.trainNumber||'';
+      const atn=log.advertisedTrainNumber||'';
       const vehicleType=log.vehicleType||'';
       const fromSt=log.startStation||'';
       const toSt=log.endStation||'';
@@ -6756,7 +6908,7 @@
         const source=st.arrivalSource||'';
         const basis=hasOperationalTimes(st) ? 'tågorder' : (st.scheduledArrival||st.scheduledDeparture ? 'annonserad' : '');
         const trv=st.trv||{};
-        rows.push([logDate,trainNum,vehicleType,fromSt,toSt,st.name,idx+1,arr,dep,schArr,schDep,delay,source,basis,clock(st.scheduledArrival),clock(st.scheduledDeparture),clock(trv.arrival),clock(trv.departure),trv.track||'']);
+        rows.push([logDate,trainNum,vehicleType,fromSt,toSt,st.name,idx+1,arr,dep,schArr,schDep,delay,source,basis,clock(st.scheduledArrival),clock(st.scheduledDeparture),clock(trv.arrival),clock(trv.departure),trv.track||'',atn]);
       });
     });
     return rows.map(r=>r.map(c=>'"'+(c+'').replace(/"/g,'""')+'"').join(';')).join('\n');
@@ -6976,28 +7128,35 @@
     return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   }
 
-  /* Tidtabellen för den körning av tågnumret som går närmast `date`.
-     Frågan täcker ±12 h runt tidpunkten i lokal tid och körningarna skiljs åt med DepartureDateOTN.
-     Tidigare frågades hela dygnet enligt UTC-datum: mellan 00 och 01 (sommartid 00 och 02) blev det
-     gårdagens tidtabell, och för tåg som går över midnatt föll stationerna efter midnatt bort.
+  /* Tidtabellen för tåget med numret – operativt (OTN, föraren) eller annonserat (ATN, tågvärden) – som går
+     närmast `date`. Frågan gäller OTN = numret eller ATN = numret, ±12 h runt tidpunkten i lokal tid. Tåget väljs
+     med TRV.pickTrain: rutten (opts.startSig/endSig), tiden, syftet (opts.prefer) och ett valt OTN (opts.otn).
+     Har ett ATN flera OTN längs vägen blir delarna ett tåg. Resultatet har `train` (by, otn, otns, atn, alternatives).
      Lyckade svar återanvänds i 15 min, så att Start inte hämtar samma tidtabell som förslaget nyss hämtade. */
   const TIMETABLE_REUSE_MS=15*60*1000;
-  const timetableCache=new Map(); // tågnummer → { fetchedAt, at, result }
-  async function fetchTimetable(otn, date){
-    const train=String(otn||'').trim().replace(/[^0-9A-Za-z]/g,'');
+  const timetableCache=new Map(); // tågnummer → { fetchedAt, at, list }
+  const timetableResults=new Map(); // tågnummer → senaste tidtabellen (avgången för autostart)
+  async function fetchTimetable(number, date, opts){
+    const o=opts||{};
+    const train=String(number||'').trim().replace(/[^0-9A-Za-z]/g,'');
     if(!train) return { success: false, error: 'Inget tågnummer angivet' };
     const at = date ? new Date(date) : new Date();
     const hit=timetableCache.get(train);
-    if(hit && Date.now()-hit.fetchedAt<TIMETABLE_REUSE_MS && Math.abs(at-hit.at)<TIMETABLE_REUSE_MS) return hit.result;
+    let list=null;
+    if(hit && Date.now()-hit.fetchedAt<TIMETABLE_REUSE_MS && Math.abs(at-hit.at)<TIMETABLE_REUSE_MS) list=hit.list;
     try{
-      const from=localIso(new Date(at.getTime()-12*3600000));
-      const to=localIso(new Date(at.getTime()+12*3600000));
-      const xmlRequest = withOtn => `<REQUEST>
+      if(!list){
+        const from=localIso(new Date(at.getTime()-12*3600000));
+        const to=localIso(new Date(at.getTime()+12*3600000));
+        const xmlRequest = withOtn => `<REQUEST>
         <LOGIN authenticationkey="${TRAFIKVERKET_API_KEY}" />
-        <QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="500">
+        <QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="1000">
           <FILTER>
             <AND>
-              <EQ name="OperationalTrainNumber" value="${train}" />
+              <OR>
+                <EQ name="OperationalTrainNumber" value="${train}" />
+                <EQ name="AdvertisedTrainIdent" value="${train}" />
+              </OR>
               <GTE name="AdvertisedTimeAtLocation" value="${from}" />
               <LTE name="AdvertisedTimeAtLocation" value="${to}" />
             </AND>
@@ -7006,40 +7165,46 @@
           <INCLUDE>AdvertisedTimeAtLocation</INCLUDE>
           <INCLUDE>ActivityType</INCLUDE>
           <INCLUDE>OperationalTrainNumber</INCLUDE>
+          <INCLUDE>AdvertisedTrainIdent</INCLUDE>
           <INCLUDE>DepartureDateOTN</INCLUDE>${withOtn ? `
           <INCLUDE>LocationDateTimeOTN</INCLUDE>` : ''}
           <INCLUDE>Advertised</INCLUDE>
         </QUERY>
       </REQUEST>`;
-      const ask = withOtn => fetchWithTimeout(TRAFIKVERKET_API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/xml' },
-        body: xmlRequest(withOtn)
-      }, TIMETABLE_FETCH_TIMEOUT_MS);
-      const apiError = d => d?.RESPONSE?.RESULT?.[0]?.ERROR || null;
+        const ask = withOtn => fetchWithTimeout(TRAFIKVERKET_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/xml' },
+          body: xmlRequest(withOtn)
+        }, TIMETABLE_FETCH_TIMEOUT_MS);
+        const apiError = d => d?.RESPONSE?.RESULT?.[0]?.ERROR || null;
 
-      // Tågorderns tid (LocationDateTimeOTN) är ny i frågan sedan 2026-11-25f och inte provad mot det riktiga API:et.
-      // Godtar Trafikverket den inte (felsvar), frågas igen utan den: resan får då de annonserade tiderna, inte bara
-      // start- och slutstation. Vid tidsgräns eller nätfel frågas inte igen.
-      let response = await ask(true);
-      let data = response.ok ? await response.json() : null;
-      if(!response.ok || apiError(data)){
-        console.warn('Trafikverket godtog inte frågan med LocationDateTimeOTN; frågar utan den', response.status, apiError(data));
-        response = await ask(false);
-        data = response.ok ? await response.json() : null;
-      }
+        // Tågorderns tid (LocationDateTimeOTN) är ny i frågan sedan 2026-11-25f och inte provad mot det riktiga API:et.
+        // Godtar Trafikverket den inte (felsvar), frågas igen utan den: resan får då de annonserade tiderna, inte bara
+        // start- och slutstation. Vid tidsgräns eller nätfel frågas inte igen.
+        let response = await ask(true);
+        let data = response.ok ? await response.json() : null;
+        if(!response.ok || apiError(data)){
+          console.warn('Trafikverket godtog inte frågan med LocationDateTimeOTN; frågar utan den', response.status, apiError(data));
+          response = await ask(false);
+          data = response.ok ? await response.json() : null;
+        }
 
-      if(!response.ok) {
-        return { success: false, error: `API-fel: HTTP ${response.status}` };
+        if(!response.ok) {
+          return { success: false, error: `API-fel: HTTP ${response.status}` };
+        }
+        if(apiError(data)) {
+          return { success: false, error: `API-fel: ${apiError(data).MESSAGE || 'okänt fel'}` };
+        }
+        list = data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [];
       }
-      if(apiError(data)) {
-        return { success: false, error: `API-fel: ${apiError(data).MESSAGE || 'okänt fel'}` };
-      }
-      const announcements = nearestTrainRun(data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [], at);
+      const pick = TRV ? TRV.pickTrain(list, train, { at, startSig:o.startSig, endSig:o.endSig, prefer:o.prefer, otn:o.otn })
+        : (list.length ? { by:'otn', otn:train, otns:[train], atn:'', list:nearestTrainRun(list, at), alternatives:[] } : null);
+      const announcements = pick ? pick.list : [];
 
       if(!announcements.length) {
         return { success: false, error: `Tåg ${train} hittades inte kring ${formatClock(at)} ${at.toLocaleDateString('sv-SE')}` };
       }
+      timetableCache.set(train, { fetchedAt: hit && hit.list===list ? hit.fetchedAt : Date.now(), at: hit && hit.list===list ? hit.at : at, list });
 
       const timetable = {};
       const stationStops = new Set();
@@ -7080,9 +7245,10 @@
         success: true,
         timetable,
         stationStops: Array.from(stationStops),
-        stationCount: Object.keys(timetable).length
+        stationCount: Object.keys(timetable).length,
+        train: { entered: train, by: pick.by, otn: pick.otn, otns: pick.otns, atn: pick.atn, date: pick.date, from: pick.from, to: pick.to, cover: pick.cover, alternatives: pick.alternatives || [] }
       };
-      timetableCache.set(train, { fetchedAt: Date.now(), at, result });
+      timetableResults.set(train, result);
       return result;
     }catch(err){
       console.error('Kunde inte hämta tidtabell:', err);
@@ -7101,6 +7267,7 @@
   }
 
   // Meddelandena för den körning av tågnumret (DepartureDateOTN) vars tider ligger närmast `at`
+  // (reserv om railtimer-trv.js saknas; annars väljer TRV.pickTrain)
   function nearestTrainRun(announcements, at){
     const runs=new Map();
     for(const ann of announcements){
@@ -7163,7 +7330,7 @@
       notes: entry.notes || entry.note || '',
       stops: normalizedStops
     };
-    for(const key of ['format','appVersion','interruptions','trackPath','trv','info','startedBy']){
+    for(const key of ['format','appVersion','interruptions','trackPath','trv','info','startedBy','advertisedTrainNumber','trainNumberEntered']){
       if(entry[key]!==undefined) out[key]=entry[key];
     }
     return out;
@@ -7265,6 +7432,8 @@
         running: state.running,
         route: state.route,
         trainNumber: state.trainNumber,
+        advertisedTrainNumber: state.advertisedTrainNumber || '',
+        trainNumberEntered: state.trainNumberEntered || '',
         vehicleType: state.vehicleType,
         notes: state.notes,
         startedAt: state.startedAt,
@@ -7341,7 +7510,7 @@
         <p style="margin:0 0 .5rem;color:var(--ink);">En pågående resa hittades:</p>
         <p style="margin:0 0 1rem;color:var(--ink-dim);font-size:.9rem;">
           <strong>${escapeHtml(startStation)} → ${escapeHtml(endStation)}</strong><br>
-          Fordon: ${escapeHtml(saved.vehicleType || '–')} • Tåg: ${escapeHtml(saved.trainNumber || '–')}<br>
+          Fordon: ${escapeHtml(saved.vehicleType || '–')} • Tåg: ${escapeHtml(saved.trainNumber ? trainLabel(saved) : '–')}<br>
           Startad: ${startTime}
         </p>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
@@ -7394,6 +7563,8 @@
     state.running = true;
     state.route = saved.route;
     state.trainNumber = saved.trainNumber;
+    state.advertisedTrainNumber = saved.advertisedTrainNumber || '';
+    state.trainNumberEntered = saved.trainNumberEntered || '';
     state.vehicleType = saved.vehicleType;
     state.notes = saved.notes;
     state.startedAt = saved.startedAt ? new Date(saved.startedAt) : new Date();

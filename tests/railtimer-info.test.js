@@ -854,3 +854,30 @@ test('egna anslutningar: det föraren skriver tolkas', () => {
   assert.deepEqual(I.normOwn([{ kind: 'buss', id: ' 600 ', sig: 'Lkp' }, { kind: 'x', id: '', sig: 'Hr' }, null]), [{ kind: 'buss', id: '600', sig: 'Lkp' }]);
 });
 
+test('vårt tåg i flera delar (ett OTN var, samma ATN): ihopslaget, och delarna räknas inte som andra tåg', () => {
+  // ATN 3349 som 23349 Lkp–Vr och 23350 Vr–Hr (tågnumret byts i Vara)
+  const a = (otn, sig, kind, hhmm) => ann(otn, sig, kind, hhmm, { AdvertisedTrainIdent: '3349' });
+  const rows = [a('23349', 'Lkp', 'd', '11:00'), a('23349', 'Jp', 'a', '11:10'), a('23349', 'Jp', 'd', '11:11'), a('23349', 'Vr', 'a', '11:20'),
+    a('23350', 'Vr', 'd', '11:21'), a('23350', 'Vdm', 'a', '11:30'), a('23350', 'Vdm', 'd', '11:31'), a('23350', 'Hr', 'a', '11:40')];
+  const trains = I.groupTrains(rows.concat(MEET()));
+  const our = I.mergeTrains([trains.get('23349|2026-11-25'), trains.get('23350|2026-11-25')]);
+  assert.deepEqual(our.otns, ['23349', '23350']);
+  assert.equal(our.ident, '3349');
+  const vr = our.at.get('Vr');
+  assert.equal(vr.arr.otn, '23349');
+  assert.equal(vr.dep.otn, '23350');
+  const line = I.buildLine(our, 'Lkp', 'Hr');
+  assert.deepEqual(line.map(l => l.sig), ['Lkp', 'Jp', 'Vr', 'Vdm', 'Hr']);
+  assert.ok(I.isOurs(trains.get('23350|2026-11-25'), our));
+  assert.ok(!I.isOurs(trains.get('24360|2026-11-25'), our));
+  trains.set(our.key, our);
+  trains.delete('23350|2026-11-25');
+  const m = I.compute({ line, trains, ourKey: our.key, known: new Map(), now: at('10:50'), routeNames: ROUTE });
+  assert.deepEqual(m.meetings.map(x => x.otn), ['24360'], 'bara det mötande tåget, inte vår andra del');
+  // Ett tåg i en del blir som det var
+  const one = I.mergeTrains([trains.get('24360|2026-11-25')]);
+  assert.deepEqual(one.otns, ['24360']);
+  assert.equal(I.mergeTrains([]), null);
+  // Frågan gäller OTN eller ATN
+  assert.match(I.queryOurTrain('3349', at('11:00')), /<OR><EQ name="OperationalTrainNumber" value="3349" \/><EQ name="AdvertisedTrainIdent" value="3349" \/><\/OR>/);
+});

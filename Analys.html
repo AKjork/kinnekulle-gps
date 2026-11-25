@@ -1115,6 +1115,15 @@
     }
   }
 
+  // Tågnumren (OTN) i datan för filtrets tågnummer: numret självt och tågen med det som ATN
+  function trainKeys(train){
+    const keys = new Set();
+    if(!train) return keys;
+    keys.add(String(train));
+    for(const log of allLogs) if(AN.runTrainMatches(log, train) && log.trainNumber) keys.add(String(log.trainNumber).trim());
+    return keys;
+  }
+
   function setupFilters(){
     const vehicles = new Set();
     const trains = new Set();
@@ -1123,6 +1132,7 @@
     allLogs.forEach(log => {
       if(log.vehicleType) vehicles.add(log.vehicleType);
       if(log.trainNumber) trains.add(log.trainNumber);
+      if(log.advertisedTrainNumber) trains.add(String(log.advertisedTrainNumber)); // ATN går också att välja
       (log.stops || []).forEach(s => {
         if(s.name) stations.add(s.name);
       });
@@ -1326,7 +1336,7 @@
     const skipUnplanned = els.chkSkipUnplanned.checked;
     const obs = AN.segmentObservations(base, { tolerance: tol, tracks: trackInfo });
     const needs = AN.segmentNeeds(obs, { skipUnplanned });
-    const trainRuns = filter.train ? base.filter(r => String(r.trainNumber || '') === filter.train) : base;
+    const trainRuns = filter.train ? base.filter(r => AN.runTrainMatches(r, filter.train)) : base;
     // Bara körningar med tågorderns tider jämförs mot tidtabellen (se railtimer-analys.js, plannedArrival)
     const withTimetable = trainRuns.filter(AN.hasTimetable);
     const stationType = els.filterStationType.value;
@@ -1340,7 +1350,7 @@
       runCount: trainRuns.length, timetableRuns: withTimetable.length, period: AN.period(withTimetable),
       trains: AN.summarizeTrains(trainRuns, needs, { tolerance: tol, stationType }),
       // Sträckor visar tidtabellens namn ("13346 söndag") när samma tågnummer har flera tidtabeller
-      segments: AN.segmentPlans(obs, needs, { tolerance: tol, stationType, train: filter.train,
+      segments: AN.segmentPlans(obs, needs, { tolerance: tol, stationType, train: filter.train ? trainKeys(filter.train) : '',
         labels: new Map(AN.trainVariants(base).flatMap(v => v.runIds.map(id => [id, v.label]))) })
     };
   }
@@ -1783,7 +1793,8 @@
   // första tåget i Per tåg
   function chosenTrain(rows){
     if(ttTrainChoice && rows.some(r => r.key === ttTrainChoice)) return ttTrainChoice;
-    const filtered = tState && tState.filter.train ? rows.find(r => r.train === tState.filter.train) : null;
+    const keys = tState && tState.filter.train ? trainKeys(tState.filter.train) : null;
+    const filtered = keys ? rows.find(r => keys.has(String(r.train))) : null;
     if(filtered) return filtered.key;
     return rows.length ? rows[0].key : '';
   }
@@ -2201,7 +2212,7 @@
     if(from && to && from !== to) runs = AN.sliceRuns(runs, from, to);
     const p = readPeriods();
     const c = AN.comparePeriods(runs, p.a, p.b, { tolerance: tol, tracks: trackInfo, skipUnplanned: els.chkSkipUnplanned.checked });
-    if(filter.train) c.trains = c.trains.filter(t => t.train === filter.train);
+    if(filter.train){ const keys = trainKeys(filter.train); c.trains = c.trains.filter(t => keys.has(String(t.train))); }
     return Object.assign(c, { tol, filter, route: from && to && from !== to ? from + ' → ' + to : '' });
   }
 

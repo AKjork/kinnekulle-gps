@@ -22,7 +22,7 @@
   const RUN_FIELDS = [
     'LocationSignature', 'ActivityType', 'Advertised', 'AdvertisedTimeAtLocation',
     'TimeAtLocation', 'TimeAtLocationWithSeconds', 'TrackAtLocation', 'Canceled', 'Deviation',
-    'Operator', 'ProductInformation', 'OperationalTrainNumber'
+    'Operator', 'ProductInformation', 'OperationalTrainNumber', 'AdvertisedTrainIdent', 'DepartureDateOTN'
   ];
 
   class TrvError extends Error {
@@ -150,14 +150,149 @@
     return String((run && run.trainNumber) || '').trim();
   }
 
+  // ── Operativt (OTN) och annonserat tågnummer (ATN) ──
+  /* Lokföraren skriver tågorderns operativa tågnummer (OTN, OperationalTrainNumber), tågvärden det annonserade
+     (ATN, AdvertisedTrainIdent) som resenärerna ser. Ofta samma nummer, men inte alltid: 23349 annonseras som 3349.
+     Prov mot Trafikverket 2026-11-25 (tools/trafikverket-tagnummer.mjs, avgångar i hela landet ett dygn):
+     - 881 av 4 304 tåg hade ATN ≠ OTN, bland Västtågen 151 av 725 (23334 → 3334, 24360 → 3360, 13346 → 13306).
+     - 563 ATN hade flera OTN samma dag: tågnumret byts längs vägen (947 → 948 → 949), ATN är detsamma.
+     - 3 nummer var ATN för ett tåg och OTN för ett annat samma dag. Då avgör rutten, tiden och syftet. */
+  const CHAIN_GAP_MS = 5 * 60000;   // delar av samma ATN får överlappa högst så här mycket för att räknas som ett tåg
+  const NEAR_MS = 2 * 3600000;      // "nu": tåg inom 2 h från tidpunkten går före tåg längre bort
+
+  function trainNumberFilter(n) {
+    const v = String(n == null ? '' : n).trim();
+    return { op: 'OR', items: [
+      { op: 'EQ', name: 'OperationalTrainNumber', value: v },
+      { op: 'EQ', name: 'AdvertisedTrainIdent', value: v }
+    ] };
+  }
+
+  // Numret föraren eller tågvärden skrev, och båda numren för en sparad körning
+  function enteredNumber(run) {
+    if (!run) return '';
+    if (run.trainNumberEntered === 'atn' && run.advertisedTrainNumber) return String(run.advertisedTrainNumber);
+    return trainOf(run);
+  }
+  function trainNumbersOf(run) {
+    const out = [];
+    for (const v of [run && run.trainNumber, run && run.advertisedTrainNumber]) {
+      const s = String(v == null ? '' : v).trim();
+      if (s && !out.includes(s)) out.push(s);
+    }
+    return out;
+  }
+  // Är körningen tåget med numret n (OTN eller ATN)?
+  function isTrain(run, n) {
+    const s = String(n == null ? '' : n).trim();
+    return !!s && trainNumbersOf(run).includes(s);
+  }
+
+  /* Tåget som numret n avser, ur Trafikverkets annonseringar för OTN = n eller ATN = n.
+     opts: { at (tidpunkt), startSig, endSig, prefer: 'otn'|'atn', otn (detta OTN gäller, t.ex. valt i formuläret) }.
+     Kandidater: ett OTN ett avgångsdatum, och ATN = n där delarna (ett OTN var) ligger efter varandra i tid.
+     Ordning: valt OTN, rutten (start och slut i rätt ordning, annars en av dem), inom 2 h, syftet (föraren
+     skriver OTN, tågvärden ATN), närmast i tid.
+     Ger { by: 'otn'|'atn'|'both', otn (OTN vid startstationen), otns, atn, date, keys (otn|datum), list,
+     from: { sig, t }, to: { sig, t }, cover, alternatives: andra tåg med numret inom 2 h eller på rutten } eller null. */
+  function pickTrain(anns, n, opts) {
+    const o = opts || {};
+    const num = String(n == null ? '' : n).trim();
+    if (!num) return null;
+    const at = toMs(o.at) != null ? toMs(o.at) : Date.now();
+    const groups = new Map();
+    for (const a of anns || []) {
+      if (!a) continue;
+      const t = toMs(a.AdvertisedTimeAtLocation);
+      if (t == null) continue;
+      let otn = a.OperationalTrainNumber != null && a.OperationalTrainNumber !== '' ? String(a.OperationalTrainNumber) : '';
+      const atn = a.AdvertisedTrainIdent != null && a.AdvertisedTrainIdent !== '' ? String(a.AdvertisedTrainIdent) : '';
+      if (!otn && !atn) otn = num; // utan nummer i svaret: frågan gällde numret
+      const date = String(a.DepartureDateOTN || '').slice(0, 10);
+      const key = `${otn || atn}|${date}`;
+      let g = groups.get(key);
+      if (!g) { g = { key, otn: otn || atn, atns: new Set(), date, min: t, max: t, list: [], first: null, last: null, at: new Map(), deps: new Set() }; groups.set(key, g); }
+      if (atn) g.atns.add(atn);
+      g.list.push(a);
+      const sig = a.LocationSignature;
+      if (!g.first || t < g.first.t) g.first = { sig, t };
+      if (!g.last || t >= g.last.t) g.last = { sig, t };
+      g.min = Math.min(g.min, t);
+      g.max = Math.max(g.max, t);
+      if (sig) {
+        if (!g.at.has(sig) || t < g.at.get(sig)) g.at.set(sig, t);
+        if (a.ActivityType === 'Avgang') g.deps.add(sig);
+      }
+    }
+    const cands = [];
+    // ATN = n: delarna samma avgångsdatum i tidsordning; en del som överlappar mer än 5 min är ett annat tåg
+    const byDate = new Map();
+    for (const g of groups.values()) {
+      if (!g.atns.has(num)) continue;
+      if (!byDate.has(g.date)) byDate.set(g.date, []);
+      byDate.get(g.date).push(g);
+    }
+    for (const list of byDate.values()) {
+      list.sort((a, b) => a.min - b.min);
+      const chains = [];
+      for (const g of list) {
+        const c = chains.find(ch => ch[ch.length - 1].max <= g.min + CHAIN_GAP_MS);
+        if (c) c.push(g); else chains.push([g]);
+      }
+      for (const ch of chains) cands.push({ groups: ch, by: ch.some(g => g.otn === num) ? 'both' : 'atn' });
+    }
+    for (const g of groups.values()) if (g.otn === num && !g.atns.has(num)) cands.push({ groups: [g], by: 'otn' });
+    if (!cands.length) return null;
+
+    for (const c of cands) {
+      c.min = Math.min(...c.groups.map(g => g.min));
+      c.max = Math.max(...c.groups.map(g => g.max));
+      c.at = new Map();
+      for (const g of c.groups) for (const [sig, t] of g.at) if (!c.at.has(sig) || t < c.at.get(sig)) c.at.set(sig, t);
+      const s = o.startSig ? c.at.get(o.startSig) : null, e = o.endSig ? c.at.get(o.endSig) : null;
+      c.cover = s != null && e != null && s <= e ? 2 : (s != null || e != null ? 1 : 0);
+      c.dist = at < c.min ? c.min - at : (at > c.max ? at - c.max : 0);
+      c.near = c.dist <= NEAR_MS;
+      c.otns = c.groups.map(g => g.otn);
+      c.pinned = !!o.otn && c.otns.includes(String(o.otn));
+      c.pref = o.prefer === 'otn' ? c.by !== 'atn' : (o.prefer === 'atn' ? c.by !== 'otn' : false);
+      const atns = new Set();
+      for (const g of c.groups) for (const x of g.atns) atns.add(x);
+      c.atn = c.by === 'otn' ? (atns.size === 1 ? [...atns][0] : '') : num;
+      c.identity = c.by === 'otn' ? `otn:${num}` : `atn:${num}`;
+      // OTN vid startstationen: delen som avgår därifrån, annars delen som har stationen, annars den första
+      const seg = (o.startSig && (c.groups.find(g => g.deps.has(o.startSig)) || c.groups.find(g => g.at.has(o.startSig)))) || c.groups[0];
+      c.otn = seg.otn;
+      c.from = c.groups[0].first;
+      c.to = c.groups[c.groups.length - 1].last;
+    }
+    const cmp = (a, b) => (b.pinned - a.pinned) || (b.cover - a.cover) || (b.near - a.near) || (b.pref - a.pref) || (a.dist - b.dist) || (a.min - b.min);
+    cands.sort(cmp);
+    const best = cands[0];
+    const brief = c => ({ by: c.by, otn: c.otn, otns: c.otns, atn: c.atn, date: c.groups[0].date, from: c.from, to: c.to, cover: c.cover });
+    // Andra tåg med numret (inte samma tåg ett annat datum), det närmaste av varje
+    const alternatives = [];
+    const seen = new Set([best.identity]);
+    for (const c of cands.slice(1)) {
+      if (seen.has(c.identity) || !(c.near || c.cover)) continue;
+      seen.add(c.identity);
+      alternatives.push(brief(c));
+    }
+    return Object.assign(brief(best), {
+      keys: best.groups.map(g => g.key),
+      list: [].concat(...best.groups.map(g => g.list)),
+      alternatives
+    });
+  }
+
   function runQuery(run, include) {
     const win = runWindow(run);
-    const train = trainOf(run);
+    const train = enteredNumber(run);
     if (!win || !train) return null;
     const q = {
       objecttype: 'TrainAnnouncement', schemaversion: '1.9', limit: 1000,
       filter: { op: 'AND', items: [
-        { op: 'EQ', name: 'OperationalTrainNumber', value: train },
+        trainNumberFilter(train),
         { op: 'GTE', name: 'AdvertisedTimeAtLocation', value: win.from },
         { op: 'LTE', name: 'AdvertisedTimeAtLocation', value: win.to }
       ] }
@@ -166,10 +301,20 @@
     return q;
   }
 
+  /* Körningens annonseringar: bara tåget som körningen gällde. Frågan gäller OTN eller ATN, så svaret kan ha ett
+     annat tåg med samma nummer; då avgör körningens stationer och tid, och OTN:et när körningen har båda numren. */
   async function fetchRunAnnouncements(run, opts) {
     const q = runQuery(run);
     if (!q) return [];
-    return query(q, opts);
+    const list = await query(q, opts);
+    const stops = (run.stops || []).filter(s => s && s.sig);
+    const pick = pickTrain(list, enteredNumber(run), {
+      at: run.startedAt,
+      startSig: stops.length ? stops[0].sig : null,
+      endSig: stops.length > 1 ? stops[stops.length - 1].sig : null,
+      otn: run.advertisedTrainNumber ? trainOf(run) : null
+    });
+    return pick ? pick.list : [];
   }
 
   // Annonseringen för stationen och aktiviteten som ligger närmast refMs i tid
@@ -410,12 +555,12 @@
     const date = o.date || swedishDay(now);
     const out = { checkedAt: new Date(now).toISOString(), trainNumber: train, date, sections: {} };
 
-    // 1. Tågets annonseringar under dagen, alla fält
+    // 1. Tågets annonseringar under dagen, alla fält. Numret kan vara operativt (OTN) eller annonserat (ATN).
     progress(`Tåg ${train}: annonseringar`);
     const ann = await safe(() => query({
       objecttype: 'TrainAnnouncement', schemaversion: '1.9', limit: 1000, orderby: 'AdvertisedTimeAtLocation',
       filter: { op: 'AND', items: [
-        { op: 'EQ', name: 'OperationalTrainNumber', value: train },
+        trainNumberFilter(train),
         { op: 'GTE', name: 'AdvertisedTimeAtLocation', value: `${date}T00:00:00` },
         { op: 'LTE', name: 'AdvertisedTimeAtLocation', value: `${date}T23:59:59` }
       ] }
@@ -426,17 +571,22 @@
       progress('Avbrutet');
       return out;
     }
-    const anns = ann.ok ? ann.value : [];
+    // Samma tåg som appen skulle välja: dagens körning närmast nu (annan dag: mitt på dagen)
+    const pickAt = date === swedishDay(now) ? now : Date.parse(`${date}T12:00:00`);
+    const pick = ann.ok ? pickTrain(ann.value, train, { at: pickAt }) : null;
+    const anns = pick ? pick.list.slice().sort((a, b) => (toMs(a.AdvertisedTimeAtLocation) || 0) - (toMs(b.AdvertisedTimeAtLocation) || 0)) : [];
+    const otn = pick ? pick.otn : train;
+    if (pick) out.train = { by: pick.by, otn: pick.otn, otns: pick.otns, atn: pick.atn, alternatives: pick.alternatives };
     const routeSigs = Array.from(new Set(anns.map(a => a.LocationSignature).filter(Boolean)));
     out.sections.announcements = ann.ok
-      ? { count: anns.length, fields: fieldSummary(anns), records: anns, sigs: routeSigs }
+      ? { count: anns.length, fields: fieldSummary(anns), records: anns, sigs: routeSigs, otherTrains: ann.value.length - anns.length }
       : { error: ann.error };
 
     // 2. Tågets position, och hur många tåg som rapporterar position just nu
     progress('Tågpositioner');
     const pos = await safe(() => query({
       namespace: 'järnväg.trafikinfo', objecttype: 'TrainPosition', schemaversion: '1.1', limit: 5,
-      orderby: 'TimeStamp desc', filter: { op: 'EQ', name: 'Train.OperationalTrainNumber', value: train }
+      orderby: 'TimeStamp desc', filter: { op: 'EQ', name: 'Train.OperationalTrainNumber', value: otn }
     }, req));
     const allPos = await safe(() => query({
       namespace: 'järnväg.trafikinfo', objecttype: 'TrainPosition', schemaversion: '1.1', limit: 10000,
@@ -514,7 +664,7 @@
     // Namespace: Trafikverket skriver att TrainAnnouncement kräver namespace från 2/9 2026, men frågorna
     // utan namespace svarade 2026-11-25. Här provas varianterna, så att appen kan byta i förväg.
     progress('Namespace');
-    const nsTrain = { op: 'EQ', name: 'OperationalTrainNumber', value: train };
+    const nsTrain = { op: 'EQ', name: 'OperationalTrainNumber', value: otn };
     const nsDay = { op: 'AND', items: [nsTrain, { op: 'GTE', name: 'AdvertisedTimeAtLocation', value: `${date}T00:00:00` }, { op: 'LTE', name: 'AdvertisedTimeAtLocation', value: `${date}T23:59:59` }] };
     const variants = [
       { label: 'TrainAnnouncement 1.9 utan namespace (appen i dag)', q: { objecttype: 'TrainAnnouncement', schemaversion: '1.9', limit: 1000, filter: nsDay } },
@@ -562,6 +712,7 @@
     API_URL, DEFAULT_KEY, RUN_FIELDS, TrvError,
     xmlEscape, filterXml, buildQuery, buildRequest, request, query,
     toMs, swedishLocal, swedishDay, runWindow, runQuery, fetchRunAnnouncements,
+    trainNumberFilter, pickTrain, enteredNumber, trainNumbersOf, isTrain,
     matchAnnouncement, trafikverketTimes, applyTrafikverket, needsTrafikverket, wholeMinute, signaturesIn,
     compareRun, stats, summarizeComparison, fieldSummary, pickRuns, wgs84, runCheck
   };

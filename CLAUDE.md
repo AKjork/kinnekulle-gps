@@ -24,6 +24,7 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 | `railtimer-vt.js` | Västtrafiks API (Planera Resa v4): token, hållplatser vid en station, avgångar och ankomster – bussanslutningar i Info |
 | `vasttrafik-koll.html` | Västtrafik-data: provar Västtrafiks API från telefonen (token, hållplatser, bussar) |
 | `vt-token.json`, `tools/vasttrafik-token.mjs`, `.github/workflows/vasttrafik-token.yml` | Västtrafiks gemensamma token: GitHub Actions hämtar den med hemligheterna `VT_KEY`/`VT_SECRET` och lägger den i `vt-token.json`, som appen läser (sedan 2026-11-25za) |
+| `tools/trafikverket-tagnummer.mjs`, `.github/workflows/trafikverket-prov.yml` | Prov mot Trafikverkets riktiga API från GitHub Actions (utvecklingsmiljön når det inte): operativt och annonserat tågnummer. Körs när skriptet ändras eller för hand; skriver bara i körningens logg och sammanfattning (sedan 2026-11-25zg) |
 | `docs/vasttrafik-worker.js` | Egen liten server för Västtrafik (Cloudflare Worker). Behövs inte: Västtrafik tillåter appens adress (2026-11-25za) |
 | `api-koll.html` | Trafikverket-data: visar vad API:t svarar och appens tider mot Trafikverkets |
 | `kinnekulle-gps.webmanifest` | PWA manifest |
@@ -1752,3 +1753,52 @@ André 2026-11-25: "Man kanske också skulle vilja ha ett alternativ där man sj
 - `node tests/run-browser-tests.mjs`, nytt: *mina anslutningar: läggs till i Inställningar, och Mina i Info visar bara dem och de markerade …*. Simulerat Trafikverket svarar på frågan för egna tåg (`opts.ownRows` i `fakeTrafikverketInfo`).
 - Bilder: `--shot=info-mina` och `--shot=mina-installningar`.
 
+## Uppdatering (2026-11-25zg): operativt (OTN) och annonserat tågnummer (ATN)
+
+André 2026-11-25: "Lokförare jobbar med OTN, alltså operativt tekniskt tågnummer, vilket de också bör skriva in när de använder appen. Tågvärdar däremot, de använder ATN, annonserat tekniskt tågnummer. Det är det numret som annonseras till resenärerna. Kan vi göra så att appen fungerar med båda dessa nummer?" Appversion `2026-11-25zg`. Logiken för ankomst och avgång är oförändrad.
+
+### Provat mot Trafikverket (från GitHub, 2026-11-25)
+Utvecklingsmiljön når inte Trafikverket, så provet körs i GitHub Actions: `tools/trafikverket-tagnummer.mjs` (workflow *Trafikverket-prov*, körning 45688007709). Det skriver bara ut svaret i körningens logg och sammanfattning.
+- **Frågan `OperationalTrainNumber = n ELLER AdvertisedTrainIdent = n` fungerar.** 3349 och 23349 ger samma tåg (OTN 23349, ATN 3349, Hallsberg pbg 09:25 → Herrljunga C 12:09). Likaså 3334/23334, 3344/13344, 3355/13355, 3360/24360, 3341/24341, 3332/23332 och 3302/23302. 3346 är i dag OTN 53346, och OTN 13346 har ATN 13306.
+- **Hela landet, avgångar ett dygn (4 306 tåg):**
+  - ATN = OTN för 3 423 tåg, ATN ≠ OTN för 881. Bland Västtågen skiljer 151 av 725.
+  - **563 ATN har flera OTN samma dag**: tågnumret byts längs vägen, till exempel ATN 947 = OTN 947 Nbt–Kju, 948 Et–Arb och 949 Jbk–Ör. Även ATN 13306 = OTN 13055 och 13346.
+  - **3 nummer var ATN för ett tåg och OTN för ett annat** samma dag (27632, 18771 och 1324), inget på Västtågen.
+- Annonseringar utan OTN förekommer (över hundra ATN, till exempel 63750, med Västtågen som produkt). Då används ATN som nummer.
+
+### Hur appen väljer tåget (`railtimer-trv.js`)
+- `trainNumberFilter(n)`: frågan OTN = n eller ATN = n. Används av tidtabellen (`fetchTimetable`), Info (`INFO.queryOurTrain`), Trafikverkets tider efter resan (`runQuery`) och kontrollsidan.
+- `pickTrain(annonseringar, n, opts)`: kandidaterna är varje OTN per avgångsdatum, och ATN = n där delarna (ett OTN var) ligger efter varandra i tid (högst 5 min överlapp). En del som överlappar mer är ett annat tåg. Rader utan nummer i svaret räknas till n.
+- **Ordning:**
+  1. Ett OTN som valts i formuläret.
+  2. Rutten: start och slut i rätt ordning, annars en av dem.
+  3. Inom 2 h från nu.
+  4. Syftet: *Mät tidtabell* (föraren) föredrar OTN och *Bara info* (tågvärden) ATN.
+  5. Närmast i tid.
+- Ger `by` (`otn`, `atn` eller `both`), `otn` (OTN vid startstationen när numret byts längs vägen), `otns`, `atn`, `from`/`to`, `list` (bara det valda tågets annonseringar) och `alternatives`: andra tåg med numret inom 2 h eller på rutten. Samma tåg en annan dag är inget alternativ.
+
+### Appen
+- **Startformuläret:** fältet säger *OTN eller ATN, t.ex. 23349* (Bara info: *ATN eller OTN, t.ex. 3349*). Under fältet (`#trainIdent`) står vilket tåg numret är när numren skiljer: *ATN 3349 = OTN 23349 · Hallsberg pbg 09:25 → Herrljunga C 12:09* eller *OTN 23349 = ATN 3349 · …*.
+  - Finns numret för flera tåg nu står *Numret 3349 finns för 2 tåg – välj:* med en knapp per tåg (`trainChoice`, `chooseTrain`). Det valda står först.
+  - Har föraren själv valt start och slut avgör de vilket tåg numret är, annars bestämmer tåget rutten som förut.
+- **Resan** (`trainIdentity`): `state.trainNumber` är OTN när Trafikverket svarat, `state.advertisedTrainNumber` ATN och `state.trainNumberEntered` vilket som skrevs (`'otn'`/`'atn'`). Rubriken, rapporten och Återuppta visar numret som skrevs först och det andra inom parentes (`trainLabel`): *Tåg 3349 (OTN 23349)* eller *Tåg 23349 (ATN 3349)*. Uppläsningen säger numret som skrevs.
+  - Startade resan utan svar från Trafikverket tar Info reda på OTN och ATN vid första hämtningen (`adoptTrainIdentity`), och resan sparas om.
+  - Finns numret för ett tåg till som inte valts säger meddelandet när resan startar det (*Obs: 27632 är också …*).
+- **Info:** vårt tåg väljs med `pickTrain` och delarna slås ihop (`INFO.mergeTrains`). Våra andra delar räknas inte som mötande tåg eller anslutningar (`INFO.isOurs`, `our.otns`). Vid omhämtning slås delarna ihop igen (`infoState.ourKeys`).
+- **Körningen** (format 3 som förut) får `advertisedTrainNumber` och `trainNumberEntered` när de är kända. `trainNumber` är OTN som förut, så analysen, historiken och statistiken grupperar som förut. Se `docs/railtimer-data-README.md`. `compactRun`, `normalizeLogEntry`, resor i Bara info och pågående resa bevarar fälten.
+- **CSV:** kolumnen *Annonserat tågnr* sist.
+- **Efter resan** frågar `fetchRunAnnouncements` med numret som skrevs (`enteredNumber`) och tar bara körningens tåg: stationerna, tiden och OTN:et när körningen har båda numren. Förut kunde ett annat tåg med samma nummer ha blandats in om frågan gällt båda.
+- **Dagens tur, rutthistoriken och förvald fordonstyp** jämför alla tågets nummer (`trainNumbersOf`, `sameTrain`). Turen kan alltså skrivas med OTN eller ATN, och förslaget från samma veckodag visar numren som skrevs.
+
+### Kontrollsidan och analysverktyget
+- **Trafikverket-data** (`api-koll.html`): numret kan vara OTN eller ATN. Rubriken säger till exempel *Tåg 3349 (OTN 23349)*. Positionen och namespace-provet frågar med OTN:et, och annonseringar för ett annat tåg med samma nummer räknas och visas inte (`otherTrains`).
+- **Analysverktyget:** tågnummerfiltret matchar OTN eller ATN (`AN.runTrainMatches`), och listan har även ATN. *Per tåg* och *Sträckor* visar fortfarande OTN, och ATN i filtret ger tågets OTN (`trainKeys`).
+
+### Inte provat
+- Formuläret och resan mot det riktiga API:t på telefon. Frågan och svaren är provade från GitHub, och allt annat mot simulerade svar.
+- Ett tåg vars OTN byts mitt på resans sträcka: ihopslagningen är provad med simulerade svar (Info) och med provets mönster (947 → 948 → 949). Av förarens tåg i provet hade de flesta ett OTN hela vägen; ATN 13306 hade två (OTN 13055 och 13346 Håkantorp–Mariestad).
+
+### Tester
+- `node --test "tests/*.test.js"` (207), nya: *pickTrain: …* (4), *fetchRunAnnouncements: frågar OTN eller ATN …*, *vårt tåg i flera delar …* och *tågnummer: filtret gäller …*.
+- `node tests/run-browser-tests.mjs` (129), nya: *tågnummer: ATN fungerar som OTN – …* (tipset, valet mellan två tåg, resan, rubriken, körningen, rapporten och CSV) och *tågnummer: startade resan med ATN utan svar från Trafikverket …* (Info). Det simulerade Trafikverket (`fakeTrafikverketInfo`) skiljer nu Mina anslutningars fråga (station + ATN) från vårt tågs fråga, som också har AdvertisedTrainIdent.
+- Bild: `--shot=startformular-tagnummer`.

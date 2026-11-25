@@ -983,3 +983,15 @@ test('tågorderns tider: passage med bara en tid i tågordern', () => {
   const s = { name: 'Y', shouldStop: true, operationalDeparture: at(11, 22) };
   assert.equal(AN.plannedArrival(s), null, 'stopp utan tågorderns ankomst: ingen planerad ankomst');
 });
+
+test('tågnummer: filtret gäller operativt (OTN) eller annonserat nummer (ATN)', () => {
+  const run = { trainNumber: '23349', advertisedTrainNumber: '3349', stops: [] };
+  assert.ok(AN.runTrainMatches(run, '23349'));
+  assert.ok(AN.runTrainMatches(run, '3349'));
+  assert.ok(!AN.runTrainMatches(run, '3350'));
+  assert.ok(AN.runTrainMatches(run, ''));
+  // Gamla körningar har bara trainNumber
+  assert.ok(AN.runTrainMatches({ trainNumber: '3349' }, '3349'));
+  assert.ok(!AN.runMatches(run, { train: '3350' }));
+  assert.ok(AN.runMatches(run, { train: '3349' }));
+});
