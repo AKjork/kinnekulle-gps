@@ -138,9 +138,11 @@
   }
   /* Vårt tåg, alla platser, ±12 h kring `at`. Numret kan vara operativt (OTN, föraren) eller annonserat (ATN,
      tågvärden); tåget väljs med RailTimerTrv.pickTrain och delarna slås ihop med mergeTrains. */
-  function queryOurTrain(n, at, fields) {
+  // kind 'atn': bara ATN – tågets övriga delar när OTN byts längs vägen (RailTimerTrv.followAtn)
+  function queryOurTrain(n, at, fields, kind) {
     return `<QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="1000"><FILTER><AND>` +
-      `<OR><EQ name="OperationalTrainNumber" value="${xmlAttr(n)}" /><EQ name="AdvertisedTrainIdent" value="${xmlAttr(n)}" /></OR>` +
+      (kind === 'atn' ? `<EQ name="AdvertisedTrainIdent" value="${xmlAttr(n)}" />`
+        : `<OR><EQ name="OperationalTrainNumber" value="${xmlAttr(n)}" /><EQ name="AdvertisedTrainIdent" value="${xmlAttr(n)}" /></OR>`) +
       `<GTE name="AdvertisedTimeAtLocation" value="${localIso(at - 12 * 3600000)}" />` +
       `<LTE name="AdvertisedTimeAtLocation" value="${localIso(at + 12 * 3600000)}" />` +
       `</AND></FILTER>${includes(fields)}</QUERY>`;

@@ -1878,3 +1878,38 @@ André 2026-11-25 om Mina anslutningar: "Blir de valda och bevakade då? Eller �
 ### Tester
 - `node --test "tests/*.test.js"` (214), nytt: *egna anslutningar: knapp eller missad ger förslaget att ringa trafikledningen, och knappt enligt plan varnar inte*.
 - `node tests/run-browser-tests.mjs` (131), nytt: *mina anslutningar: en egen anslutning som missas ger ☎ ring trafikledningen utan ★, och sparas i körningen*.
+
+
+## Uppdatering (2026-11-25zj): tåg som byter OTN längs vägen
+
+André 2026-11-25: "Jag har haft problem med dessa tåg pga de byter nr innan man är framme." ATN är samma hela vägen Lidköping–Göteborg, men OTN byts: ett Lidköping–Håkantorp, ett nytt Håkantorp–Öxnered och ett nytt Öxnered–Göteborg. Med det första OTN:et fungerade Lidköping–Håkantorp men inte resten. Appversion `2026-11-25zj`. Logiken för ankomst och avgång är oförändrad.
+
+### Provat mot Trafikverket (från GitHub, 2026-11-25, workflow-körning 45699555386)
+`tools/trafikverket-tagnummer.mjs` har en tredje del: alla tåg vid Lidköping, Håkantorp och Öxnered (`CHAIN_SIGS`) och alla delar av deras ATN.
+- **120 ATN hade flera OTN**, till exempel:
+  - ATN 13305 = OTN 13001 Mariestad–Håkantorp, 13054 Håkantorp–Öxnered och 13305 Öxnered–Göteborg C;
+  - ATN 13306 = OTN 33396 Göteborg C–Öxnered, 13055 Öxnered–Håkantorp och 13346 Håkantorp–Mariestad;
+  - ATN 3261 = OTN 13260 Vänersborg–Öxnered och 3261 Öxnered–Göteborg C.
+- Den ena delen slutar med ankomst där nästa börjar med avgång, högst några minuter senare.
+- **Tåg-id:t** (`OperationalTransportIdentifiers`, `TR`, till exempel `3197/-------13305/02`) var detsamma i alla delar i alla 120, och ATN:et var också detsamma. ATN räcker alltså för att följa tåget.
+- Körningarna i `railtimer-data` med 13001 (Lidköping → Håkantorp, Mariestad → Lidköping) är första delen av ATN 13305.
+
+### Så följer appen tåget (`railtimer-trv.js`)
+- `pickTrain`: ett OTN (`by: 'otn'`) får tågets övriga delar när svaret har dem: delarna med samma ATN samma avgångsdatum, i tidsordning (som för ATN sedan 2026-11-25zg). Resultatet har `changes`: `[{ sig, otn, t }]`, platsen där varje ny del börjar.
+- `followAtn(pick, n)`: ett OTN med ett annat ATN ger ATN:et. Då görs en **andra fråga** på bara ATN (`trainNumberFilter(atn, 'atn')`), svaren slås ihop (`mergeAnnouncements`, varje annonsering en gång) och tåget väljs igen. Går den andra frågan inte gäller den skrivna delen som förut.
+- Används av tidtabellen (`fetchTimetable`, ihopslaget svar sparas 15 min), Info (`refreshInfo`: `INFO.queryOurTrain(atn, at, fields, 'atn')`), Trafikverkets tider efter resan (`fetchRunAnnouncements`) och kontrollsidan (`runCheck`).
+- **Tågnumret** (`trainIdentity`): ett skrivet OTN gäller som `trainNumber` hela resan, även efter numret bytts. Ett ATN ger OTN vid startstationen som förut. Analysen grupperar alltså på det OTN föraren skrev.
+
+### I appen
+- **Startformuläret:** *OTN 13001 = ATN 13305 · Mariestad 09:28 → Göteborg C 12:10 · OTN byts: 13054 i Håkantorp, 13305 i Öxnered* (`trainChangesText`).
+- **Rutten** går hela vägen till slutstationen. Vid platsen där numret byts har den ena delen ankomsten och nästa avgången, som ett vanligt uppehåll.
+- **Stationsraden** visar *tågnr 13054 härifrån* vid platsen där numret byts (`station.otnFrom`, från `timetable[sig].otnFrom`), utom vid slutstationen.
+- **Info:** delarna slås ihop till vårt tåg (`INFO.mergeTrains`, sedan 2026-11-25zg) och räknas inte som mötande tåg.
+
+### Inte provat
+- På telefon med ett riktigt tåg som byter OTN. Frågorna och svaren är provade från GitHub, och appen mot simulerade svar med samma mönster.
+- Ett tåg som byter ATN längs vägen följs inte: inget sådant fanns vid Lidköping, Håkantorp eller Öxnered. Det skulle i så fall kunna följas med tåg-id:t (`TR`).
+
+### Tester
+- `node --test "tests/*.test.js"` (215), nya: *pickTrain: OTN som byts längs vägen – 13001 …, 13054 …, 13305 …* och *fetchRunAnnouncements: körningen med ett OTN som byts …*. *pickTrain: ett ATN med flera OTN …* provar nu att ett OTN får hela tåget och `followAtn`.
+- `node tests/run-browser-tests.mjs` (132), nya: *tågnummer: OTN som byts längs vägen – …* (två frågor, tipset, hela rutten, `otnFrom`, stationsraderna och tiderna där numret byts) och *tågnummer: Info följer tåget när OTN byts …*. `fakeTrafikverketInfo` har `opts.ourParts` och svarar på frågan med bara ATN.

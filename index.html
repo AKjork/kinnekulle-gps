@@ -1039,7 +1039,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25zi'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25zj'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1342,9 +1342,12 @@
     return other ? `${n} (${other})` : n;
   }
   // fetchTimetable().train → fälten för resan och körningen
+  // Ett skrivet OTN gäller som tågnummer även när tåget byter OTN längs vägen; ett ATN ger OTN vid startstationen.
   function trainIdentity(train, entered){
     if(!train || !train.otn) return { trainNumber:entered, advertisedTrainNumber:'', trainNumberEntered:'' };
-    return { trainNumber:String(train.otn), advertisedTrainNumber:String(train.atn||''), trainNumberEntered: String(train.otn)===String(entered) ? 'otn' : 'atn' };
+    const n=String(entered);
+    const kind = train.by==='otn' ? 'otn' : (train.by==='atn' ? 'atn' : (String(train.otn)===n ? 'otn' : 'atn'));
+    return { trainNumber: kind==='otn' ? n : String(train.otn), advertisedTrainNumber:String(train.atn||''), trainNumberEntered:kind };
   }
   // Körningens nummer (OTN och ATN) och om den gäller numret n
   const trainNumbersOf = r => TRV ? TRV.trainNumbersOf(r) : (r && r.trainNumber ? [String(r.trainNumber)] : []);
@@ -2184,6 +2187,7 @@
       scheduledDeparture:st.scheduledDeparture||null,
       operationalArrival:st.operationalArrival||null,
       operationalDeparture:st.operationalDeparture||null,
+      otnFrom:st.otnFrom||null,        // tågnumret (OTN) byts här: det nya gäller härifrån
       arrivalSource:'',
       departSource:'',
       arrivalPosition:null,
@@ -2387,7 +2391,8 @@
         scheduledArrival: info.arrival || null,
         scheduledDeparture: info.departure || null,
         operationalArrival: info.operationalArrival || null,
-        operationalDeparture: info.operationalDeparture || null
+        operationalDeparture: info.operationalDeparture || null,
+        otnFrom: info.otnFrom || null
       });
     }
 
@@ -3548,9 +3553,18 @@
         // Numret som skrevs (OTN eller ATN). Har resan båda numren gäller OTN:et; ett ATN med flera OTN längs
         // vägen blir ett tåg (INFO.mergeTrains), och delarna räknas inte som andra tåg.
         const n=enteredTrain();
-        const list=await infoAnnouncements(fields=>INFO.queryOurTrain(n, at, fields));
-        const pick=TRV ? TRV.pickTrain(list, n, { at, startSig, endSig, prefer: state.purpose==='info' ? 'atn' : 'otn',
-          otn: state.trainNumberEntered ? state.trainNumber : null }) : null;
+        let list=await infoAnnouncements(fields=>INFO.queryOurTrain(n, at, fields));
+        const pickOpts={ at, startSig, endSig, prefer: state.purpose==='info' ? 'atn' : 'otn',
+          otn: state.trainNumberEntered ? state.trainNumber : null };
+        let pick=TRV ? TRV.pickTrain(list, n, pickOpts) : null;
+        // Ett OTN som byts längs vägen: tågets övriga delar (samma ATN). Går det inte gäller den skrivna delen.
+        const follow=TRV ? TRV.followAtn(pick, n) : null;
+        if(follow){
+          try{
+            list=TRV.mergeAnnouncements(list, await infoAnnouncements(fields=>INFO.queryOurTrain(follow, at, fields, 'atn')));
+            pick=TRV.pickTrain(list, n, pickOpts);
+          }catch(e){ console.warn('Infofliken: tågets övriga delar kunde inte hämtas', e); }
+        }
         const groups=INFO.groupTrains(pick ? pick.list : list);
         const our=pick ? INFO.mergeTrains(pick.keys.map(k=>groups.get(k))) : INFO.nearestRun(groups, n, at);
         const line=INFO.buildLine(our, startSig, endSig);
@@ -4668,7 +4682,8 @@
     if(!done && !station.missedReason){
       const memo=placeNoteFor(station);
       const halt=haltSummary(idx);
-      const extra=[memo?'📌 '+memo:'', halt?halt.short:''].filter(Boolean).join(' · ');
+      const otnHere=station.otnFrom && idx<state.route.length-1 ? `tågnr ${station.otnFrom} härifrån` : '';
+      const extra=[otnHere, memo?'📌 '+memo:'', halt?halt.short:''].filter(Boolean).join(' · ');
       if(extra) note = note ? `${note} · ${extra}` : extra;
     }
     const arr = idx>0 || station.actualArrival ? timeCell(station.actualArrival, planArr(station), station.arrivalWindow) : '<span class="st-t plan"><b></b></span>';
@@ -6212,17 +6227,21 @@
      (ATN för ett och OTN för ett annat) väljer föraren eller tågvärden med knapparna (trainChoice). */
   let trainChoice = null; // { number, otn }
   function trainKindText(t, n){
-    const otns=(t.otns && t.otns.length>1) ? t.otns.join(' → ') : t.otn;
     if(t.by==='otn') return t.atn && t.atn!==n ? `OTN ${n} = ATN ${t.atn}` : `OTN ${n}`;
-    if(t.by==='atn' || String(t.otn)!==n || (t.otns && t.otns.length>1)) return `ATN ${n} = OTN ${otns}`;
+    if(t.by==='atn' || String(t.otn)!==n) return `ATN ${n} = OTN ${t.otn}`;
     return `${n}`;
   }
   function trainRouteText(t){
     if(!t.from || !t.to) return '';
     return `${sigName(t.from.sig)} ${formatClock(t.from.t)} → ${sigName(t.to.sig)} ${formatClock(t.to.t)}`;
   }
+  // Var tågnumret (OTN) byts längs vägen: "OTN byts: 13054 i Håkantorp, 13305 i Öxnered"
+  function trainChangesText(t){
+    const ch=(t && t.changes) || [];
+    return ch.length ? 'OTN byts: ' + ch.map(c=>`${c.otn} i ${sigName(c.sig)}`).join(', ') : '';
+  }
   function trainOptionText(t, n){
-    return [trainKindText(t, n), trainRouteText(t)].filter(Boolean).join(' · ');
+    return [trainKindText(t, n), trainRouteText(t), trainChangesText(t)].filter(Boolean).join(' · ');
   }
   // Numret finns för fler tåg än det valda: kort text till meddelandet när resan startar
   function trainAlternativeText(t){
@@ -7170,18 +7189,16 @@
     let list=null;
     if(hit && Date.now()-hit.fetchedAt<TIMETABLE_REUSE_MS && Math.abs(at-hit.at)<TIMETABLE_REUSE_MS) list=hit.list;
     try{
-      if(!list){
-        const from=localIso(new Date(at.getTime()-12*3600000));
-        const to=localIso(new Date(at.getTime()+12*3600000));
+      const from=localIso(new Date(at.getTime()-12*3600000));
+      const to=localIso(new Date(at.getTime()+12*3600000));
+      // Annonseringarna för numret (OTN eller ATN), eller bara ATN (tågets övriga delar). Ger { list } eller { error }.
+      const fetchList = async (numberFilter) => {
         const xmlRequest = withOtn => `<REQUEST>
         <LOGIN authenticationkey="${TRAFIKVERKET_API_KEY}" />
         <QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="1000">
           <FILTER>
             <AND>
-              <OR>
-                <EQ name="OperationalTrainNumber" value="${train}" />
-                <EQ name="AdvertisedTrainIdent" value="${train}" />
-              </OR>
+              ${numberFilter}
               <GTE name="AdvertisedTimeAtLocation" value="${from}" />
               <LTE name="AdvertisedTimeAtLocation" value="${to}" />
             </AND>
@@ -7215,14 +7232,33 @@
         }
 
         if(!response.ok) {
-          return { success: false, error: `API-fel: HTTP ${response.status}` };
+          return { error: `API-fel: HTTP ${response.status}` };
         }
         if(apiError(data)) {
-          return { success: false, error: `API-fel: ${apiError(data).MESSAGE || 'okänt fel'}` };
+          return { error: `API-fel: ${apiError(data).MESSAGE || 'okänt fel'}` };
         }
-        list = data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [];
+        return { list: data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [] };
+      };
+      const pickOpts = { at, startSig:o.startSig, endSig:o.endSig, prefer:o.prefer, otn:o.otn };
+      if(!list){
+        const r = await fetchList(`<OR>
+                <EQ name="OperationalTrainNumber" value="${train}" />
+                <EQ name="AdvertisedTrainIdent" value="${train}" />
+              </OR>`);
+        if(r.error) return { success: false, error: r.error };
+        list = r.list;
+        // Ett OTN som byts längs vägen (till exempel 13001 Mariestad–Håkantorp, 13054 till Öxnered, 13305 till
+        // Göteborg C): tågets övriga delar har samma ATN och hämtas i en andra fråga. Går den inte gäller första delen.
+        const follow = TRV ? TRV.followAtn(TRV.pickTrain(list, train, pickOpts), train) : null;
+        if(follow){
+          try{
+            const more = await fetchList(`<EQ name="AdvertisedTrainIdent" value="${follow}" />`);
+            if(more.list) list = TRV.mergeAnnouncements(list, more.list);
+            else console.warn('Tågets övriga delar kunde inte hämtas', more.error);
+          }catch(e){ console.warn('Tågets övriga delar kunde inte hämtas', e); }
+        }
       }
-      const pick = TRV ? TRV.pickTrain(list, train, { at, startSig:o.startSig, endSig:o.endSig, prefer:o.prefer, otn:o.otn })
+      const pick = TRV ? TRV.pickTrain(list, train, pickOpts)
         : (list.length ? { by:'otn', otn:train, otns:[train], atn:'', list:nearestTrainRun(list, at), alternatives:[] } : null);
       const announcements = pick ? pick.list : [];
 
@@ -7265,13 +7301,15 @@
           stationStops.add(sig);
         }
       });
+      // Där tågnumret (OTN) byts: det nya numret gäller härifrån
+      for(const c of (pick.changes || [])) if(timetable[c.sig]) timetable[c.sig].otnFrom = c.otn;
 
       const result = {
         success: true,
         timetable,
         stationStops: Array.from(stationStops),
         stationCount: Object.keys(timetable).length,
-        train: { entered: train, by: pick.by, otn: pick.otn, otns: pick.otns, atn: pick.atn, date: pick.date, from: pick.from, to: pick.to, cover: pick.cover, alternatives: pick.alternatives || [] }
+        train: { entered: train, by: pick.by, otn: pick.otn, otns: pick.otns, atn: pick.atn, date: pick.date, from: pick.from, to: pick.to, cover: pick.cover, changes: pick.changes || [], alternatives: pick.alternatives || [] }
       };
       timetableResults.set(train, result);
       return result;

@@ -156,12 +156,18 @@
      Prov mot Trafikverket 2026-11-25 (tools/trafikverket-tagnummer.mjs, avgångar i hela landet ett dygn):
      - 881 av 4 304 tåg hade ATN ≠ OTN, bland Västtågen 151 av 725 (23334 → 3334, 24360 → 3360, 13346 → 13306).
      - 563 ATN hade flera OTN samma dag: tågnumret byts längs vägen (947 → 948 → 949), ATN är detsamma.
-     - 3 nummer var ATN för ett tåg och OTN för ett annat samma dag. Då avgör rutten, tiden och syftet. */
+     - 3 nummer var ATN för ett tåg och OTN för ett annat samma dag. Då avgör rutten, tiden och syftet.
+     Vid Lidköping, Håkantorp och Öxnered (prov 2026-11-25, workflow-körning 45699555386) hade 120 ATN flera OTN,
+     till exempel ATN 13305 = OTN 13001 Mariestad–Håkantorp, 13054 Håkantorp–Öxnered och 13305 Öxnered–Göteborg C.
+     Tåg-id:t (OperationalTransportIdentifiers TR) var detsamma i alla delar i alla 120. Den som skriver ett OTN
+     får därför hela tåget: delarna med samma ATN läggs till (followAtn, andra frågan). */
   const CHAIN_GAP_MS = 5 * 60000;   // delar av samma ATN får överlappa högst så här mycket för att räknas som ett tåg
   const NEAR_MS = 2 * 3600000;      // "nu": tåg inom 2 h från tidpunkten går före tåg längre bort
 
-  function trainNumberFilter(n) {
+  // kind 'atn': bara ATN (andra frågan, för tågets övriga delar)
+  function trainNumberFilter(n, kind) {
     const v = String(n == null ? '' : n).trim();
+    if (kind === 'atn') return { op: 'EQ', name: 'AdvertisedTrainIdent', value: v };
     return { op: 'OR', items: [
       { op: 'EQ', name: 'OperationalTrainNumber', value: v },
       { op: 'EQ', name: 'AdvertisedTrainIdent', value: v }
@@ -225,23 +231,34 @@
       }
     }
     const cands = [];
-    // ATN = n: delarna samma avgångsdatum i tidsordning; en del som överlappar mer än 5 min är ett annat tåg
-    const byDate = new Map();
-    for (const g of groups.values()) {
-      if (!g.atns.has(num)) continue;
-      if (!byDate.has(g.date)) byDate.set(g.date, []);
-      byDate.get(g.date).push(g);
-    }
-    for (const list of byDate.values()) {
-      list.sort((a, b) => a.min - b.min);
-      const chains = [];
-      for (const g of list) {
-        const c = chains.find(ch => ch[ch.length - 1].max <= g.min + CHAIN_GAP_MS);
-        if (c) c.push(g); else chains.push([g]);
+    // Delarna (ett OTN var) med ATN a, per avgångsdatum i tidsordning; en del som överlappar mer än 5 min är ett annat tåg
+    const chainsOf = a => {
+      const byDate = new Map();
+      for (const g of groups.values()) {
+        if (!g.atns.has(a)) continue;
+        if (!byDate.has(g.date)) byDate.set(g.date, []);
+        byDate.get(g.date).push(g);
       }
-      for (const ch of chains) cands.push({ groups: ch, by: ch.some(g => g.otn === num) ? 'both' : 'atn' });
+      const out = [];
+      for (const list of byDate.values()) {
+        list.sort((x, y) => x.min - y.min);
+        const chains = [];
+        for (const g of list) {
+          const c = chains.find(ch => ch[ch.length - 1].max <= g.min + CHAIN_GAP_MS);
+          if (c) c.push(g); else chains.push([g]);
+        }
+        out.push(...chains);
+      }
+      return out;
+    };
+    for (const ch of chainsOf(num)) cands.push({ groups: ch, by: ch.some(g => g.otn === num) ? 'both' : 'atn' });
+    // OTN = n: tågets övriga delar (samma ATN) kommer med när svaret har dem (followAtn)
+    for (const g of groups.values()) {
+      if (g.otn !== num || g.atns.has(num)) continue;
+      const atn = g.atns.size === 1 ? [...g.atns][0] : '';
+      const chain = atn ? chainsOf(atn).find(ch => ch.includes(g)) : null;
+      cands.push({ groups: chain || [g], by: 'otn' });
     }
-    for (const g of groups.values()) if (g.otn === num && !g.atns.has(num)) cands.push({ groups: [g], by: 'otn' });
     if (!cands.length) return null;
 
     for (const c of cands) {
@@ -260,8 +277,10 @@
       for (const g of c.groups) for (const x of g.atns) atns.add(x);
       c.atn = c.by === 'otn' ? (atns.size === 1 ? [...atns][0] : '') : num;
       c.identity = c.by === 'otn' ? `otn:${num}` : `atn:${num}`;
-      // OTN vid startstationen: delen som avgår därifrån, annars delen som har stationen, annars den första
-      const seg = (o.startSig && (c.groups.find(g => g.deps.has(o.startSig)) || c.groups.find(g => g.at.has(o.startSig)))) || c.groups[0];
+      // OTN vid startstationen: delen som avgår därifrån, annars delen som har stationen, annars det skrivna OTN:et
+      // eller den första delen
+      const seg = (o.startSig && (c.groups.find(g => g.deps.has(o.startSig)) || c.groups.find(g => g.at.has(o.startSig))))
+        || (c.by === 'otn' && c.groups.find(g => g.otn === num)) || c.groups[0];
       c.otn = seg.otn;
       c.from = c.groups[0].first;
       c.to = c.groups[c.groups.length - 1].last;
@@ -269,7 +288,9 @@
     const cmp = (a, b) => (b.pinned - a.pinned) || (b.cover - a.cover) || (b.near - a.near) || (b.pref - a.pref) || (a.dist - b.dist) || (a.min - b.min);
     cands.sort(cmp);
     const best = cands[0];
-    const brief = c => ({ by: c.by, otn: c.otn, otns: c.otns, atn: c.atn, date: c.groups[0].date, from: c.from, to: c.to, cover: c.cover });
+    // Var numret byts: första platsen i varje följande del
+    const changes = c => c.groups.slice(1).map(g => ({ sig: g.first.sig, otn: g.otn, t: g.first.t }));
+    const brief = c => ({ by: c.by, otn: c.otn, otns: c.otns, atn: c.atn, date: c.groups[0].date, from: c.from, to: c.to, cover: c.cover, changes: changes(c) });
     // Andra tåg med numret (inte samma tåg ett annat datum), det närmaste av varje
     const alternatives = [];
     const seen = new Set([best.identity]);
@@ -283,6 +304,26 @@
       list: [].concat(...best.groups.map(g => g.list)),
       alternatives
     });
+  }
+
+  /* Ska tågets övriga delar hämtas? Ett OTN med ett annat ATN: ATN:et ger delarna före och efter (andra frågan,
+     trainNumberFilter(atn, 'atn')). Ger ATN:et, annars null. */
+  function followAtn(pick, n) {
+    const num = String(n == null ? '' : n).trim();
+    return pick && pick.by === 'otn' && pick.atn && pick.atn !== num ? pick.atn : null;
+  }
+  // Annonseringarna i båda svaren, var och en en gång
+  function mergeAnnouncements(a, b) {
+    const seen = new Set();
+    const out = [];
+    for (const x of [].concat(a || [], b || [])) {
+      if (!x) continue;
+      const k = [x.OperationalTrainNumber, x.AdvertisedTrainIdent, x.DepartureDateOTN, x.LocationSignature, x.ActivityType, x.AdvertisedTimeAtLocation].join('|');
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(x);
+    }
+    return out;
   }
 
   function runQuery(run, include) {
@@ -306,14 +347,23 @@
   async function fetchRunAnnouncements(run, opts) {
     const q = runQuery(run);
     if (!q) return [];
-    const list = await query(q, opts);
+    let list = await query(q, opts);
     const stops = (run.stops || []).filter(s => s && s.sig);
-    const pick = pickTrain(list, enteredNumber(run), {
+    const n = enteredNumber(run);
+    const pickOpts = {
       at: run.startedAt,
       startSig: stops.length ? stops[0].sig : null,
       endSig: stops.length > 1 ? stops[stops.length - 1].sig : null,
       otn: run.advertisedTrainNumber ? trainOf(run) : null
-    });
+    };
+    let pick = pickTrain(list, n, pickOpts);
+    // Ett OTN: tågets övriga delar (samma ATN), så att stationerna efter ett nummerbyte kommer med
+    const atn = followAtn(pick, n);
+    if (atn) {
+      const more = await query(Object.assign({}, q, { filter: { op: 'AND', items: [trainNumberFilter(atn, 'atn')].concat(q.filter.items.slice(1)) } }), opts);
+      list = mergeAnnouncements(list, more);
+      pick = pickTrain(list, n, pickOpts);
+    }
     return pick ? pick.list : [];
   }
 
@@ -573,10 +623,26 @@
     }
     // Samma tåg som appen skulle välja: dagens körning närmast nu (annan dag: mitt på dagen)
     const pickAt = date === swedishDay(now) ? now : Date.parse(`${date}T12:00:00`);
-    const pick = ann.ok ? pickTrain(ann.value, train, { at: pickAt }) : null;
+    let pick = ann.ok ? pickTrain(ann.value, train, { at: pickAt }) : null;
+    // Ett OTN med ett annat ATN: tågets övriga delar
+    const follow = followAtn(pick, train);
+    if (follow) {
+      const more = await safe(() => query({
+        objecttype: 'TrainAnnouncement', schemaversion: '1.9', limit: 1000, orderby: 'AdvertisedTimeAtLocation',
+        filter: { op: 'AND', items: [
+          trainNumberFilter(follow, 'atn'),
+          { op: 'GTE', name: 'AdvertisedTimeAtLocation', value: `${date}T00:00:00` },
+          { op: 'LTE', name: 'AdvertisedTimeAtLocation', value: `${date}T23:59:59` }
+        ] }
+      }, req));
+      if (more.ok) {
+        ann.value = mergeAnnouncements(ann.value, more.value);
+        pick = pickTrain(ann.value, train, { at: pickAt });
+      }
+    }
     const anns = pick ? pick.list.slice().sort((a, b) => (toMs(a.AdvertisedTimeAtLocation) || 0) - (toMs(b.AdvertisedTimeAtLocation) || 0)) : [];
     const otn = pick ? pick.otn : train;
-    if (pick) out.train = { by: pick.by, otn: pick.otn, otns: pick.otns, atn: pick.atn, alternatives: pick.alternatives };
+    if (pick) out.train = { by: pick.by, otn: pick.otn, otns: pick.otns, atn: pick.atn, changes: pick.changes, alternatives: pick.alternatives };
     const routeSigs = Array.from(new Set(anns.map(a => a.LocationSignature).filter(Boolean)));
     out.sections.announcements = ann.ok
       ? { count: anns.length, fields: fieldSummary(anns), records: anns, sigs: routeSigs, otherTrains: ann.value.length - anns.length }
@@ -712,7 +778,7 @@
     API_URL, DEFAULT_KEY, RUN_FIELDS, TrvError,
     xmlEscape, filterXml, buildQuery, buildRequest, request, query,
     toMs, swedishLocal, swedishDay, runWindow, runQuery, fetchRunAnnouncements,
-    trainNumberFilter, pickTrain, enteredNumber, trainNumbersOf, isTrain,
+    trainNumberFilter, pickTrain, followAtn, mergeAnnouncements, enteredNumber, trainNumbersOf, isTrain,
     matchAnnouncement, trafikverketTimes, applyTrafikverket, needsTrafikverket, wholeMinute, signaturesIn,
     compareRun, stats, summarizeComparison, fieldSummary, pickRuns, wgs84, runCheck
   };

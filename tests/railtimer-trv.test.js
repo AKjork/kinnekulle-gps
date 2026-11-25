@@ -325,11 +325,68 @@ test('pickTrain: ett ATN med flera OTN längs vägen blir ett tåg; OTN gäller 
   // Tågvärden som skriver ett ATN som skiljer sig från alla OTN
   const anns2 = anns.map(a => Object.assign({}, a, { AdvertisedTrainIdent: '1947' }));
   assert.deepEqual(TRV.pickTrain(anns2, '1947', { at }).otns, ['947', '948', '949']);
-  // Föraren med OTN 949: bara den delen (ATN 1947 ≠ 949)
+  // Föraren med OTN 949: hela tåget när svaret har de andra delarna (samma ATN 1947)
   const d = TRV.pickTrain(anns2, '949', { at });
   assert.equal(d.by, 'otn');
-  assert.deepEqual(d.otns, ['949']);
+  assert.deepEqual(d.otns, ['947', '948', '949']);
+  assert.equal(d.otn, '949', 'det skrivna OTN:et utan startstation');
   assert.equal(d.atn, '1947');
+  // Bara OTN-delen i svaret: den delen, och ATN:et ska hämtas
+  const only949 = anns2.filter(a => a.OperationalTrainNumber === '949');
+  const e = TRV.pickTrain(only949, '949', { at });
+  assert.deepEqual(e.otns, ['949']);
+  assert.equal(TRV.followAtn(e, '949'), '1947');
+  assert.equal(TRV.followAtn(p, '947'), null, 'ATN skrivet: inget att följa');
+});
+
+test('pickTrain: OTN som byts längs vägen – 13001 Mariestad–Håkantorp, 13054 Håkantorp–Öxnered, 13305 Öxnered–Göteborg C (ATN 13305)', () => {
+  // Som Trafikverket 2026-11-25 (workflow-körning 45699555386)
+  const t = (otn, sig, act, hhmm) => tAnn(otn, '13305', sig, act, hhmm);
+  const first = [t('13001', 'Mst', 'Avgang', '09:28'), t('13001', 'Lkp', 'Ankomst', '10:20'), t('13001', 'Lkp', 'Avgang', '10:22'), t('13001', 'Håp', 'Ankomst', '10:56')];
+  const rest = [t('13054', 'Håp', 'Avgang', '11:00'), t('13054', 'Öx', 'Ankomst', '11:27'), t('13305', 'Öx', 'Avgang', '11:27'), t('13305', 'G', 'Ankomst', '12:10')];
+  const at = Date.parse('2026-11-25T10:00:00+01:00');
+  // Första frågan (OTN 13001 eller ATN 13001) ger bara första delen; Göteborg C finns inte
+  const one = TRV.pickTrain(first, '13001', { at, startSig: 'Lkp', endSig: 'G' });
+  assert.equal(one.cover, 1);
+  assert.equal(TRV.followAtn(one, '13001'), '13305');
+  // Med ATN-frågans svar: hela tåget, och var numret byts
+  const all = TRV.mergeAnnouncements(first, first.concat(rest));
+  assert.equal(all.length, 8, 'samma annonsering en gång');
+  const p = TRV.pickTrain(all, '13001', { at, startSig: 'Lkp', endSig: 'G' });
+  assert.equal(p.by, 'otn');
+  assert.equal(p.cover, 2);
+  assert.deepEqual(p.otns, ['13001', '13054', '13305']);
+  assert.equal(p.otn, '13001');
+  assert.equal(p.atn, '13305');
+  assert.deepEqual(p.changes.map(c => [c.sig, c.otn]), [['Håp', '13054'], ['Öx', '13305']]);
+  assert.equal(p.list.length, 8);
+  // Föraren som börjar i Håkantorp med 13054
+  const q = TRV.pickTrain(all, '13054', { at, startSig: 'Håp', endSig: 'G' });
+  assert.equal(q.otn, '13054');
+  assert.deepEqual(q.otns, ['13001', '13054', '13305']);
+  // Tågvärden med ATN 13305 får samma tåg; OTN vid startstationen
+  const r = TRV.pickTrain(all, '13305', { at, startSig: 'Lkp', endSig: 'G' });
+  assert.equal(r.by, 'both');
+  assert.equal(r.otn, '13001');
+});
+
+test('fetchRunAnnouncements: körningen med ett OTN som byts får tågets övriga delar i en andra fråga', async () => {
+  const t = (otn, sig, act, hhmm) => tAnn(otn, '13305', sig, act, hhmm);
+  const first = [t('13001', 'Lkp', 'Avgang', '10:22'), t('13001', 'Håp', 'Ankomst', '10:56')];
+  const rest = [t('13054', 'Håp', 'Avgang', '11:00'), t('13054', 'Öx', 'Ankomst', '11:27'), t('13305', 'Öx', 'Avgang', '11:27'), t('13305', 'G', 'Ankomst', '12:10')];
+  const bodies = [];
+  const fetch = async (url, init) => {
+    bodies.push(init.body);
+    const list = init.body.includes('<OR>') ? first : first.concat(rest);
+    return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: list }] } }) };
+  };
+  const r = { id: 'x', trainNumber: '13001', advertisedTrainNumber: '13305', trainNumberEntered: 'otn', startedAt: '2026-11-25T09:15:00Z', finishedAt: '2026-11-25T11:15:00Z',
+    stops: [{ sig: 'Lkp', scheduledDeparture: '2026-11-25T09:22:00Z' }, { sig: 'G', scheduledArrival: '2026-11-25T11:10:00Z' }] };
+  const list = await TRV.fetchRunAnnouncements(r, { fetch });
+  assert.equal(bodies.length, 2);
+  assert.match(bodies[1], /<AND><EQ name="AdvertisedTrainIdent" value="13305" \/><GTE/);
+  assert.deepEqual(Array.from(new Set(list.map(a => a.OperationalTrainNumber))), ['13001', '13054', '13305']);
+  assert.equal(list.length, 6);
 });
 
 test('pickTrain: numret är ATN för ett tåg och OTN för ett annat – rutten, tiden och syftet avgör, och det andra visas', () => {
