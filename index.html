@@ -232,7 +232,11 @@
   .conn-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .5rem;padding:.5rem .7rem .35rem;border-top:1px solid var(--b)}
   .cc-label{font-size:.68rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-right:.1rem}
   .seg{display:inline-flex;border:1px solid var(--b);border-radius:8px;overflow:hidden}
-  .seg button{border:0;border-radius:0;margin:0;padding:.3rem .8rem;min-height:2.1rem;font-size:.88rem;background:transparent;color:var(--ink-dim)}
+  .seg button{border:0;border-radius:0;margin:0;padding:.3rem .65rem;min-height:2.1rem;font-size:.88rem;background:transparent;color:var(--ink-dim)}
+  /* Mina anslutningar: märket på en egen anslutning med de andra valen, och raderna i inställningarna */
+  .own-tag{display:inline-block;margin-left:.3rem;padding:0 .35rem;border:1px solid var(--pri);border-radius:999px;color:var(--pri);font-size:.68rem;font-weight:600;line-height:1.35;vertical-align:.12em}
+  .own-row .ghost.sm{flex:none}
+  .own-sum{color:var(--ink)}
   .seg button+button{border-left:1px solid var(--b)}
   .seg button[aria-pressed="true"]{background:rgba(34,197,94,.16);color:var(--pri);font-weight:600}
   .seg button:disabled{opacity:.4}
@@ -915,10 +919,11 @@
       <button id="btnWakeLock" class="menu-toggle row-btn" aria-pressed="false"><span class="rb-txt">Håll skärmen vaken jämt<small>Under resan hålls den vaken ändå</small></span><span class="toggle-state">Av</span></button>
       <button id="btnTextSize" class="menu-toggle row-btn" aria-pressed="false"><span class="rb-txt">Stor text</span><span class="toggle-state">Av</span></button>
     </div>
-    <h3 class="group-title">Uppladdning och bussar</h3>
+    <h3 class="group-title">Uppladdning och anslutningar</h3>
     <div class="group">
       <button id="btnUploadSettings" class="row-btn nav"><span class="rb-txt">Uppladdning till GitHub<small id="prefsGhState">Inte inställd</small></span></button>
       <button id="btnVtSettings" class="row-btn nav"><span class="rb-txt">Västtrafik (bussar)<small id="prefsVtState">Fungerar utan inställningar</small></span></button>
+      <button id="btnOwnSettings" class="row-btn nav"><span class="rb-txt">Mina anslutningar<small id="prefsOwnState">Inga ännu</small></span></button>
     </div>
     <h3 class="group-title">Mätningarna</h3>
     <div class="group">
@@ -996,6 +1001,27 @@
     </div>
   </section>
 
+  <!-- Mina anslutningar: egna tåg och bussar som visas med valet Mina i Info -->
+  <section id="ownSettings" style="display:none">
+    <div class="page-head">
+      <h2>Mina anslutningar</h2>
+      <button id="btnCloseOwn" class="ghost">Klar</button>
+    </div>
+    <p class="hint">Anslutningar som gäller dig. Välj <b>Mina</b> under Anslutningar i Info, så visas bara de här och de du markerat med ★. Tåg, Buss och Båda visar allt som förut.</p>
+    <div class="group" id="ownList"></div>
+    <form id="ownForm" autocomplete="off" onsubmit="return false">
+      <div class="form-group">
+        <label for="ownInput">Lägg till</label>
+        <input id="ownInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="t.ex. buss 600 Lidköping">
+      </div>
+    </form>
+    <div class="settings-actions">
+      <button id="btnOwnAdd" class="primary">Lägg till</button>
+    </div>
+    <p id="ownResult" class="meta" role="status" aria-live="polite"></p>
+    <p class="hint">Skriv <b>buss</b> eller <b>tåg</b>, linjen eller tågnumret och stationen, till exempel <i>tåg 182 Herrljunga C</i>. Bussarna hämtas från Västtrafiks hållplatser intill stationen. Från oss räknas upp till 2 timmar efter vår ankomst, till oss upp till 1 timme före vår avgång.</p>
+  </section>
+
 </main>
 
 <script src="railtimer-avbrott.js"></script>
@@ -1008,7 +1034,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25ze'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25zf'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1197,6 +1223,7 @@
       refreshBuses, connSettings, saveConnSettings, markedConnections, toggleConnMark, infoLogEntry, showVtSettings, showVtStatus, saveAndTestVt, removeVtSettings, busTargets, vtState: () => ({ buses: infoState.buses, error: infoState.vtError, at: infoState.vtFetchedAt }),
       applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
       checkVersionByHand, versionCheckResult: () => versionCheckResult,
+      currentView: () => currentView, showPrefs, showOwnSettings, loadOwnConnections, addOwnConnection,
       setVersionForTest: (fetchFn, reloadFn) => { versionFetchForTest = fetchFn; if(reloadFn) reloadPage = reloadFn; },
       appVersion: APP_VERSION,
       syncFromGithub, allRuns, loadRepoRunsFromDevice, prefillVehicleType, renderUploadStatus,
@@ -1858,6 +1885,19 @@
       showVtSettings();
       if(fromPrefs) overlayBack='prefs';
     });
+    document.getElementById('btnOwnSettings').addEventListener('click', () => {
+      closeAllMenus();
+      const fromPrefs=currentView==='prefs';
+      showOwnSettings();
+      if(fromPrefs) overlayBack='prefs';
+    });
+    document.getElementById('btnOwnAdd').addEventListener('click', addOwnConnection);
+    document.getElementById('ownInput').addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); addOwnConnection(); } });
+    document.getElementById('ownList').addEventListener('click', e => {
+      const b=e.target.closest('[data-own-del]');
+      if(b) removeOwnConnection(Number(b.dataset.ownDel));
+    });
+    document.getElementById('btnCloseOwn').addEventListener('click', closeOverlay);
     document.getElementById('btnVtSave').addEventListener('click', saveAndTestVt);
     document.getElementById('btnVtRemove').addEventListener('click', removeVtSettings);
     document.getElementById('btnCloseVt').addEventListener('click', closeOverlay);
@@ -3458,7 +3498,21 @@
         infoState.ourKey=our.key;
         infoState.line=line;
       }
-      const trains=INFO.groupTrains(await infoAnnouncements(fields=>lineQueryNow(now, fields)));
+      let rows=await infoAnnouncements(fields=>lineQueryNow(now, fields));
+      // Egna tåg (valet Mina) i ett längre fönster än linjens fråga. Går det inte syns de vanliga ändå.
+      const ownTrains=ownTargets('tåg');
+      if(ownTrains.length){
+        const end=infoState.line[infoState.line.length-1];
+        const endT=end.advArr!=null ? end.advArr : (end.plannedArr!=null ? end.plannedArr : now);
+        try{
+          rows=rows.concat(await infoAnnouncements(fields=>INFO.queryOwnTrains(ownTrains, now-INFO_LINE_BEFORE_MS, Math.max(endT, now)+(INFO.DEFAULTS.ownWindowMin+5)*60000, fields)));
+          infoState.ownError=null;
+        }catch(e){
+          infoState.ownError=String(e && e.message || e);
+          console.warn('Mina anslutningar: kunde inte hämta tågen', e);
+        }
+      }
+      const trains=INFO.groupTrains(rows);
       if(!trains.has(infoState.ourKey)) trains.set(infoState.ourKey, infoState.our);
       infoState.trains=trains;
       infoState.fetchedAt=now;
@@ -3536,10 +3590,83 @@
   function vtConfigured(){ return !!(VT && VT.configured(loadVtSettings(), VT_SHARED_TOKEN_URL)); }
   function vtOwnConfigured(){ return !!(VT && VT.ownConfigured(loadVtSettings())); }
   // Sparat val; utan Västtrafik visas bara tåg
+  /* ── Mina anslutningar (valet Mina i Info) ──
+     [{ kind: 'tåg'|'buss', id: tågnummer eller linje, sig, name }] på telefonen. Beräkningen i railtimer-info.js
+     (input.own, normOwn, parseOwn). */
+  const STORAGE_KEY_OWN_CONN='railtimer_own_conn_v1';
+  function loadOwnConnections(){
+    const v=readJsonKey(STORAGE_KEY_OWN_CONN, []);
+    return Array.isArray(v) ? v.filter(e=>e && e.sig && e.id) : [];
+  }
+  function saveOwnConnections(list){ writeJsonKey(STORAGE_KEY_OWN_CONN, list); }
+  function ownLabel(e){ return `${e.kind==='buss'?'Buss':'Tåg'} ${e.id} ${e.name || sigName(e.sig)}`; }
+  // Stationen som skrivits: hela namnet, signaturen, eller början av namnet om bara en station passar
+  function stationByText(text){
+    const key=String(text||'').trim().toLocaleLowerCase('sv');
+    if(!key) return { error:'Skriv stationen också, till exempel buss 600 Lidköping.' };
+    const list=allStationsCache;
+    if(!list.length) return { error:'Stationerna är inte hämtade än – kontrollera nätet.' };
+    const exact=list.find(s=>s.name.toLocaleLowerCase('sv')===key) || list.find(s=>String(s.sig||'').toLocaleLowerCase('sv')===key);
+    if(exact) return { station:exact };
+    const starts=list.filter(s=>s.name.toLocaleLowerCase('sv').startsWith(key));
+    if(starts.length===1) return { station:starts[0] };
+    if(starts.length>1) return { error:`Flera stationer passar: ${starts.slice(0, 4).map(s=>s.name).join(', ')}${starts.length>4?' …':''}. Skriv hela namnet.` };
+    return { error:`Hittar ingen station som heter ${text.trim()}.` };
+  }
+  function setOwnResult(text, isError){
+    const el=document.getElementById('ownResult');
+    el.textContent=text;
+    el.className='meta'+(text ? (isError ? ' err' : ' ok') : '');
+  }
+  function renderOwnSettings(){
+    const list=loadOwnConnections();
+    document.getElementById('ownList').innerHTML = list.length
+      ? list.map((e,i)=>`<div class="row-btn own-row"><span class="rb-txt">${e.kind==='buss'?'Buss':'Tåg'} ${escapeHtml(e.id)}<small>${escapeHtml(e.name || sigName(e.sig))}</small></span>` +
+        `<button type="button" class="ghost sm" data-own-del="${i}" aria-label="Ta bort ${escapeHtml(ownLabel(e))}">Ta bort</button></div>`).join('')
+      : '<div class="row-note">Inga egna anslutningar än.</div>';
+  }
+  function showOwnSettings(){
+    rememberOverlayReturn();
+    renderOwnSettings();
+    setOwnResult('', false);
+    showView('ownSettings');
+  }
+  function ownChanged(){
+    renderOwnSettings();
+    if(state.running){ updateInfo(); refreshInfo(); refreshBuses(true); }
+  }
+  function addOwnConnection(){
+    const input=document.getElementById('ownInput');
+    const p=INFO ? INFO.parseOwn(input.value) : null;
+    if(!p){ setOwnResult('Skriv till exempel buss 600 Lidköping eller tåg 182 Herrljunga C.', true); return null; }
+    const r=stationByText(p.place);
+    if(r.error){ setOwnResult(r.error, true); return null; }
+    const e={ kind:p.kind, id:p.id, sig:r.station.sig, name:r.station.name };
+    const list=loadOwnConnections();
+    if(list.some(x=>x.kind===e.kind && String(x.id).toLowerCase()===String(e.id).toLowerCase() && x.sig===e.sig)){
+      setOwnResult(`${ownLabel(e)} finns redan.`, false);
+      return e;
+    }
+    list.push(e);
+    saveOwnConnections(list);
+    input.value='';
+    setOwnResult(`Tillagd: ${ownLabel(e)}.${connSettings().mode!=='mina' ? ' Välj Mina under Anslutningar i Info för att bara se dina.' : ''}`, false);
+    ownChanged();
+    return e;
+  }
+  function removeOwnConnection(i){
+    const list=loadOwnConnections();
+    if(!(i>=0 && i<list.length)) return;
+    const [e]=list.splice(i, 1);
+    saveOwnConnections(list);
+    setOwnResult(`Borttagen: ${ownLabel(e)}.`, false);
+    ownChanged();
+  }
+
   function connSettings(){
     const s=readJsonKey(STORAGE_KEY_CONN, {}) || {};
     const mode=INFO && INFO.CONN_MODES.includes(s.mode) ? s.mode : 'tag';
-    return { mode: vtConfigured() ? mode : 'tag', savedMode: mode, alerts: s.alerts!==false };
+    return { mode: (vtConfigured() || mode==='mina') ? mode : 'tag', savedMode: mode, alerts: s.alerts!==false };
   }
   function saveConnSettings(change){
     const cur=readJsonKey(STORAGE_KEY_CONN, {}) || {};
@@ -3592,6 +3719,21 @@
     return areas;
   }
   // Vilka tavlor som behövs: { sig, kind: 'departures'|'arrivals', start, span }
+  /* Mina anslutningar av ett slag vid stationer framför oss där vi stannar – bara med valet Mina, så att inget
+     hämtas i onödan med de andra valen. [{ id, sig, i }] */
+  function ownTargets(kind){
+    const line=infoState.line||[];
+    if(!INFO || line.length<2 || connSettings().mode!=='mina') return [];
+    const from=Math.max(infoState.model ? infoState.model.frontier : 0, 0);
+    const out=[];
+    for(const e of loadOwnConnections()){
+      if(e.kind!==kind) continue;
+      const i=line.findIndex(l=>l.sig===e.sig);
+      if(i<from || (i>0 && i<line.length-1 && !line[i].stop)) continue;
+      out.push({ id:String(e.id), sig:e.sig, i });
+    }
+    return out;
+  }
   function busTargets(now){
     const line=infoState.line||[];
     const n=line.length;
@@ -3599,6 +3741,19 @@
     const D=INFO.DEFAULTS, M=60000;
     const m=infoState.model;
     const departedSig=sig=>state.route.some(st=>st.sig===sig && st.actualDeparture);
+    // Mina: bara stationerna med egna bussar, i de längre fönstren
+    if(connSettings().mode==='mina'){
+      const seen=new Set(), out=[];
+      for(const t of ownTargets('buss')){
+        if(seen.has(t.i)) continue;
+        seen.add(t.i);
+        const L=line[t.i];
+        const arr=L.advArr!=null ? L.advArr : L.plannedArr, dep=L.advDep!=null ? L.advDep : L.plannedDep;
+        if(t.i>0 && arr!=null) out.push({ sig:L.sig, kind:'departures', start:arr, span:D.ownWindowMin+1 });
+        if(t.i<n-1 && dep!=null && !departedSig(L.sig)) out.push({ sig:L.sig, kind:'arrivals', start:dep-(D.ownIncomingWindowMin+1)*M, span:D.ownIncomingWindowMin+1 });
+      }
+      return out;
+    }
     const out=[];
     const L0=line[0], dep0=L0.advDep!=null ? L0.advDep : L0.plannedDep;
     if(dep0!=null && !departedSig(L0.sig) && !(m && m.incoming===null)) out.push({ sig:L0.sig, kind:'arrivals', start:dep0-(D.incomingWindowMin+1)*M, span:D.incomingWindowMin+1 });
@@ -3617,7 +3772,8 @@
   }
   async function refreshBuses(force){
     if(!VT || !INFO || !infoState.line || !state.running) return;
-    if(connSettings().mode==='tag' || !vtConfigured()){
+    const busMode=connSettings().mode;
+    if(busMode==='tag' || !vtConfigured() || (busMode==='mina' && !ownTargets('buss').length)){
       if(infoState.buses && infoState.buses.size) infoState.buses=new Map();
       infoState.vtError=null;
       return;
@@ -3788,7 +3944,7 @@
           history:infoState.history, routeNames, messages:infoState.messages,
           positions:infoState.positions, coords:lineCoords(), ourPos,
           buses:infoState.buses, names:lineNames(), connMode:connSettings().mode, connAlerts:connSettings().alerts,
-          marked:markedConnections(),
+          marked:markedConnections(), own:loadOwnConnections(),
           posAt: est && est.sig ? { sig:est.sig, t:est.t } : null
         });
       }catch(e){
@@ -4021,7 +4177,7 @@
   function connRow(c, title, incoming){
     return `<div class="info-row conn-row${c.level?' l'+c.level:''}${c.marked?' marked':''}" role="button" tabindex="0" data-info="mark" data-key="${escapeHtml(c.key||'')}" aria-pressed="${c.marked?'true':'false'}">` +
       `<span class="ir-t">${roundClock(c.adv)}</span>` +
-      `<span class="ir-txt"><b><span class="star" aria-hidden="true">${c.marked?'★':'☆'}</span>${title}</b><small>${connectionSub(c)}</small></span>` +
+      `<span class="ir-txt"><b><span class="star" aria-hidden="true">${c.marked?'★':'☆'}</span>${title}${c.own && connSettings().mode!=='mina' ? ' <span class="own-tag">min</span>' : ''}</b><small>${connectionSub(c)}</small></span>` +
       `<span class="ir-s">${connectionStatusHtml(c, incoming)}</span></div>`;
   }
   // Förslaget när en markerad anslutning blir knapp eller missas (railtimer-info.js: actions, actionText), högst två rader
@@ -4032,29 +4188,57 @@
 
   // Valet Tåg | Buss | Båda överst i anslutningarna. Bara utan Västtrafikmodulen går bara Tåg att välja.
   function connControlHtml(mode, alerts, vtOn){
-    const b=(k, label)=>`<button type="button" data-info="conn-${k}" aria-pressed="${mode===k}"${!vtOn && k!=='tag'?' disabled':''}>${label}</button>`;
+    const b=(k, label)=>`<button type="button" data-info="conn-${k}" aria-pressed="${mode===k}"${!vtOn && (k==='buss' || k==='bada')?' disabled':''}>${label}</button>`;
     let h=`<div class="conn-ctl"><span class="cc-label">Anslutningar</span>` +
-      `<span class="seg" role="group" aria-label="Visa anslutningar">${b('tag','Tåg')}${b('buss','Buss')}${b('bada','Båda')}</span>`;
-    if(vtOn) h+=`<button type="button" class="cc-alerts" data-info="conn-alerts" aria-pressed="${alerts}" title="Om varningarna, panelens rad och utropet bara gäller det som visas">Varningar: ${alerts?'bara valda':'alla'}</button>`;
+      `<span class="seg" role="group" aria-label="Visa anslutningar">${b('tag','Tåg')}${b('buss','Buss')}${b('bada','Båda')}${b('mina','Mina')}</span>`;
+    if(vtOn || mode==='mina') h+=`<button type="button" class="cc-alerts" data-info="conn-alerts" aria-pressed="${alerts}" title="Om varningarna, panelens rad och utropet bara gäller det som visas">Varningar: ${alerts?'bara valda':'alla'}</button>`;
     h+='</div>';
     if(!vtOn) h+='<p class="info-hint">Bussarna från Västtrafik går inte att hämta – ladda om appen.</p>';
     else if(mode!=='tag' && infoState.vtError) h+=`<p class="info-hint err">Västtrafik: ${escapeHtml(String(infoState.vtError).replace(/\.$/,''))}.${infoState.vtFetchedAt?` Bussarna är från ${formatClock(infoState.vtFetchedAt)}.`:''} <button type="button" class="linkish" data-info="vt-settings">Västtrafik-inställningar</button></p>`;
     else if(!alerts && mode!=='bada') h+='<p class="info-hint">Varningarna och utropet gäller alla anslutningar, även de dolda.</p>';
+    if(mode==='mina') h+=ownSummaryHtml(infoState.model);
     h+='<p class="info-hint conn-legend">→ resenärer byter från oss · ← resenärer byter till oss</p>';
     if(!markedConnections().size) h+='<p class="info-hint">Tryck ☆ på ett byte som resenärer gör.</p>';
     return h;
   }
+  /* Med valet Mina: vilka anslutningar som är dina, och för dem som inte syns varför (inte på resan, vi stannar
+     inte där, inte hittade). Ändras under ⋮ → Inställningar → Mina anslutningar. */
+  function ownSummaryHtml(m){
+    const list=loadOwnConnections();
+    const edit='<button type="button" class="linkish" data-info="own-edit">Ändra</button>';
+    if(!list.length) return `<p class="info-hint own-sum">Inga egna anslutningar än – lägg till till exempel buss 600 Lidköping. <button type="button" class="linkish" data-info="own-edit">Lägg till</button></p>`;
+    const status=new Map(((m && m.ownStatus) || []).map(x=>[`${x.kind}|${x.id}|${x.sig}`, x]));
+    const D=INFO.DEFAULTS;
+    const why=[];
+    for(const e of list){
+      const x=status.get(`${e.kind}|${String(e.id).trim().toLowerCase()}|${e.sig}`);
+      if(!x || x.found || x.passed) continue;
+      let text;
+      if(!x.onLine) text='inte på den här resan';
+      else if(!x.stop) text='vi stannar inte där';
+      else if(e.kind==='tåg' && infoState.ownError) text=`kunde inte hämtas (${infoState.ownError})`;
+      else if(e.kind==='buss' && infoState.vtError) text='Västtrafik svarar inte just nu';
+      else if(e.kind==='buss' && !infoState.vtFetchedAt) text='hämtas från Västtrafik…';
+      else text = e.sig===infoState.line[0].sig
+        ? `kommer inte dit inom ${D.ownIncomingWindowMin} min före vår avgång`
+        : `går inte därifrån inom ${D.ownWindowMin/60} h efter vår ankomst`;
+      why.push(`${escapeHtml(ownLabel(e))}: ${text}`);
+    }
+    return `<p class="info-hint own-sum">Mina: ${list.map(e=>escapeHtml(ownLabel(e))).join(' · ')} ${edit}</p>` +
+      (why.length ? `<p class="info-hint">${why.join('<br>')}</p>` : '');
+  }
   // Rubriken för ett anslutningsavsnitt, med valet och hur många som är dolda: "· bara buss · 2 tåg dolda"
   function connSecHtml(title, mode, hidden, note){
     const parts=note ? [note] : [];
-    if(mode==='buss') parts.push('bara buss');
+    if(mode==='mina') parts.push('bara mina');
+    else if(mode==='buss') parts.push('bara buss');
     else if(mode==='tag' && vtConfigured()) parts.push('bara tåg');
     const h=hidden||{};
-    if(h['tåg']) parts.push(`${h['tåg']} tåg dold${h['tåg']>1?'a':'t'}`);
+    if(h['tåg']) parts.push(`${h['tåg']} tåg ${h['tåg']>1?'dolda':'dolt'}`);
     if(h.buss) parts.push(`${h.buss} buss${h.buss>1?'ar dolda':' dold'}`);
     return `<div class="info-sec"><span>${escapeHtml(title)}${parts.length?` <small class="sec-note">· ${parts.join(' · ')}</small>`:''}</span></div>`;
   }
-  const connNoun = mode => mode==='buss' ? 'bussar' : 'anslutningar';
+  const connNoun = mode => mode==='buss' ? 'bussar' : (mode==='mina' ? 'av dina anslutningar' : 'anslutningar');
   // Varför det inte finns några bussar vid en station: hämtas fortfarande, eller ingen hållplats nära stationen
   function busEmptyText(sig, mode, waiting){
     if(mode==='tag') return '';
@@ -4153,7 +4337,7 @@
 
     // Som ansluter till oss i startstationen (bara före avgång). Med bussar visas avsnittet alltid, så att det syns
     // om det inte finns några – och varför.
-    if(m.incoming && (m.incoming.length || anyHidden(m.incomingHidden) || mode!=='tag')){
+    if(m.incoming && (m.incoming.length || (mode!=='mina' && (anyHidden(m.incomingHidden) || mode!=='tag')))){
       const startName=sigName(line[0].sig);
       html+=connSecHtml(`Byter till oss i ${startName}`, mode, m.incomingHidden);
       html+= m.incoming.length
@@ -4165,13 +4349,14 @@
     html+=connSecHtml(`Byter från oss i ${endName}`, mode, m.connectionsHidden);
     html+= m.connections.length
       ? m.connections.map(c=>connRow(c, connOutTitle(c), false)).join('')
-      : `<div class="info-empty">${busEmptyText(line[line.length-1].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst enligt tidtabell.`}</div>`;
+      : `<div class="info-empty">${mode==='mina' ? `Inga av dina anslutningar i ${escapeHtml(endName)}.` : (busEmptyText(line[line.length-1].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst enligt tidtabell.`)}</div>`;
 
     const basis = (m.recoveryObs ? `Trafikverkets tider och egna gångtider (upp till ${m.recoveryObs} körningar per sträcka)` : 'Trafikverkets tider och tidtabellen') +
       (legProfiles.size ? '. Till nästa station räknas tiden från var vi är, ur tidigare GPS-spår på samma sträcka' : '');
     const notShown=(m.messagesHidden||[]).filter(h=>h.reason!=='inte under resan').length;
-    const what = mode==='buss' ? 'bussar' : (mode==='bada' ? 'tåg och bussar' : 'tåg');
+    const what = mode==='buss' ? 'bussar' : (mode==='tag' ? 'tåg' : 'tåg och bussar');
     const transferNote=`Byter från oss (→): ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll; där är det de som kan behöva vänta på oss. Byter till oss (←): ${what} som kommer före vår avgång; där är det vi som kan behöva vänta. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. ` +
+      (mode==='mina' ? `Mina: dina egna anslutningar (⋮ → Inställningar → Mina anslutningar) och de du markerat med ★, vid alla stationer framför oss där vi stannar – från oss upp till ${D.ownWindowMin/60} h efter vår ankomst, till oss upp till ${D.ownIncomingWindowMin} min före vår avgång, också längs vår linje. ` : '') +
       (mode!=='tag' ? `Bussarna kommer från Västtrafik (hållplatser inom ${VT ? VT.DEFAULTS.stopRadiusM : 350} m från stationen), tågen från Trafikverket. ` : '');
     // Felet syns alltid. Förklaringen av reglerna är ihopfälld: den behövs sällan under resan.
     if(infoState.error) html+=`<p class="info-hint err">Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).</p>`;
@@ -4230,13 +4415,15 @@
     }
     // Valet Tåg | Buss | Båda och om varningarna följer det. Sparas på telefonen.
     const k=btn.dataset.info;
-    if(k==='conn-tag' || k==='conn-buss' || k==='conn-bada'){
+    if(k==='conn-tag' || k==='conn-buss' || k==='conn-bada' || k==='conn-mina'){
       const mode=k.slice(5);
       saveConnSettings({ mode });
       updateInfo();
+      if(mode==='mina') refreshInfo(); // de egna tågen hämtas bara med Mina
       if(mode!=='tag') refreshBuses(true);
       return;
     }
+    if(k==='own-edit'){ showOwnSettings(); return; }
     if(k==='conn-alerts'){
       saveConnSettings({ alerts: !connSettings().alerts });
       updateInfo();
@@ -4611,6 +4798,7 @@
     document.getElementById('prefs').style.display = view==='prefs' ? 'block' : 'none';
     document.getElementById('settings').style.display = view==='settings' ? 'block' : 'none';
     document.getElementById('vtSettings').style.display = view==='vtSettings' ? 'block' : 'none';
+    document.getElementById('ownSettings').style.display = view==='ownSettings' ? 'block' : 'none';
     window.scrollTo(0,0);
     renderAutoStartStatus();
   }
@@ -4733,7 +4921,7 @@
   }
 
   function rememberOverlayReturn(){
-    if(!['statistics','settings','vtSettings','prefs'].includes(currentView)) overlayReturnView=currentView;
+    if(!['statistics','settings','vtSettings','prefs','ownSettings'].includes(currentView)) overlayReturnView=currentView;
     overlayBack=null;
   }
 
@@ -4749,6 +4937,11 @@
     if(ghEl) ghEl.textContent = gh ? `Inställd för ${gh.repo}` : 'Inte inställd – körningarna finns bara på telefonen';
     const vtEl=document.getElementById('prefsVtState');
     if(vtEl) vtEl.textContent = (typeof vtOwnConfigured==='function' && vtOwnConfigured()) ? 'Egen nyckel' : 'Fungerar utan inställningar';
+    const ownEl=document.getElementById('prefsOwnState');
+    if(ownEl){
+      const own=loadOwnConnections();
+      ownEl.textContent = own.length ? own.slice(0, 3).map(ownLabel).join(', ') + (own.length>3 ? ` och ${own.length-3} till` : '') : 'Inga ännu – visas med valet Mina i Info';
+    }
     updateLogCount();
   }
 

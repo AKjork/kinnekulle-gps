@@ -1700,3 +1700,55 @@ André 2026-11-25: "Det är lite otydligt om vi ska vänta på en buss. Om vi ha
 - `node tests/run-browser-tests.mjs`: *info: mötande tågets position, anslutningar längs vägen …* har även ett tåg som byter till oss i Blomberg och kontrollerar pilarna, statusen och förklaringen. *buss: Buss visar bussarna …* kontrollerar *Byter från oss i Hällekis* och *→ … missas – går när vi kommer fram*.
 - Bilder: `--shot=info-buss` och `--shot=info-utrop` (båda hållen vid Blomberg).
 
+## Uppdatering (2026-11-25zf): Mina anslutningar
+
+André 2026-11-25: "Man kanske också skulle vilja ha ett alternativ där man själv anger till exempel egna anslutningar som buss 600 från Lidköping eller tåg 182 från Herrljunga, så att man bara ser det som är väsentligt och gäller en själv. … Inte ta bort det som är befintligt, för det tycker jag är bra." Appversion `2026-11-25zf`.
+
+### Valet Mina
+- Fjärde valet under Anslutningar i Info: **Tåg | Buss | Båda | Mina**. Tåg, Buss och Båda är som förut.
+- **Mina** visar bara de egna anslutningarna och de markerade (★). De andra döljs med antal (*bara mina · 2 tåg dolda · 1 buss dold*). Med *Varningar: bara valda* följer panelens rad, siffran, meddelandena, uppläsningen och utropet valet.
+- Under valet: *Mina: Tåg 3055 Hällekis · Buss 600 Lidköping … Ändra*, och för en anslutning som inte syns varför (`ownSummaryHtml`):
+  - *inte på den här resan* (stationen finns inte på linjen);
+  - *vi stannar inte där*;
+  - *går inte därifrån inom 2 h efter vår ankomst*, eller vid startstationen *kommer inte dit inom 60 min före vår avgång*;
+  - *hämtas från Västtrafik…*, *Västtrafik svarar inte just nu* eller *kunde inte hämtas (…)*.
+  - Stationer vi redan passerat nämns inte.
+- Med Tåg, Buss och Båda märks en egen anslutning som också är en vanlig med *min* bredvid namnet.
+
+### ⋮ → Inställningar → Mina anslutningar (`#ownSettings`)
+- Skriv till exempel *buss 600 Lidköping*, *tåg 182 Herrljunga C*, *Tåg 3349 från Hällekis* eller *tåg 3053 Hlk* och tryck *Lägg till* (eller Enter). `INFO.parseOwn` tolkar *buss*/*tåg*, linjen eller tågnumret och stationen (efter *från*, *i*, *vid* eller *på*).
+- Stationen (`stationByText`): hela namnet, signaturen, eller början av namnet om bara en station passar. Annars *Hittar ingen station som heter …* eller *Flera stationer passar: … Skriv hela namnet.*
+- Listan sparas på telefonen (`railtimer_own_conn_v1`: `{ kind, id, sig, name }`) och visas med *Ta bort* per rad. Samma anslutning läggs inte till två gånger.
+- Öppnas också med *Ändra* i Info. *Klar* går tillbaka dit rutan öppnades från.
+- Raden i Inställningar visar de tre första.
+
+### Beräkningen (`railtimer-info.js`)
+- `input.own` (`normOwn`): `{ kind, id, sig }`. Ett tåg känns igen på det annonserade tågnumret (`AdvertisedTrainIdent`) eller det operativa (`OperationalTrainNumber`), en buss på linjen, utan skillnad på stor och liten bokstav (`ownMatcher`).
+- Vid alla stationer framför oss där vi stannar, också bortom `midHorizonMin`:
+  - från oss högst `ownWindowMin` (120 min) efter vår ankomst;
+  - till oss högst `ownIncomingWindowMin` (60 min) före vår avgång;
+  - den kortaste bytestiden är 0 i stället för 4 min: en egen anslutning räknas så länge den enligt tidtabell inte går före vår ankomst (`lowestPlanned`).
+- **Även längs vår linje:** föraren har själv sagt att anslutningen gäller, till exempel tåget tillbaka.
+- Statusreglerna är desamma: missas under 1 min att byta, knappt under 4 min.
+- `connShows('mina', c)`: `c.own || c.marked`. Nycklarna (`connKey`) sätts nu före valet, eftersom Mina visar de markerade. `ownStatus` säger per post om den hittades (`found`), finns på linjen (`onLine`), är ett stopp (`stop`) och redan passerats (`passed`).
+- Med *Varningar: alla* räknas de egna med de vanliga.
+
+### Hämtningen (index.html)
+- **Tåg:** bara med Mina hämtas de egna tågen med en egen fråga (`INFO.queryOwnTrains`): signaturen och tågnumret (annonserat eller operativt) från en timme bakåt till 125 min efter vår ankomst. Svaret läggs ihop med linjens tåg. Går frågan inte syns de vanliga ändå (`infoState.ownError`).
+- **Bussar:** med Mina hämtas Västtrafiks tavlor bara vid stationerna med egna bussar (`ownTargets('buss')` i `busTargets`): avgångar 121 min från vår ankomst och ankomster 61 min före vår avgång. Utan egna bussar hämtas inga bussar med Mina.
+- `connSettings`: Mina kan väljas även utan Västtrafik (bara tågen).
+
+### Övrigt
+- Rubrikens antal: *1 tåg dolt* (förut *1 tåg doldt*).
+
+### Inte provat mot riktiga svar
+- `queryOwnTrains` med inbäddade AND/OR i filtret, och om Trafikverket ger ett tåg på båda tågnumren.
+- Västtrafiks tavlor över 2 timmar: med `limit=50` kan en buss sent i fönstret falla bort vid en stor hållplats. Då står det *går inte därifrån inom 2 h …*.
+
+### Tester
+- `node --test "tests/*.test.js"`, nya i `tests/railtimer-info.test.js`:
+  - *egna anslutningar (Mina): …*: tåg och buss i slutstationen, utanför fönstret, längs vår linje och längs vägen bortom 30 min, dolda med antal, markerade, status per post och varningar;
+  - *egna anslutningar: det föraren skriver tolkas*.
+- `node tests/run-browser-tests.mjs`, nytt: *mina anslutningar: läggs till i Inställningar, och Mina i Info visar bara dem och de markerade …*. Simulerat Trafikverket svarar på frågan för egna tåg (`opts.ownRows` i `fakeTrafikverketInfo`).
+- Bilder: `--shot=info-mina` och `--shot=mina-installningar`.
+

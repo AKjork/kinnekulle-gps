@@ -34,6 +34,8 @@
     midHorizonMin: 30,        // anslutningar längs vägen bara vid stationer vi når inom så här lång tid (André 2026-11-25:
                               // en buss i Lidköping berör inte den som står i Herrljunga, nästan en timme därifrån)
     holdMaxMin: 15,           // förslaget att ringa trafikledningen: bara när det räcker att vänta högst så här länge
+    ownWindowMin: 120,        // egna anslutningar (valet Mina): från oss högst så här länge efter vår ankomst …
+    ownIncomingWindowMin: 60, // … och till oss högst så här länge före vår avgång, vid alla stationer framför oss
     positionMaxAgeMs: 5 * 60000, // tågpositioner äldre än så används inte
     maxSpeedMs: 200 / 3.6,    // inget tåg kör fortare: det mötande tåget kan inte vara framme tidigare än så
     predictMoves: true,       // möten flyttas närmare oss när vi är sena och det ger minst väntan sammanlagt
@@ -141,6 +143,17 @@
   function queryLine(sigs, from, to, fields) {
     const or = sigs.map(s => `<EQ name="LocationSignature" value="${xmlAttr(s)}" />`).join('');
     return `<QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="4000"><FILTER><AND>` +
+      `<OR>${or}</OR>` +
+      `<GTE name="AdvertisedTimeAtLocation" value="${localIso(from)}" />` +
+      `<LTE name="AdvertisedTimeAtLocation" value="${localIso(to)}" />` +
+      `</AND></FILTER>${includes(fields)}</QUERY>`;
+  }
+  /* Egna tåg (valet Mina) vid sina stationer, i ett längre fönster än linjens fråga: tågnumret som annonserat
+     (AdvertisedTrainIdent) eller operativt (OperationalTrainNumber). entries: [{ id, sig }] */
+  function queryOwnTrains(entries, from, to, fields) {
+    const or = entries.map(e => `<AND><EQ name="LocationSignature" value="${xmlAttr(e.sig)}" />` +
+      `<OR><EQ name="AdvertisedTrainIdent" value="${xmlAttr(e.id)}" /><EQ name="OperationalTrainNumber" value="${xmlAttr(e.id)}" /></OR></AND>`).join('');
+    return `<QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="500"><FILTER><AND>` +
       `<OR>${or}</OR>` +
       `<GTE name="AdvertisedTimeAtLocation" value="${localIso(from)}" />` +
       `<LTE name="AdvertisedTimeAtLocation" value="${localIso(to)}" />` +
@@ -784,6 +797,11 @@
     return 'ok';
   }
 
+  /* Kortaste planerade byte som räknas: bytestiden för de vanliga. En egen anslutning (o.match, valet Mina) räknas
+     så länge den enligt tidtabell inte går före vår ankomst (eller kommer efter vår avgång) – föraren har själv
+     sagt att den gäller. */
+  const lowestPlanned = o => o.match ? 0 : Math.max(o.minPlannedTransferMin, o.transferMin);
+
   // Tåg som går från slutstationen efter vår ankomst
   function outgoing(trains, our, endL, predArr, arrived, lineSigs, now, o) {
     const out = [];
@@ -791,13 +809,14 @@
     if (ourAdv == null) return out;
     for (const tr of trains.values()) {
       if (tr.otn === our.otn) continue;
+      if (o.match && !o.match('tåg', tr.ident, tr.otn)) continue;
       const loc = tr.at.get(endL.sig);
       const dep = loc && loc.dep;
       if (!dep || !dep.advertised) continue;
-      // En anslutning går minst bytestiden efter vår ankomst enligt tidtabell
+      // En anslutning går minst bytestiden efter vår ankomst enligt tidtabell (en egen: inte före vår ankomst)
       const plannedTransfer = (dep.adv - ourAdv) / MIN;
-      if (plannedTransfer < Math.max(o.minPlannedTransferMin, o.transferMin) || plannedTransfer > o.connectionWindowMin) continue;
-      if (alongOurLine(tr, lineSigs, endL.sig)) continue;
+      if (plannedTransfer < lowestPlanned(o) || plannedTransfer > o.connectionWindowMin) continue;
+      if (!o.match && alongOurLine(tr, lineSigs, endL.sig)) continue;
       const departed = dep.actual != null;
       // Inte avgått: Trafikverkets beräknade tid (aldrig före nu), annars tidtabellen
       const theirDep = departed ? dep.actual : (dep.est != null ? Math.max(dep.est, now) : dep.adv);
@@ -824,12 +843,13 @@
     if (ourAdv == null) return out;
     for (const tr of trains.values()) {
       if (tr.otn === our.otn) continue;
+      if (o.match && !o.match('tåg', tr.ident, tr.otn)) continue;
       const loc = tr.at.get(startL.sig);
       const arr = loc && loc.arr;
       if (!arr || !arr.advertised) continue;
       const plannedTransfer = (ourAdv - arr.adv) / MIN;
-      if (plannedTransfer < Math.max(o.minPlannedTransferMin, o.transferMin) || plannedTransfer > o.incomingWindowMin) continue;
-      if (alongOurLine(tr, lineSigs, startL.sig)) continue;
+      if (plannedTransfer < lowestPlanned(o) || plannedTransfer > o.incomingWindowMin) continue;
+      if (!o.match && alongOurLine(tr, lineSigs, startL.sig)) continue;
       const arrived = arr.actual != null;
       const theirArr = arrived ? arr.actual : Math.max(arr.est != null ? arr.est : arr.adv, now);
       const transfer = (predDep - theirArr) / MIN;
@@ -873,10 +893,11 @@
     const ourAdv = L.advArr != null ? L.advArr : L.plannedArr;
     if (ourAdv == null || predArr == null) return out;
     for (const b of calls || []) {
+      if (o.match && !o.match('buss', b.line)) continue;
       const plannedTransfer = (b.planned - ourAdv) / MIN;
-      if (plannedTransfer < Math.max(o.minPlannedTransferMin, o.transferMin) || plannedTransfer > o.connectionWindowMin) continue;
+      if (plannedTransfer < lowestPlanned(o) || plannedTransfer > o.connectionWindowMin) continue;
       const k = townKey(b.direction);
-      if (k && towns.has(k)) continue;
+      if (!o.match && k && towns.has(k)) continue;
       const t = b.est != null ? b.est : b.planned;
       const departed = t < now - 30000;
       const theirDep = departed ? t : Math.max(t, now);
@@ -901,10 +922,11 @@
     const ourAdv = L.advDep != null ? L.advDep : L.plannedDep;
     if (ourAdv == null || predDep == null) return out;
     for (const b of calls || []) {
+      if (o.match && !o.match('buss', b.line)) continue;
       const plannedTransfer = (ourAdv - b.planned) / MIN;
-      if (plannedTransfer < Math.max(o.minPlannedTransferMin, o.transferMin) || plannedTransfer > o.incomingWindowMin) continue;
+      if (plannedTransfer < lowestPlanned(o) || plannedTransfer > o.incomingWindowMin) continue;
       const k = townKey(b.origin);
-      if (k && towns.has(k)) continue;
+      if (!o.match && k && towns.has(k)) continue;
       const t = b.est != null ? b.est : b.planned;
       const arrived = t <= now;
       const theirArr = arrived ? t : Math.max(t, now);
@@ -923,10 +945,35 @@
 
   /* Valet Tåg | Buss | Båda (mode 'tag', 'buss', 'bada'). Ger de som visas och hur många tåg och bussar
      som döljs. */
-  const CONN_MODES = ['tag', 'buss', 'bada'];
+  const CONN_MODES = ['tag', 'buss', 'bada', 'mina'];
   function connShows(mode, c) {
+    if (mode === 'mina') return !!(c.own || c.marked);
     if (mode === 'bada') return true;
     return mode === 'buss' ? c.kind === 'buss' : c.kind !== 'buss';
+  }
+
+  /* Egna anslutningar (valet Mina): föraren anger till exempel "buss 600 Lidköping" eller "tåg 182 Herrljunga C".
+     En post: { kind: 'tåg'|'buss', id: tågnummer eller busslinje, sig: stationens signatur }. Ett tåg känns igen på
+     det annonserade tågnumret eller det operativa, en buss på linjen. */
+  function normOwn(list) {
+    const out = [];
+    for (const e of list || []) {
+      if (!e || !e.sig) continue;
+      const kind = e.kind === 'buss' ? 'buss' : 'tåg';
+      const id = String(e.id == null ? '' : e.id).trim().toLowerCase();
+      if (id) out.push({ kind, id, sig: e.sig });
+    }
+    return out;
+  }
+  function ownMatcher(entries) {
+    return (kind, ...ids) => entries.some(e => e.kind === kind && ids.some(x => x != null && String(x).trim().toLowerCase() === e.id));
+  }
+  // Tolkar det föraren skriver: "buss 600 Lidköping", "tåg 182 från Herrljunga C", "Buss 1 vid Vara"
+  function parseOwn(text) {
+    const m = String(text || '').trim().match(/^(buss|bus|tåg|tag)(?:\.?\s+|(?=\d))([0-9a-zåäö]+)\s+(?:(?:från|fr\.?|i|vid|på)\s+)?(.+)$/i);
+    if (!m) return null;
+    const k = m[1].toLowerCase();
+    return { kind: k === 'buss' || k === 'bus' ? 'buss' : 'tåg', id: m[2], place: m[3].trim() };
   }
   /* Nyckeln för en markerad anslutning (resenärer ska byta), samma varje dag för vårt tågnummer:
      riktning (ut = från stationen, in = till oss), station och tågets nummer – för en buss linjen och klockslaget. */
@@ -1287,6 +1334,53 @@
       if (out.length || into.length) stops.push({ i, sig: L.sig, connectionsAll: out, incomingAll: into });
     }
 
+    /* Egna anslutningar (input.own, valet Mina): vid alla stationer framför oss där vi stannar, också utanför de
+       vanliga fönstren och bortom midHorizonMin – från oss högst ownWindowMin efter vår ankomst, till oss högst
+       ownIncomingWindowMin före vår avgång. Föraren har själv sagt att de gäller, så de räknas även när de går
+       längs vår linje. ownStatus säger för varje post om den hittades, och annars varför inte. */
+    const own = normOwn(input.own);
+    const ownFound = new Set();
+    const ownEnd = [], ownStart = [], ownMid = new Map();
+    const ownIdOf = c => [c.ident, c.otn].filter(x => x != null).map(x => String(x).trim().toLowerCase());
+    if (own.length) {
+      for (let i = Math.max(frontier, 0); i < n; i++) {
+        const L = line[i];
+        const entries = own.filter(e => e.sig === L.sig);
+        if (!entries.length) continue;
+        const isStart = i === 0, isEnd = i === n - 1;
+        if (!isStart && !isEnd && (!L.stop || known[i].dep != null)) continue;
+        const oo = Object.assign({}, o, { match: ownMatcher(entries), connectionWindowMin: o.ownWindowMin, incomingWindowMin: o.ownIncomingWindowMin });
+        const towns = lineTownsExcept(line, names, L.sig);
+        const b = busAt(L.sig);
+        const out = [], into = [];
+        if (!isStart && preds[i].arr != null) {
+          out.push(...outgoing(trains, our, L, preds[i].arr, known[i].arr != null, lineSigs, now, oo));
+          if (b) out.push(...busOutgoing(b.departures, L, preds[i].arr, known[i].arr != null, towns, now, oo));
+        }
+        if (!isEnd && !startDeparted && preds[i].dep != null && (isStart || known[i].dep == null)) {
+          into.push(...incoming(trains, our, L, preds[i].dep, lineSigs, now, oo));
+          if (b) into.push(...busIncoming(b.arrivals, L, preds[i].dep, towns, now, oo));
+        }
+        out.sort(byAdv);
+        into.sort(byAdv);
+        for (const c of out.concat(into)) {
+          c.own = true;
+          const ids = ownIdOf(c);
+          for (const e of entries) if (e.kind === c.kind && ids.includes(e.id)) ownFound.add(`${e.kind}|${e.id}|${e.sig}`);
+        }
+        if (isEnd) ownEnd.push(...out);
+        else if (isStart) ownStart.push(...into);
+        else if (out.length || into.length) ownMid.set(i, { out, into });
+      }
+    }
+    const ownStatus = own.map(e => {
+      const idx = line.findIndex(l => l.sig === e.sig);
+      const isStop = idx === 0 || idx === n - 1 || (idx > 0 && line[idx].stop);
+      const passed = idx >= 0 && (idx < Math.max(frontier, 0) || (idx < n - 1 && known[idx].dep != null));
+      return { kind: e.kind, id: e.id, sig: e.sig, onLine: idx >= 0, stop: idx >= 0 && isStop, passed,
+        found: ownFound.has(`${e.kind}|${e.id}|${e.sig}`) };
+    });
+
     // Nivåer: 0 inget att göra, 1 håll koll, 2 påverkar
     // Väntan i hela minuter, samma som visas
     // Ett flyttat möte räknas som andra: efter väntan (förut 0, eftersom väntan inte räknades)
@@ -1298,50 +1392,82 @@
     for (const c of inc) c.level = lvlConn(c);
     for (const st of stops) for (const c of st.connectionsAll.concat(st.incomingAll)) { c.level = lvlConn(c); c.sig = st.sig; }
 
-    /* Valet Tåg | Buss | Båda: listorna visar bara valda slag, och hur många som döljs.
-       Med connAlerts (förval) följer varningarna, siffran, panelens rad och utropet samma val; annars gäller
-       de alla anslutningar som hämtats. */
+    for (const c of ownEnd.concat(ownStart)) c.level = lvlConn(c);
+    for (const [i, x] of ownMid) for (const c of x.out.concat(x.into)) { c.level = lvlConn(c); c.sig = line[i].sig; }
+
+    /* Markerade anslutningar (input.marked: nycklar från connKey) gäller oavsett valet Tåg | Buss | Båda | Mina.
+       Nycklarna sätts före valet, eftersom Mina visar de markerade. */
+    const marked = input.marked instanceof Set ? input.marked : new Set(input.marked || []);
+    const keyed = (list, sig, dir) => { for (const c of list) { c.key = connKey(c, sig, dir); c.marked = marked.has(c.key); } };
+    keyed(conn, endL.sig, 'ut');
+    keyed(ownEnd, endL.sig, 'ut');
+    keyed(inc, line[0].sig, 'in');
+    keyed(ownStart, line[0].sig, 'in');
+    for (const st of stops) { keyed(st.connectionsAll, st.sig, 'ut'); keyed(st.incomingAll, st.sig, 'in'); }
+    for (const [i, x] of ownMid) { keyed(x.out, line[i].sig, 'ut'); keyed(x.into, line[i].sig, 'in'); }
+    // En vanlig anslutning som också är egen visas som egen
+    const ownKeys = new Set();
+    for (const c of ownEnd.concat(ownStart)) ownKeys.add(c.key);
+    for (const x of ownMid.values()) for (const c of x.out.concat(x.into)) ownKeys.add(c.key);
+    for (const c of conn.concat(inc)) if (ownKeys.has(c.key)) c.own = true;
+    for (const st of stops) for (const c of st.connectionsAll.concat(st.incomingAll)) if (ownKeys.has(c.key)) c.own = true;
+    // Vanliga och egna ihop, utan dubbletter (egna först, eftersom de kan ligga utanför de vanliga fönstren)
+    const union = (general, ownList) => {
+      const out = [], seen = new Set();
+      for (const c of ownList.concat(general)) if (!seen.has(c.key)) { seen.add(c.key); out.push(c); }
+      return out.sort(byAdv);
+    };
+
+    /* Valet Tåg | Buss | Båda | Mina: listorna visar bara valda slag, och hur många som döljs. Mina visar de egna
+       och de markerade (★). Med connAlerts (förval) följer varningarna, siffran, panelens rad och utropet samma val;
+       annars gäller de alla anslutningar som hämtats. */
     const mode = CONN_MODES.includes(input.connMode) ? input.connMode : 'tag';
+    const mina = mode === 'mina';
     const alertsFollow = input.connAlerts !== false;
-    const endSplit = splitByMode(conn, mode);
-    const incSplit = splitByMode(inc, mode);
+    const split = (general, ownList) => mina ? splitByMode(union(general, ownList), mode) : splitByMode(general, mode);
+    const endSplit = split(conn, ownEnd);
+    const incSplit = split(inc, ownStart);
+    const byI = new Map(stops.map(st => [st.i, st]));
+    if (mina) for (const i of ownMid.keys()) if (!byI.has(i)) byI.set(i, { i, sig: line[i].sig, connectionsAll: [], incomingAll: [] });
+    const stopList = Array.from(byI.values()).sort((a, b) => a.i - b.i);
     const stopsHidden = { tåg: 0, buss: 0 };
-    for (const st of stops) {
-      const a = splitByMode(st.connectionsAll, mode), b = splitByMode(st.incomingAll, mode);
+    for (const st of stopList) {
+      const x = ownMid.get(st.i) || { out: [], into: [] };
+      const a = split(st.connectionsAll, x.out), b = split(st.incomingAll, x.into);
       st.connections = a.shown;
       st.incoming = b.shown;
       st.hidden = { tåg: a.hidden.tåg + b.hidden.tåg, buss: a.hidden.buss + b.hidden.buss };
       stopsHidden.tåg += st.hidden.tåg;
       stopsHidden.buss += st.hidden.buss;
     }
-    const shownStops = stops.filter(st => st.connections.length || st.incoming.length);
+    const shownStops = stopList.filter(st => st.connections.length || st.incoming.length);
+    const allStops = Array.from(new Set(stops.map(st => st.i).concat(Array.from(ownMid.keys())))).sort((a, b) => a - b).map(i => {
+      const st = byI.get(i) || { connectionsAll: [], incomingAll: [] }, x = ownMid.get(i) || { out: [], into: [] };
+      return { i, sig: line[i].sig, connections: union(st.connectionsAll, x.out), incoming: union(st.incomingAll, x.into) };
+    });
     const alert = alertsFollow
       ? { connections: endSplit.shown, incoming: incSplit.shown, stops: shownStops }
-      : { connections: conn, incoming: inc, stops: stops.map(st => ({ i: st.i, sig: st.sig, connections: st.connectionsAll, incoming: st.incomingAll })) };
+      : { connections: union(conn, ownEnd), incoming: union(inc, ownStart), stops: allStops };
     const midAll = [];
     for (const st of alert.stops) midAll.push(...st.connections, ...st.incoming);
 
-    /* Markerade anslutningar (input.marked: nycklar från connKey) gäller oavsett valet Tåg | Buss | Båda.
-       Blir en markerad anslutning knapp eller missas, och det räcker att den väntar högst holdMaxMin för att få
+    /* Blir en markerad anslutning knapp eller missas, och det räcker att den väntar högst holdMaxMin för att få
        vanlig bytestid (transferMin), blir det ett förslag: ring trafikledningen och fråga om den kan vänta –
        eller om vi kan vänta på den som ska till oss – och om spår vid samma plattform. Inte när den gått
        eller är inställd. */
-    const marked = input.marked instanceof Set ? input.marked : new Set(input.marked || []);
     const ourTrack = sig => {
       const l = our.at.get(sig);
       return (l && ((l.arr && l.arr.track) || (l.dep && l.dep.track))) || '';
     };
     const every = [];
-    for (const c of conn) every.push({ c, sig: endL.sig, dir: 'ut' });
-    for (const c of inc) every.push({ c, sig: line[0].sig, dir: 'in' });
-    for (const st of stops) {
-      for (const c of st.connectionsAll) every.push({ c, sig: st.sig, dir: 'ut' });
-      for (const c of st.incomingAll) every.push({ c, sig: st.sig, dir: 'in' });
+    for (const c of union(conn, ownEnd)) every.push({ c, sig: endL.sig, dir: 'ut' });
+    for (const c of union(inc, ownStart)) every.push({ c, sig: line[0].sig, dir: 'in' });
+    for (const st of allStops) {
+      for (const c of st.connections) every.push({ c, sig: st.sig, dir: 'ut' });
+      for (const c of st.incoming) every.push({ c, sig: st.sig, dir: 'in' });
     }
     const actions = [];
     for (const x of every) {
-      x.c.key = connKey(x.c, x.sig, x.dir);
-      x.c.marked = marked.has(x.c.key);
       if (!x.c.marked || (x.c.status !== 'knappt' && x.c.status !== 'missas')) continue;
       const waitMin = o.transferMin - x.c.transferMin;
       if (waitMin < 1 || waitMin > o.holdMaxMin) continue;
@@ -1368,7 +1494,7 @@
       meetings, deviations, messages, messagesHidden: cls.hidden,
       connections: endSplit.shown, connectionsHidden: endSplit.hidden,
       incoming: startDeparted ? null : incSplit.shown, incomingHidden: incSplit.hidden,
-      stops: shownStops, stopsHidden, connMode: mode, connAlerts: alertsFollow, alert, actions, markedList,
+      stops: shownStops, stopsHidden, connMode: mode, connAlerts: alertsFollow, alert, actions, markedList, ownStatus,
       midMissed: alert.stops.reduce((k, st) => k + st.connections.filter(c => c.level === 2).length, 0),
       preds: preds.map((p, i) => ({ sig: line[i].sig, arr: p.arr, dep: p.dep, waitMs: p.waitMs })),
       doubleSections: Array.from(newDouble),
@@ -1603,10 +1729,10 @@
 
   return {
     DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, alerts, newAlerts, actionText, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
-    request, queryOurTrain, queryLine, queryNames, queryMessages, resultOf,
+    request, queryOurTrain, queryLine, queryOwnTrains, queryNames, queryMessages, resultOf,
     parseAnnouncement, groupTrains, nearestRun, buildLine, crossingOf, latestDelay, theirArrival, theirDeparture,
     progressOf, meetingPlaces, travel, trvLogNew, PROFILE, legKey, trackPoints, runLegs, profileBuilder, remainingFrom, positionEstimate, trvLogTrains, trvLogPositions, trvLogModel, trvLogOut,
     historyMedians, recoveryRatios, plannedRun, predict, outgoing, incoming, signaturesIn, parseMessage, classifyMessages, messagesFor, compute,
-    townKey, lineTownsExcept, busOutgoing, busIncoming, CONN_MODES, connShows, splitByMode, connKey
+    townKey, lineTownsExcept, busOutgoing, busIncoming, CONN_MODES, connShows, splitByMode, connKey, normOwn, ownMatcher, parseOwn
   };
 });

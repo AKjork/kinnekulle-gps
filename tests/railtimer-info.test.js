@@ -42,7 +42,7 @@ function setup(rows, opts) {
     line, trains, ourKey: our.key, known, now: o.now != null ? o.now : at('10:55'),
     knownDouble: o.knownDouble, knownMeetPlaces: o.knownMeet, history: o.history, routeNames: ROUTE, opts: o.opts,
     messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos,
-    buses: o.buses, names: o.names, connMode: o.connMode, connAlerts: o.connAlerts, marked: o.marked, posAt: o.posAt
+    buses: o.buses, names: o.names, connMode: o.connMode, connAlerts: o.connAlerts, marked: o.marked, posAt: o.posAt, own: o.own
   });
 }
 // Ungefärliga lägen längs linjen (norr → söder)
@@ -800,3 +800,57 @@ test('prognos från där vi är: ankomsten till nästa station räknas från pos
   assert.equal(old.posAt, null);
   assert.equal(old.preds[1].arr, at('11:10'));
 });
+
+test('egna anslutningar (Mina): tåg och buss i slutstationen och längs vägen, även utanför de vanliga fönstren', () => {
+  // Vi kommer till Herrljunga 11:46 (+6). Vedum nås 11:30, mer än 30 min bort klockan 10:55.
+  const rows = LATE().concat(departures([
+    ['3047', '11:45', null, 'Bs'],        // vanlig, missas
+    ['3049', '11:49'],                    // vanlig, knappt
+    ['182', '12:30', null, 'Cst'],        // egen: 44 min efter vår ankomst, utanför de vanliga 40 min
+    ['24362', '11:50', null, 'Lkp']       // egen: tillbaka längs vår linje, räknas ändå
+  ]), [ann('X9', 'Vdm', 'd', '11:40', { ToLocation: [{ LocationName: 'Sk', Priority: 1, Order: 0 }] })]);
+  const buses = new Map([['Hr', { departures: [bus('600', '12:10', { direction: 'Borås' }), bus('601', '13:30', { direction: 'Ulricehamn' })], arrivals: [] }]]);
+  const own = [
+    { kind: 'tåg', id: '182', sig: 'Hr' }, { kind: 'tåg', id: '24362', sig: 'Hr' }, { kind: 'buss', id: '601', sig: 'Hr' },
+    { kind: 'tåg', id: 'X9', sig: 'Vdm' }, { kind: 'tåg', id: '999', sig: 'Hr' }, { kind: 'buss', id: '5', sig: 'Sk' }
+  ];
+  // Tåg (förval): som förut – de egna utanför fönstret syns inte, men de egna som också är vanliga märks
+  const tag = setup(rows, { buses, own });
+  assert.deepEqual(tag.connections.map(c => c.otn), ['3047', '3049'], 'som förut');
+  assert.equal(tag.stops.length, 0, 'Vedum är för långt bort för de vanliga');
+  // Mina: de egna, också längre bort och längs vår linje, och de vanliga döljs med antal
+  const m = setup(rows, { buses, own, connMode: 'mina' });
+  assert.equal(m.connMode, 'mina');
+  assert.deepEqual(m.connections.map(c => [c.kind, c.ident, c.status]), [['tåg', '24362', 'ok'], ['tåg', '182', 'ok'], ['buss', '601', 'ok']]);
+  assert.ok(m.connections.every(c => c.own));
+  assert.equal(m.connections.find(c => c.ident === '182').transferMin, 44);
+  assert.deepEqual(m.connectionsHidden, { tåg: 2, buss: 1 }, '3047, 3049 och buss 600 dolda');
+  assert.deepEqual(m.stops.map(st => [st.sig, st.connections.map(c => c.otn)]), [['Vdm', ['X9']]], 'Vedum längre bort än 30 min');
+  assert.equal(m.missed, 0, 'varningarna följer valet: 3047 som missas räknas inte');
+  // Status per post: hittad, inte i dag, inte på linjen
+  const st = Object.fromEntries(m.ownStatus.map(x => [`${x.kind} ${x.id}`, x]));
+  assert.equal(st['tåg 182'].found, true);
+  assert.equal(st['tåg x9'].found, true, 'tågnumret jämförs utan stor och liten bokstav');
+  assert.deepEqual([st['tåg 999'].found, st['tåg 999'].onLine, st['tåg 999'].stop], [false, true, true]);
+  assert.equal(st['buss 5'].onLine, false);
+  // Markerade (★) syns också i Mina
+  const withMark = setup(rows, { buses, own, connMode: 'mina', marked: new Set(['ut|Hr|tåg|3049']) });
+  assert.deepEqual(withMark.connections.map(c => c.otn).filter(x => x === '3049'), ['3049']);
+  assert.equal(withMark.tight, 1, 'den markerade räknas');
+  // Varningar för alla: de egna räknas med de vanliga
+  const all = setup(rows, { buses, own, connMode: 'mina', connAlerts: false });
+  assert.equal(all.missed, 1, '3047');
+  assert.ok(all.alert.connections.some(c => c.ident === '182'));
+});
+
+test('egna anslutningar: det föraren skriver tolkas', () => {
+  assert.deepEqual(I.parseOwn('buss 600 Lidköping'), { kind: 'buss', id: '600', place: 'Lidköping' });
+  assert.deepEqual(I.parseOwn('Tåg 182 från Herrljunga C'), { kind: 'tåg', id: '182', place: 'Herrljunga C' });
+  assert.deepEqual(I.parseOwn('tag 3051 vid Hällekis'), { kind: 'tåg', id: '3051', place: 'Hällekis' });
+  assert.deepEqual(I.parseOwn('Buss 1 i Vara'), { kind: 'buss', id: '1', place: 'Vara' });
+  assert.equal(I.parseOwn('600 Lidköping'), null);
+  assert.equal(I.parseOwn('buss 600'), null);
+  assert.deepEqual(I.parseOwn('buss600 Vara'), { kind: 'buss', id: '600', place: 'Vara' });
+  assert.deepEqual(I.normOwn([{ kind: 'buss', id: ' 600 ', sig: 'Lkp' }, { kind: 'x', id: '', sig: 'Hr' }, null]), [{ kind: 'buss', id: '600', sig: 'Lkp' }]);
+});
+

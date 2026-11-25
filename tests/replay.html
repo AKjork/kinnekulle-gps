@@ -1968,6 +1968,12 @@ function fakeTrafikverketInfo(route, opts) {
     if (body.includes('objecttype="OperativeEvent"')) return resp({ RESPONSE: { RESULT: [{ OperativeEvent: o.messages || [] }] } });
     if (body.includes('objecttype="TrainPosition"')) return resp({ RESPONSE: { RESULT: [{ TrainPosition: o.positions || [] }] } });
     if (body.includes('objecttype="TrainStation"')) return resp({ RESPONSE: { RESULT: [{ TrainStation: [{ LocationSignature: 'Mst', AdvertisedLocationName: 'Mariestad' }] }] } });
+    // Mina anslutningar: tågen som efterfrågas vid sina stationer (opts.ownRows finns bara här, utanför linjens fönster)
+    if (body.includes('name="AdvertisedTrainIdent"')) {
+      const pairs = Array.from(body.matchAll(/<EQ name="LocationSignature" value="([^"]+)" \/><OR><EQ name="AdvertisedTrainIdent" value="([^"]+)"/g)).map(x => [x[1], x[2]]);
+      const all = ours.concat(meet, conns, o.extraRows ? o.extraRows(row, dest) : [], o.ownRows ? o.ownRows(row, dest, E) : []);
+      return resp({ RESPONSE: { RESULT: [{ TrainAnnouncement: only(all.filter(a => pairs.some(([sig, id]) => a.LocationSignature === sig && a.AdvertisedTrainIdent === id)), body) }] } });
+    }
     if (body.includes('name="OperationalTrainNumber"')) return resp({ RESPONSE: { RESULT: [{ TrainAnnouncement: only(ours, body) }] } });
     return resp({ RESPONSE: { RESULT: [{ TrainAnnouncement: only(ours.concat(meet, conns, o.extraRows ? o.extraRows(row, dest) : []), body) }] } });
   };
@@ -2751,6 +2757,66 @@ test('buss: Västtrafik stoppar token i webbläsaren – Info säger det, och me
   assertEqual(r.rt.infoModel().connections.map(c => c.ident), ['B1', 'B2'], 'bussarna via servern');
   assert(r.vt.calls.filter(c => c.url.startsWith(server)).every(c => !(c.init.headers && c.init.headers.Authorization)), 'utan token till servern');
   assert(!r.w.document.querySelector('#infoPane .info-hint.err'), 'felet borta');
+});
+
+test('mina anslutningar: läggs till i Inställningar, och Mina i Info visar bara dem och de markerade – också utanför de vanliga fönstren', async () => {
+  // 3055 går 55 min efter vår ankomst till Hällekis och finns bara i frågan för egna tåg
+  const r = await midJourneyWithInfo({ ownRows: (row, dest, E) => [row('3055', 'Hlk', 'Avgang', E + 55 * 60000, dest('Mst'))] });
+  const d = r.w.document;
+  r.w.localStorage.setItem('kmon_all_stations_v1', JSON.stringify({ timestamp: Date.now(), stations: STATION_LIST }));
+  await r.rt.loadAllStations();
+  // ⋮ → Inställningar → Mina anslutningar
+  r.rt.showPrefs();
+  assert(d.getElementById('prefsOwnState').textContent.startsWith('Inga ännu'), d.getElementById('prefsOwnState').textContent);
+  d.getElementById('btnOwnSettings').click();
+  assertEqual(r.rt.currentView(), 'ownSettings', 'rutan öppnas');
+  const add = text => { d.getElementById('ownInput').value = text; d.getElementById('btnOwnAdd').click(); return d.getElementById('ownResult').textContent; };
+  assert(add('hej').startsWith('Skriv till exempel buss 600 Lidköping'), 'tolkas inte');
+  assertEqual(add('tåg 77 Atlantis'), 'Hittar ingen station som heter Atlantis.');
+  assert(add('tåg 3055 hällekis').startsWith('Tillagd: Tåg 3055 Hällekis. Välj Mina'), d.getElementById('ownResult').textContent);
+  assertEqual(d.getElementById('ownInput').value, '', 'fältet töms');
+  add('Tåg 3349 från Hällekis');   // tillbaka längs vår linje: räknas ändå, föraren har sagt att den gäller
+  add('tåg 3053 Hlk');             // signaturen går också
+  add('tåg 999 Hällekis');         // går inte i dag
+  assertEqual(add('tåg 3055 Hällekis'), 'Tåg 3055 Hällekis finns redan.');
+  assertEqual(JSON.parse(r.w.localStorage.getItem('railtimer_own_conn_v1')).map(e => [e.kind, e.id, e.sig]),
+    [['tåg', '3055', 'Hlk'], ['tåg', '3349', 'Hlk'], ['tåg', '3053', 'Hlk'], ['tåg', '999', 'Hlk']]);
+  assertEqual(d.querySelectorAll('#ownList [data-own-del]').length, 4, 'fyra rader');
+  d.getElementById('btnCloseOwn').click();
+  assertEqual(r.rt.currentView(), 'prefs', 'tillbaka till Inställningar');
+  assert(d.getElementById('prefsOwnState').textContent.startsWith('Tåg 3055 Hällekis, Tåg 3349 Hällekis, Tåg 3053 Hällekis och 1 till'), d.getElementById('prefsOwnState').textContent);
+  d.getElementById('btnClosePrefs').click();
+  r.rt.setInfoTab('info');
+  // Tåg (förval) som förut: 3051 och 3053, och 3053 märkt som min
+  const tagRows = connRows(r);
+  assertEqual(r.rt.infoModel().connections.map(c => c.otn), ['3051', '3053'], 'som förut');
+  assert(tagRows.some(t => t.includes('Västtågen 3053') && t.includes('min')), tagRows.join(' | '));
+  // Mina: de egna tågen hämtas och visas, de andra döljs med antal
+  d.querySelector('[data-info="conn-mina"]').click();
+  await realSleep(150);
+  assert(r.trv.calls.some(b => b.includes('name="AdvertisedTrainIdent" value="3055"') && b.includes('name="LocationSignature" value="Hlk"')), 'frågan för egna tåg');
+  const m = r.rt.infoModel();
+  assertEqual(m.connMode, 'mina');
+  assertEqual(m.connections.map(c => [c.otn, c.status]), [['3349', 'ok'], ['3053', 'ok'], ['3055', 'ok']]);
+  assertEqual(m.connectionsHidden, { 'tåg': 1, buss: 0 }, '3051 dold');
+  const text = infoPaneText(r);
+  assert(text.includes('Byter från oss i Hällekis · bara mina · 1 tåg dolt'), text);
+  assert(text.includes('Mina: Tåg 3055 Hällekis · Tåg 3349 Hällekis · Tåg 3053 Hällekis · Tåg 999 Hällekis'), text);
+  assert(text.includes('Tåg 999 Hällekis: går inte därifrån inom 2 h efter vår ankomst'), text);
+  assert(!/anslutning missas/.test(d.getElementById('npInfo').textContent), 'varningarna följer valet: ' + d.getElementById('npInfo').textContent);
+  assertEqual(JSON.parse(r.w.localStorage.getItem('railtimer_conn_v1')).mode, 'mina', 'valet sparas');
+  // Ändra från Info, ta bort en, och tillbaka till resan
+  d.querySelector('#infoPane [data-info="own-edit"]').click();
+  assertEqual(r.rt.currentView(), 'ownSettings');
+  d.querySelector('#ownList [data-own-del="3"]').click();
+  assertEqual(d.getElementById('ownResult').textContent, 'Borttagen: Tåg 999 Hällekis.');
+  d.getElementById('btnCloseOwn').click();
+  assertEqual(r.rt.currentView(), 'journey', 'tillbaka till resan');
+  await realSleep(100);
+  assert(!infoPaneText(r).includes('Tåg 999'), 'borta');
+  // Tåg igen: som förut
+  d.querySelector('[data-info="conn-tag"]').click();
+  assertEqual(r.rt.infoModel().connections.map(c => c.otn), ['3051', '3053']);
 });
 
 test('☆ markerad anslutning: knapp eller missad ger ☎ ring trafikledningen överst, i panelen och uppläst – en gång', async () => {
@@ -3562,6 +3628,24 @@ window.prepareShot = async function (name) {
     await r.rt.refreshBuses(true);
     r.w.document.getElementById('journeyMsg').style.display = 'none';
     r.rt.setInfoTab('info');
+  } else if (name === 'info-mina' || name === 'mina-installningar') {
+    // Mina anslutningar: tåg 3055 och 3349 från Hällekis, buss B2 där och ett tåg som inte går i dag
+    const r = await midJourneyWithInfo({ ownRows: (row, dest, E) => [row('3055', 'Hlk', 'Avgang', E + 55 * 60000, dest('Mst'))] });
+    r.w.localStorage.setItem('kmon_all_stations_v1', JSON.stringify({ timestamp: Date.now(), stations: STATION_LIST }));
+    await r.rt.loadAllStations();
+    r.w.localStorage.setItem('railtimer_own_conn_v1', JSON.stringify([
+      { kind: 'tåg', id: '3055', sig: 'Hlk', name: 'Hällekis' }, { kind: 'tåg', id: '3349', sig: 'Hlk', name: 'Hällekis' },
+      { kind: 'buss', id: 'B2', sig: 'Hlk', name: 'Hällekis' }, { kind: 'tåg', id: '999', sig: 'Hlk', name: 'Hällekis' }]));
+    r.rt.saveConnSettings({ mode: 'mina' });
+    withVasttrafik(r);
+    await r.rt.refreshInfo();
+    await r.rt.refreshBuses(true);
+    await realSleep(100);
+    r.w.document.getElementById('journeyMsg').style.display = 'none';
+    if (name === 'mina-installningar') {
+      r.rt.showOwnSettings();
+      r.w.document.getElementById('ownInput').value = 'buss 600 Lidköping';
+    } else r.rt.setInfoTab('info');
   } else if (name === 'vasttrafik-installningar') {
     const r = await midJourneyWithInfo();
     r.rt.stopJourney(false, 'test');
