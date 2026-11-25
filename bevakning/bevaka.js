@@ -280,7 +280,7 @@ function createWatch(req, deps) {
 }
 
 async function main() {
-  const ev = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+  const ev = JSON.parse(fs.readFileSync(process.env.RT_EVENT_PATH || process.env.GITHUB_EVENT_PATH, 'utf8'));
   const action = ev.action;
   const req = readPayload(ev.client_payload);
   const log = s => console.log(s);
