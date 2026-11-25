@@ -110,7 +110,7 @@ async function runJourney(fixes, opts) {
   let rt = w.__railtimer;
   const route = STATIONS.map((s, i) => rt.makeRouteStation({ name: s[0], lat: s[1], lon: s[2], sig: s[3], radius: 200 }, i));
   if (o.route) o.route(route);
-  rt.initJourneyState(route, { trainNumber: o.trainNumber || 'TEST', vehicleType: 'Y31', notes: '' });
+  rt.initJourneyState(route, { trainNumber: o.trainNumber || 'TEST', vehicleType: 'Y31', notes: '', purpose: o.purpose });
   rt.showView('journey');
   rt.renderRouteCards();
   if (o.afterStart) await o.afterStart(rt, w);
@@ -2569,6 +2569,74 @@ test('provsidan för Västtrafik: token stoppas i webbläsaren – sidan säger 
   assert(w2.document.getElementById('setup').textContent.includes('Västtrafik är inte inställt'), 'säger att det saknas');
 });
 
+// ── Mät tidtabell | Bara info ──
+test('bara info: valet sparas, fordon och anteckningar behövs inte, Info öppnas och inget sparas som mätning', async () => {
+  const r = await appWithStations(1, offlineFetch);
+  const d = r.w.document;
+  const shown = id => !d.getElementById(id).hidden;
+  assertEqual(d.getElementById('purposeMeasure').getAttribute('aria-pressed'), 'true', 'förval: Mät tidtabell');
+  assert(shown('vehicleGroup') && shown('notesGroup') && !shown('purposeHint'), 'fordon och anteckningar syns');
+  d.getElementById('purposeInfo').click();
+  assertEqual(r.w.localStorage.getItem('railtimer_purpose_v1'), 'info', 'valet sparas');
+  assert(!shown('vehicleGroup') && !shown('notesGroup') && shown('purposeHint'), 'fordon och anteckningar döljs');
+  assertEqual(d.getElementById('btnStart').textContent, 'Starta Bara info', 'knappen');
+  // Kvar efter omstart
+  const w2 = await loadApp();
+  w2.localStorage.setItem('kmon_all_stations_v1', JSON.stringify({ timestamp: Date.now(), stations: STATION_LIST }));
+  w2.fetch = offlineFetch;
+  await w2.__railtimer.loadAllStations();
+  const d2 = w2.document;
+  assertEqual(d2.getElementById('purposeInfo').getAttribute('aria-pressed'), 'true', 'Bara info efter omstart');
+  pickStation(w2, 'startStation', 'Lidköping');
+  pickStation(w2, 'endStation', 'Hällekis');
+  // Utan tågnummer: Info bygger på tågnumret
+  await w2.__railtimer.startJourney();
+  assert(d2.getElementById('setupError').textContent.includes('Bara info behöver tågnumret'), d2.getElementById('setupError').textContent);
+  assert(!w2.__railtimer.state.running, 'startar inte');
+  // Med tågnummer, utan fordon
+  d2.getElementById('trainNumber').value = '3344';
+  await w2.__railtimer.startJourney();
+  const rt = w2.__railtimer;
+  assert(rt.state.running, 'resan startar utan fordonstyp');
+  assertEqual(rt.state.purpose, 'info', 'Bara info');
+  assert(d2.getElementById('journey').classList.contains('info-only'), 'förarens saker döljs');
+  assert(d2.getElementById('journey').classList.contains('show-info'), 'Info öppnas direkt');
+  assert(d2.getElementById('journeyTitle').textContent.endsWith('Lidköping → Hällekis · Bara info'), d2.getElementById('journeyTitle').textContent);
+  rt.saveActiveJourney();
+  assertEqual(JSON.parse(w2.localStorage.getItem('railtimer_active_journey_v1')).purpose, 'info', 'sparas med resan som pågår');
+  // Avsluta: ingen körning, men tåget räknas som kört i dag
+  rt.stopJourney(false, 'Avslutad manuellt');
+  await realSleep(100);
+  assertEqual(rt.loadLogs().length, 0, 'ingen körning sparad');
+  const report = d2.getElementById('reportHTML').textContent;
+  assert(report.includes('Resan klar') && report.includes('Bara info – inget sparades som mätning'), report);
+  assertEqual(d2.getElementById('btnNew').textContent, 'Starta ny resa', 'knappen i rapporten');
+  assertEqual(rt.loadInfoTrips().map(t => t.trainNumber), ['3344'], 'tågnumret sparas för dagens tur');
+  assert(rt.tourRuns().some(t => t.trainNumber === '3344' && t.info), 'dagens tur räknar resan');
+});
+
+test('bara info: GPS:en följer tåget hela vägen, Halt? syns inte, och vid slutstationen tas spåret bort', async () => {
+  const fixes = buildJourney();
+  const atBmb = fixes.find(f => f.dwellAt === 3).t + 4000;
+  let runId = null;
+  const r = await runJourney(fixes, {
+    trainNumber: '3344', purpose: 'info',
+    afterStart: rt => { runId = rt.state.journeyId; }
+  });
+  const { w, rt } = r;
+  assertEqual(rt.state.running, false, 'resan avslutades vid slutstationen');
+  assertEqual(rt.loadLogs().length, 0, 'ingen körning sparad');
+  assert(rt.state.route.every((st, i) => i === 0 ? st.actualDeparture : st.actualArrival), 'GPS:en följde tåget: alla stationer fick tider');
+  assert(rt.spoken().some(t => t.startsWith('Framme i Hällekis.') && !t.includes('sparad')), rt.spoken().join(' | '));
+  await realSleep(200);
+  assert(!(await rt.getTrack(runId)), 'GPS-spåret är borttaget');
+  // Vid en station: Halt? döljs i Bara info
+  const r2 = await runJourney(fixes, { trainNumber: '3344', purpose: 'info', drop: f => f.t > atBmb });
+  const box = r2.w.document.getElementById('npHalt');
+  assert(!box.hidden, 'appen skulle visa Halt? vid stationen');
+  assertEqual(r2.w.getComputedStyle(box).display, 'none', 'men den döljs');
+});
+
 // ── Platsminnen och halt (2026-11-25t) ──
 test('platsminne: visas i stationsraden, läses upp när tåget är nära och synkas med GitHub', async () => {
   const fixes = buildJourney();
@@ -3312,6 +3380,12 @@ window.prepareShot = async function (name) {
     r.w.document.getElementById('trainNumber').value = '3344';
     r.rt.saveTour(['3344', '3346', '3349']);
     r.w.document.getElementById('tourInput').value = '3344 3346 3349';
+    r.rt.renderAutoStartStatus();
+  } else if (name === 'startformular-info') {
+    // Startformuläret med Bara info
+    const r = await armedApp();
+    r.w.document.getElementById('purposeInfo').click();
+    r.w.document.getElementById('trainNumber').value = '3344';
     r.rt.renderAutoStartStatus();
   } else if (name === 'nasta-tur') {
     // Rapporten efter resan, med nästa tur överst

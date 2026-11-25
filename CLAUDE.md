@@ -1402,3 +1402,24 @@ Appversion `2026-11-25w`.
 - `node --test "tests/*.test.js"`, nya: `tests/railtimer-vt.test.js` (token, frågorna, hållplatser, tavlan, klienten med utgånget token, CORS och egen server), `tests/vasttrafik-worker.test.js`, och i `tests/railtimer-info.test.js` *bussar: …* och *markerade anslutningar: …*.
 - `node tests/run-browser-tests.mjs`, nya: *buss: utan Västtrafik …*, *buss: Buss visar bussarna …*, *buss: Västtrafik stoppar token …*, *☆ markerad anslutning: …* och *provsidan för Västtrafik: …* (2). Simulerat Västtrafik: `fakeVasttrafik` i `tests/replay.html`.
 - Bilder: `--shot=info-buss`, `--shot=vasttrafik-installningar` och `--shot=vasttrafik-data`.
+
+## Uppdatering (2026-11-25x): Mät tidtabell | Bara info
+
+André 2026-11-25: "Man kanske också ska kunna välja om man vill mäta en tidtabell eller bara använda informationsfliken. Lokförare kanske ibland är intresserade av att mäta en tidtabell. Men ombordpersonalen är ju nästan aldrig intresserad av det … och då behöver ju tåget följas på något sätt med mobilens GPS." Appversion `2026-11-25x`.
+
+- **Valet** överst i startformuläret: **Mät tidtabell | Bara info** (`#purposeMeasure`, `#purposeInfo`), sparat i `railtimer_purpose_v1` (`purpose`, `setPurpose`, `renderPurpose`). Förval Mät tidtabell, som förut.
+- **Bara info**:
+  - Fordonstyp och anteckningar döljs och behövs inte. Tågnumret krävs, eftersom Info bygger på det (*Bara info behöver tågnumret – Info bygger på det.*). Knappen heter *Starta Bara info*. Resan startar av sig själv som vanligt, med tågnummer i stället för fordon (`autoStartArmed`).
+  - **GPS:en följer tåget som vanligt**: ankomst och avgång registreras, så att appen vet var tåget är och prognosen i Info räknar med de egna tiderna. Logiken för ankomst och avgång är oförändrad.
+  - Info öppnas direkt (`setInfoTab('info')`, även vid Återuppta). Stationer finns kvar som flik.
+  - Förarens saker döljs: *Halt?* i panelen och haltkryssrutorna i stationskorten (`#journey.info-only`). Rubriken säger *Tåg 3344 · Lidköping → Hällekis · Bara info*.
+  - Notiser i bakgrunden (2026-11-25v) fungerar som vanligt.
+  - **Inget sparas som mätning** (`finishInfoOnly`): ingen körning, ingen uppladdning, ingen hämtning av Trafikverkets tider, och GPS-spåret tas bort från telefonen. Rapporten säger bara *Resan klar* (eller *avbruten*) och *Bara info – inget sparades som mätning*, nästa tur fylls i, och knappen heter *Starta ny resa*. Uppläsningen vid slutstationen säger *Framme i X.* utan *Resan är sparad*.
+  - Bara tågnummer, tid och stationer sparas (`railtimer_info_trips_v1`, 40 dagar), så att dagens tur vet vilka tåg som körts i dag och kan föreslå turen från samma veckodag (`tourRuns` i `prefillFromTour` och `tourFromHistory`).
+- `state.purpose` (`measure`/`info`) sparas med pågående resa (`saveActiveJourney`) och läses vid Återuppta.
+
+### Tester
+- `node --test "tests/*.test.js"` (207).
+- `node tests/run-browser-tests.mjs` (124), nya: *bara info: valet sparas, fordon och anteckningar behövs inte, Info öppnas och inget sparas som mätning* och *bara info: GPS:en följer tåget hela vägen, Halt? syns inte, och vid slutstationen tas spåret bort*.
+- Bild: `--shot=startformular-info`.
+

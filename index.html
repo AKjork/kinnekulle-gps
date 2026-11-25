@@ -430,6 +430,10 @@
   }
   .np-val{display:block;font-size:1.05rem;font-weight:600;line-height:1.25;white-space:nowrap}
   /* En rad om läget framåt (från infofliken); tryck öppnar fliken */
+  /* Mät tidtabell | Bara info i startformuläret; i Bara info döljs förarens saker */
+  .purpose-seg{display:flex;width:100%;margin:.1rem 0 .35rem}
+  .purpose-seg button{flex:1;min-height:2.6rem;font-size:.95rem}
+  #journey.info-only #npHalt, #journey.info-only .halt-row{display:none !important}
   .np-halt{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;margin-top:.45rem;padding-top:.45rem;border-top:1px solid var(--b)}
   .np-halt[hidden]{display:none}
   .np-halt-q{color:var(--ink-dim);font-size:.82rem;margin-right:.1rem}
@@ -687,12 +691,17 @@
 <main>
   <section id="setup">
     <h2>1. Ställ in resan</h2>
+    <div class="seg purpose-seg" role="group" aria-label="Vad resan är till för">
+      <button type="button" id="purposeMeasure" aria-pressed="true">Mät tidtabell</button>
+      <button type="button" id="purposeInfo" aria-pressed="false">Bara info</button>
+    </div>
+    <p id="purposeHint" class="hint" hidden>GPS:en följer tåget och Info visar läget framåt. Resan sparas inte som mätning.</p>
     <div class="row">
       <div class="form-group grow">
         <label for="trainNumber">Tågnummer</label>
         <input id="trainNumber" type="text" inputmode="numeric" placeholder="t.ex. 8074">
       </div>
-      <div class="form-group grow">
+      <div class="form-group grow" id="vehicleGroup">
         <label for="vehicleType">Fordonstyp *</label>
         <select id="vehicleType" required>
           <option value="">Välj fordonstyp...</option>
@@ -766,7 +775,7 @@
       </div>
     </div>
     <div id="stationLoadStatus" class="loading-stations" style="display:none">Laddar stationer...</div>
-    <div class="form-group">
+    <div class="form-group" id="notesGroup">
       <label for="startNotes">Anteckningar (syns i rapporten)</label>
       <textarea id="startNotes" rows="2" placeholder="Skriv här om du vill anteckna något om mätningen …"></textarea>
     </div>
@@ -941,7 +950,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25w'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25x'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -970,6 +979,8 @@
   const STORAGE_KEY_RECENT_STATIONS = 'kmon_recent_stations_v1';
   const STORAGE_KEY_SOUND_ENABLED = 'railtimer_sound_v1';
   const STORAGE_KEY_LARGE_TEXT = 'railtimer_large_text_v1';
+  const STORAGE_KEY_PURPOSE = 'railtimer_purpose_v1';       // 'measure' (förval) eller 'info' (Bara info)
+  const STORAGE_KEY_INFO_TRIPS = 'railtimer_info_trips_v1'; // resor med Bara info: [{ trainNumber, startedAt, … }], 40 dagar
   const STORAGE_KEY_SPEECH = 'railtimer_speech_v1';         // uppläsning på (förval) eller 'false'
   const STORAGE_KEY_AUTO_START = 'railtimer_auto_start_v1'; // starta resan när tåget rullar: på (förval) eller 'false'
   const STORAGE_KEY_TOUR = 'railtimer_tour_v1';             // dagens tur: { date: 'ÅÅÅÅ-MM-DD', trains: ['23349', …] }
@@ -1121,6 +1132,7 @@
       removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog,
       setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; },
       refreshInfo, updateInfo, setInfoTab, infoModel: () => infoState.model,
+      purpose, setPurpose, loadInfoTrips, tourRuns,
       refreshBuses, connSettings, saveConnSettings, markedConnections, toggleConnMark, infoLogEntry, showVtSettings, saveAndTestVt, busTargets, vtState: () => ({ buses: infoState.buses, error: infoState.vtError, at: infoState.vtFetchedAt }),
       applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
       checkVersionByHand, versionCheckResult: () => versionCheckResult,
@@ -1759,6 +1771,9 @@
       closeAllMenus();
       showUploadSettings();
     });
+    document.getElementById('purposeMeasure').addEventListener('click', () => setPurpose('measure'));
+    document.getElementById('purposeInfo').addEventListener('click', () => setPurpose('info'));
+    renderPurpose();
     document.getElementById('btnVtSettings').addEventListener('click', () => {
       closeAllMenus();
       showVtSettings();
@@ -1819,6 +1834,47 @@
     document.querySelectorAll('.header-menu-dropdown').forEach(m => m.classList.remove('open'));
   }
 
+  /* ── Mät tidtabell | Bara info ──
+     Bara info (ombordpersonal): GPS:en följer tåget som vanligt, så att appen vet var tåget är och prognosen i Info
+     fungerar. Info öppnas direkt, förarens saker (Halt?) döljs, fordonstyp och anteckningar behövs inte, och
+     resan sparas inte som mätning: ingen körning, ingen uppladdning, GPS-spåret tas bort. Bara tågnummer och tid
+     sparas (railtimer_info_trips_v1), så att dagens tur vet vilka tåg som körts. Kräver tågnummer. */
+  function purpose(){
+    try{ return localStorage.getItem(STORAGE_KEY_PURPOSE)==='info' ? 'info' : 'measure'; }catch(e){ return 'measure'; }
+  }
+  function setPurpose(p){
+    try{ localStorage.setItem(STORAGE_KEY_PURPOSE, p==='info' ? 'info' : 'measure'); }catch(e){}
+    renderPurpose();
+    hideSetupError();
+    renderAutoStartStatus();
+  }
+  function renderPurpose(){
+    const info=purpose()==='info';
+    const m=document.getElementById('purposeMeasure'), i=document.getElementById('purposeInfo');
+    if(!m || !i) return;
+    m.setAttribute('aria-pressed', String(!info));
+    i.setAttribute('aria-pressed', String(info));
+    document.getElementById('purposeHint').hidden=!info;
+    document.getElementById('vehicleGroup').hidden=info;
+    document.getElementById('notesGroup').hidden=info;
+    document.getElementById('btnStart').textContent = info ? 'Starta Bara info' : 'Starta GPS-resan';
+    const btnNew=document.getElementById('btnNew');
+    if(btnNew) btnNew.textContent = info ? 'Starta ny resa' : 'Starta ny mätning';
+  }
+  function loadInfoTrips(){
+    try{ const v=JSON.parse(localStorage.getItem(STORAGE_KEY_INFO_TRIPS)||'[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; }
+  }
+  function rememberInfoTrip(entry){
+    const limit=Date.now()-40*86400000;
+    const list=loadInfoTrips().filter(t=>t && Date.parse(t.startedAt)>limit);
+    list.push({ trainNumber:entry.trainNumber, startedAt:new Date(entry.startedAt).toISOString(), startStation:entry.startStation, endStation:entry.endStation, info:true });
+    try{ localStorage.setItem(STORAGE_KEY_INFO_TRIPS, JSON.stringify(list.slice(-200))); }catch(e){}
+  }
+  // Körningarna och resorna med Bara info – för dagens tur (vilka tåg som körts, samma veckodag förra gången)
+  function tourRuns(){
+    return allRuns().concat(loadInfoTrips());
+  }
+
   // opts.auto: { since, fixes } när resan startar av sig själv (autoStartFix) – tåget har redan börjat rulla
   async function startJourney(opts){
     const auto=opts && opts.auto ? opts.auto : null;
@@ -1843,13 +1899,18 @@
       return;
     }
 
-    const vehicleType = document.getElementById('vehicleType').value;
-    if(!vehicleType){
+    const infoOnly = purpose()==='info';
+    const vehicleType = infoOnly ? '' : document.getElementById('vehicleType').value;
+    if(!vehicleType && !infoOnly){
       showSetupError('Välj fordonstyp.');
       return;
     }
 
     const trainNumber = (document.getElementById('trainNumber').value||'').trim();
+    if(infoOnly && !trainNumber){
+      showSetupError('Bara info behöver tågnumret – Info bygger på det.');
+      return;
+    }
     let slice = null;
     let timetableResult = null;
     // Föraren tryckte på Start: säg det direkt, medan tryckningen gäller. Då hörs att uppläsningen fungerar,
@@ -1865,7 +1926,7 @@
       timetableResult = await fetchTimetable(trainNumber, new Date());
 
       document.getElementById('btnStart').disabled = false;
-      document.getElementById('btnStart').textContent = 'Starta GPS-resan';
+      document.getElementById('btnStart').textContent = infoOnly ? 'Starta Bara info' : 'Starta GPS-resan';
 
       if(timetableResult.success && timetableResult.stationStops && timetableResult.stationStops.length > 0){
         // Build route from timetable - get all stations between start and end
@@ -1885,7 +1946,8 @@
     initJourneyState(route, {
       trainNumber,
       vehicleType,
-      notes: (document.getElementById('startNotes').value||'').trim()
+      notes: infoOnly ? '' : (document.getElementById('startNotes').value||'').trim(),
+      purpose: infoOnly ? 'info' : 'measure'
     });
     let lastAutoFix=null;
     if(auto) lastAutoFix=applyAutoStart(auto);
@@ -1899,6 +1961,7 @@
     renderRouteMap(true);
     startPanelTimer();
     startInfo();
+    if(infoOnly) setInfoTab('info');
     fetchNextTour();
     loadRailGeometry();
     requestGpsWatch();
@@ -1918,7 +1981,10 @@
       return;
     }
 
-    if(timetableResult && timetableResult.success){
+    if(infoOnly && !(timetableResult && timetableResult.success)){
+      showJourneyMessage(`Tidtabell: ${timetableResult ? timetableResult.error : 'saknas'} – Info försöker ändå`, true);
+      setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
+    }else if(timetableResult && timetableResult.success){
       const stopCount = state.route.length;
       showJourneyMessage(`Tidtabell hämtad! (${stopCount} stationer)`, false);
       setTimeout(() => { els.journeyMsg.style.display='none'; }, 3000);
@@ -1983,6 +2049,8 @@
     state.trainNumber=meta.trainNumber||'';
     state.vehicleType=meta.vehicleType||'';
     state.notes=meta.notes||'';
+    state.purpose=meta.purpose==='info' ? 'info' : 'measure'; // Bara info: sparas inte som mätning
+    applyPurposeClass();
     state.startedAt=new Date();
     state.lastReachedIndex=0;
     state.nextIndex=route.length>1?1:null;
@@ -1999,6 +2067,11 @@
     state.prunedAtStart=prunedIds.size;
     startTrack(state.journeyId);
     if(els.journeyTitle) els.journeyTitle.textContent=journeyTitleText();
+  }
+
+  function applyPurposeClass(){
+    const j=document.getElementById('journey');
+    if(j) j.classList.toggle('info-only', state.purpose==='info');
   }
 
   // ── GPS-spår ──
@@ -2259,7 +2332,7 @@
     if(!autoStartEnabled || state.running || autoState.starting) return null;
     if(currentView!=='setup' && currentView!=='report') return null;
     if(document.getElementById('resumeDialog')) return null;
-    if(!document.getElementById('vehicleType').value) return null;
+    if(purpose()==='info' ? !trainNumberValue() : !document.getElementById('vehicleType').value) return null;
     const r=autoFormRoute();
     if(!r || r.key===autoState.blockedKey) return null;
     return r;
@@ -3981,7 +4054,7 @@
   function journeyTitleText(){
     const startName=state.route[0]?.name || '?';
     const endName=state.route[state.route.length-1]?.name || '?';
-    return [state.trainNumber?`Tåg ${state.trainNumber}`:'Utan tågnummer', `${startName} → ${endName}`, state.vehicleType].filter(Boolean).join(' · ');
+    return [state.trainNumber?`Tåg ${state.trainNumber}`:'Utan tågnummer', `${startName} → ${endName}`, state.purpose==='info' ? 'Bara info' : state.vehicleType].filter(Boolean).join(' · ');
   }
 
   // En tidcell i stationsraden: faktisk tid med avvikelse under, annars tidtabellens tid nedtonad.
@@ -4253,6 +4326,7 @@
     stopInfo();
     pushWatchEvent('end'); // bevakningen i bakgrunden behövs inte längre
     els.journeyMsg.style.display='none';
+    if(state.purpose==='info'){ finishInfoOnly(aborted, reason); return; }
     const logEntry=saveLog(aborted);
     renderReport(logEntry);
     prepareNextTour(logEntry);
@@ -4265,6 +4339,26 @@
     }
     // Spåret sparas klart innan uppladdningen läser det
     afterJourneyPromise=flushTrack().then(()=>afterJourneyTrafikverket(logEntry.id)).then(afterJourneyUpload);
+  }
+
+  // Bara info: inget sparas som mätning. Rapporten säger bara att resan är klar, och nästa tur fylls i.
+  function finishInfoOnly(aborted, reason){
+    const entry={
+      trainNumber:state.trainNumber, startStation:state.route[0]?.name||'', endStation:state.route[state.route.length-1]?.name||'',
+      startedAt:state.startedAt, finishedAt:new Date(), aborted:!!aborted
+    };
+    rememberInfoTrip(entry);
+    const runId=String(state.journeyId);
+    flushTrack().then(()=>TrackStore.remove(runId)).catch(()=>{});
+    reportedLogId=null;
+    els.reportHTML.innerHTML=`<div class="report-summary"><div class="rs-title">${aborted?'Resan avbruten':'Resan klar'}</div>` +
+      `<p class="hint">Tåg ${escapeHtml(entry.trainNumber)} · ${escapeHtml(entry.startStation)} → ${escapeHtml(entry.endStation)} · Bara info – inget sparades som mätning.</p></div>`;
+    prepareNextTour(entry);
+    showView('report');
+    if(!aborted && /^Slutstation/.test(reason||'')){
+      const nt=nextTourPrepared && nextTourPrepared.nt;
+      speak(`Framme i ${entry.endStation}.` + (nextTourPrepared ? ` Nästa tur ${spellTrain(nextTourPrepared.otn)}${nt?` avgår ${formatClock(nt.dep)}`:''}.` : ''));
+    }
   }
 
   let currentView='setup';
@@ -5879,7 +5973,7 @@
   function tourFromHistory(){
     const today=new Date();
     const byDay=new Map();
-    for(const r of allRuns()){
+    for(const r of tourRuns()){
       if(!r.trainNumber || !r.startedAt) continue;
       const d=new Date(r.startedAt);
       if(isNaN(d) || d.getDay()!==today.getDay() || ymd(d)===ymd(today)) continue;
@@ -5925,7 +6019,7 @@
     const trains=tourTrains();
     if(!trains.length) return;
     const today=ymd(new Date());
-    const driven=new Set(allRuns().filter(r=>r.startedAt && ymd(new Date(r.startedAt))===today).map(r=>String(r.trainNumber)));
+    const driven=new Set(tourRuns().filter(r=>r.startedAt && ymd(new Date(r.startedAt))===today).map(r=>String(r.trainNumber)));
     const next=trains.find(t=>!driven.has(t));
     if(!next) return;
     tn.value=next;
@@ -6894,6 +6988,7 @@
         lastFix: state.lastFix,
         interruptionTipShown: state.interruptionTipShown,
         startedBy: state.startedBy || '',
+        purpose: state.purpose==='info' ? 'info' : 'measure',
         reminded: state.reminded ? Array.from(state.reminded) : [],
         lastSaveTime: Date.now()
       };
@@ -7034,6 +7129,8 @@
     state.storageWarned = false;
     state.prunedAtStart = prunedIds.size;
     state.startedBy = saved.startedBy || '';
+    state.purpose = saved.purpose==='info' ? 'info' : 'measure';
+    applyPurposeClass();
     state.nextTour = null;
     state.reminded = new Set(Array.isArray(saved.reminded) ? saved.reminded : []);
 
@@ -7050,6 +7147,7 @@
     renderRouteMap(true);
     startPanelTimer();
     startInfo();
+    if(state.purpose==='info') setInfoTab('info');
     fetchNextTour();
     loadRailGeometry();
     await restoreTrack(state.journeyId); // innan GPS:en startar, så att inga punkter skrivs över
