@@ -297,6 +297,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  if (Number(process.env.RT_MAX_MIN) > 0) CFG.maxRunMs = Number(process.env.RT_MAX_MIN) * MIN; // prov
   const w = createWatch(req, { fetch: globalThis.fetch, trvKey: process.env.RT_TRV_KEY || trvKeyFromApp(), log, send });
   console.log(`Bevakar tåg ${req.journey.train} ${req.journey.startSig} → ${req.journey.endSig} (app ${req.journey.app})`);
   const reason = await w.run();
