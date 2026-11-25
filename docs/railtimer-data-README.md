@@ -20,6 +20,8 @@ Samma fält som i appen – `id, trainNumber, vehicleType, startStation, endStat
 - per station: `sig` (Trafikverkets signatur), `lat`, `lon`, `radius`
 - vid avbrott: `arrivalWindow`/`departureWindow` `{from, to}` – tiden är då `null` och källan `avbrott` – samt `missedReason: "avbrott"` om stationen passerades helt under avbrottet
 - `info.meetings` (från appversion 2026-11-25k, bara när infofliken hittade möten): `[{ sig, name, train, theirPlanned, theirDelayMin, theirSource, waitMin, single, canceled, moved }]` – mötande tåg enligt Trafikverket, senaste läget innan vi åkte från mötesstationen. `waitMin` är appens beräknade väntan, inte uppmätt; `theirSource` är `faktisk`, `trafikverket`, `senast` eller `plan`
+- `info.events` (från appversion 2026-11-25r): trafikhändelser (OperativeEvent) som rör platser på tågets linje: `[{ id, header, type, sigs, shown, reason, start, end, raw }]`. `shown: false` med `reason` `planerat arbete`, `annan bana` eller `inte under resan` visades inte i infofliken. `raw` är Trafikverkets original som JSON, högst 4 000 tecken.
+- `startedBy: 'auto'` (från appversion 2026-11-25r): resan startade av sig själv när tåget rullade iväg från startstationen.
 
 - per station `slideIn: true` / `slipOut: true` (från appversion 2026-11-25q, bara när föraren markerat): halt – tåget gled vid inbromsningen till stationen respektive slirade vid starten därifrån. Markeras när tåget står vid stationen eller i stationskortet, aldrig automatiskt.
 

@@ -84,6 +84,16 @@
   .row > .form-group{flex:1 1 9rem}
   .form-group input,.form-group select,.form-group textarea{width:100%}
   .hint{font-size:.8rem;color:var(--mut);margin-top:.3rem}
+  .auto-start{text-align:center;margin-top:.6rem;font-size:.9rem;color:var(--pri);font-weight:600}
+  .auto-start small{display:block;font-weight:400;color:var(--ink-dim)}
+  .tour-group{margin-top:.6rem}
+  .label-note{font-weight:400;color:var(--ink-dim);font-size:.8em}
+  .chip{margin-top:.4rem;padding:.35rem .7rem;border:1px solid var(--pri);border-radius:999px;background:var(--pri-glow);color:var(--ink);font-size:.85rem;text-align:left}
+  .next-tour{margin:0 0 1rem;padding:.8rem;border:1px solid var(--pri);border-radius:8px;background:var(--pri-glow)}
+  .next-tour .nt-label{font-size:.8rem;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.04em}
+  .next-tour .nt-main{font-size:1.15rem;font-weight:700;margin:.15rem 0;font-variant-numeric:tabular-nums}
+  .next-tour .nt-sub{font-size:.88rem;color:var(--ink-dim)}
+  .next-tour .bar{margin-top:.6rem}
   .gps-warm{text-align:center;margin-top:.6rem;font-size:.9rem}
   .gps-warm.ready{color:var(--good)}
   .gps-warm.wait{color:var(--sec)}
@@ -612,6 +622,8 @@
         <div class="menu-section">Inställningar</div>
         <button id="btnWakeLock" class="menu-toggle" aria-pressed="false">Håll skärmen vaken <span class="toggle-state">Av</span></button>
         <button id="btnSound" class="menu-toggle" aria-pressed="false">Ljud vid ankomst/avgång <span class="toggle-state">Av</span></button>
+        <button id="btnSpeech" class="menu-toggle" aria-pressed="true">Läs upp info <span class="toggle-state">På</span></button>
+        <button id="btnAutoStart" class="menu-toggle" aria-pressed="true">Starta när tåget rullar <span class="toggle-state">På</span></button>
         <button id="btnTextSize" class="menu-toggle" aria-pressed="false">Stor text <span class="toggle-state">Av</span></button>
         <hr>
         <button id="btnStatistics">Statistik</button>
@@ -685,6 +697,12 @@
       </div>
     </div>
     <div class="hint">Tågnumret används för att hämta tidtabellen och stationerna längs vägen. Utan tågnummer mäts bara start- och slutstation.</div>
+    <div class="form-group tour-group">
+      <label for="tourInput">Dagens tur <span class="label-note">valfritt</span></label>
+      <input id="tourInput" type="text" inputmode="numeric" autocomplete="off" placeholder="t.ex. 23349 23334 23351">
+      <button type="button" id="tourSuggest" class="chip" hidden></button>
+      <div class="hint">Tågen du kör i tur och ordning. När en resa är klar fylls nästa tåg i, och under resan visas vändtiden.</div>
+    </div>
     <div id="routeSuggestion" style="display:none;margin:.6rem 0;padding:.75rem;background:var(--pri-glow);border:1px solid var(--pri);border-radius:8px">
       <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.4rem">
         <span style="font-size:1rem">💡</span>
@@ -715,6 +733,7 @@
     </div>
     <span id="setupError" class="badge warn" style="display:none"></span>
     <button id="btnStart" class="primary btn-start">Starta GPS-resan</button>
+    <div id="autoStartStatus" class="auto-start" role="status" aria-live="polite" hidden></div>
     <div id="gpsWarmStatus" class="hint gps-warm" style="display:none"></div>
   </section>
 
@@ -771,6 +790,7 @@
 
   <section id="report" style="display:none">
     <h2>Rapport</h2>
+    <div id="nextTourCard" class="next-tour" hidden></div>
     <div id="reportHTML"></div>
     <div class="bar" style="margin-top:1rem">
       <button id="btnNew" class="ghost">Starta ny mätning</button>
@@ -834,7 +854,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25q'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25r'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -863,6 +883,9 @@
   const STORAGE_KEY_RECENT_STATIONS = 'kmon_recent_stations_v1';
   const STORAGE_KEY_SOUND_ENABLED = 'railtimer_sound_v1';
   const STORAGE_KEY_LARGE_TEXT = 'railtimer_large_text_v1';
+  const STORAGE_KEY_SPEECH = 'railtimer_speech_v1';         // uppläsning på (förval) eller 'false'
+  const STORAGE_KEY_AUTO_START = 'railtimer_auto_start_v1'; // starta resan när tåget rullar: på (förval) eller 'false'
+  const STORAGE_KEY_TOUR = 'railtimer_tour_v1';             // dagens tur: { date: 'ÅÅÅÅ-MM-DD', trains: ['23349', …] }
   const STORAGE_KEY_STATION_CENTERS = 'railtimer_station_centers_v1'; // egna mittpunkter: { 'sig:Lkp': { lat, lon, at } }
   const CALIBRATE_MAX_ACCURACY_M = 30; // en mittpunkt sparas bara från en GPS-position som är så här säker
   const STATIONS_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dagar; äldre lista används ändå utan nät
@@ -953,6 +976,8 @@
   // Settings
   let soundEnabled = localStorage.getItem(STORAGE_KEY_SOUND_ENABLED) === 'true';
   let largeTextEnabled = localStorage.getItem(STORAGE_KEY_LARGE_TEXT) === 'true';
+  let speechEnabled = localStorage.getItem(STORAGE_KEY_SPEECH) !== 'false';
+  let autoStartEnabled = localStorage.getItem(STORAGE_KEY_AUTO_START) !== 'false';
   let audioCtx = null;
 
   async function init(){
@@ -978,9 +1003,14 @@
     // Återuppta resa och uppladdning väntar inte på stationslistan (den kan ta tid med dålig täckning)
     const stationsLoaded=loadAllStations();
     getUserLocation();
-    if(currentView==='setup') startGpsWarmup();
+    if(wantsGpsWarmup()) startGpsWarmup();
     checkForInterruptedJourney();
-    loadRepoRunsFromDevice().then(()=>prefillVehicleType());
+    showTourInForm();
+    // Dagens tur: första tåget som inte körts i dag fylls i när stationerna och körningarna finns
+    Promise.all([loadRepoRunsFromDevice(), stationsLoaded.catch(()=>{})]).then(()=>{
+      prefillVehicleType(); renderTourSuggest();
+      if(!document.getElementById('resumeDialog') && currentView==='setup') prefillFromTour();
+    });
     // Först upp det som väntar, sedan ner det som finns i GitHub
     removeOrphanTracks().then(()=>scheduleUpload()).then(()=>syncFromGithub(false));
     window.addEventListener('online', () => { if(!allStationsCache.length || stationsStale) refreshStations(); });
@@ -1007,7 +1037,10 @@
       applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
       setVersionForTest: (fetchFn, reloadFn) => { versionFetchForTest = fetchFn; if(reloadFn) reloadPage = reloadFn; },
       appVersion: APP_VERSION,
-      syncFromGithub, allRuns, loadRepoRunsFromDevice, prefillVehicleType, renderUploadStatus
+      syncFromGithub, allRuns, loadRepoRunsFromDevice, prefillVehicleType, renderUploadStatus,
+      autoStartFix, autoStartArmed, renderAutoStartStatus, spoken: () => spokenForTest.slice(), clearSpoken: () => { spokenForTest.length=0; },
+      parseTour, saveTour, tourTrains, nextTourTrain, tourFromHistory, renderTourSuggest, prefillFromTour, fetchNextTour, tourStatus,
+      setAutoStartForTest: on => { autoStartEnabled=!!on; autoState.blockedKey=''; autoState.moving=null; }
     };
   }
 
@@ -1080,6 +1113,64 @@
     if(soundEnabled) playTone(800, 100, 1);
   }
 
+  /* ── Uppläsning (2026-11-25q) ──
+     Det viktiga läses upp, så att föraren inte behöver titta på telefonen: start och slut av resan,
+     möten med väntan, anslutningar som blir knappa eller missas, vändtiden och avvikelser.
+     Svensk röst (sv-SE) om telefonen har en. Bara när något ändras; samma sak läses en gång. */
+  const spokenForTest=[];
+  let swedishVoice=null;
+  function pickSwedishVoice(){
+    try{
+      const voices=window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+      swedishVoice=voices.find(v=>/^sv(-|_|$)/i.test(v.lang)) || null;
+    }catch(e){ swedishVoice=null; }
+  }
+  // Tågnummer siffra för siffra ("2 3 3 4 9"), som man säger dem i radion
+  function spellTrain(otn){
+    return String(otn||'').replace(/\D/g,'').split('').join(' ');
+  }
+  function speak(text){
+    if(!speechEnabled || !text) return false;
+    spokenForTest.push(text);
+    if(TEST_MODE) return true;
+    try{
+      const synth=window.speechSynthesis;
+      if(!synth || typeof SpeechSynthesisUtterance==='undefined') return false;
+      if(!swedishVoice) pickSwedishVoice();
+      const u=new SpeechSynthesisUtterance(text);
+      u.lang='sv-SE';
+      if(swedishVoice) u.voice=swedishVoice;
+      synth.speak(u);
+      return true;
+    }catch(e){
+      console.warn('Uppläsning gick inte', e);
+      return false;
+    }
+  }
+  // iPhone läser bara upp efter att sidan fått en tryckning: första tryckningen låser upp rösten
+  function unlockSpeech(){
+    if(TEST_MODE || !window.speechSynthesis || typeof SpeechSynthesisUtterance==='undefined') return;
+    try{
+      const u=new SpeechSynthesisUtterance(' ');
+      u.volume=0;
+      window.speechSynthesis.speak(u);
+    }catch(e){}
+  }
+  function toggleSpeech(){
+    speechEnabled=!speechEnabled;
+    localStorage.setItem(STORAGE_KEY_SPEECH, speechEnabled);
+    setMenuToggle(document.getElementById('btnSpeech'), speechEnabled);
+    if(speechEnabled) speak('Uppläsning på');
+    else if(!TEST_MODE && window.speechSynthesis) window.speechSynthesis.cancel();
+  }
+  function toggleAutoStart(){
+    autoStartEnabled=!autoStartEnabled;
+    localStorage.setItem(STORAGE_KEY_AUTO_START, autoStartEnabled);
+    setMenuToggle(document.getElementById('btnAutoStart'), autoStartEnabled);
+    autoState.moving=null;
+    renderAutoStartStatus();
+  }
+
   function setMenuToggle(btn, on){
     if(!btn) return;
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -1114,6 +1205,8 @@
     if(largeTextEnabled) document.documentElement.classList.add('large-text');
     updateSoundButton();
     updateTextSizeButton();
+    setMenuToggle(document.getElementById('btnSpeech'), speechEnabled);
+    setMenuToggle(document.getElementById('btnAutoStart'), autoStartEnabled);
   }
 
   // Online/offline status
@@ -1472,10 +1565,12 @@
     }
 
     addToRecentStations(station);
+    autoState.moving=null;
+    renderAutoStartStatus();
   }
 
   function bindEvents(){
-    document.getElementById('btnStart').addEventListener('click', startJourney);
+    document.getElementById('btnStart').addEventListener('click', () => startJourney());
     document.getElementById('btnAbort').addEventListener('click', () => stopJourney(true, 'Resan avbröts manuellt'));
     document.getElementById('btnFinish').addEventListener('click', () => stopJourney(false, 'Avslutad manuellt'));
     document.getElementById('btnExport').addEventListener('click', () => { closeAllMenus(); exportLogs(); });
@@ -1521,6 +1616,24 @@
     // Sound and text size toggles
     document.getElementById('btnSound').addEventListener('click', toggleSound);
     document.getElementById('btnTextSize').addEventListener('click', toggleLargeText);
+    document.getElementById('btnSpeech').addEventListener('click', toggleSpeech);
+    document.getElementById('btnAutoStart').addEventListener('click', toggleAutoStart);
+    document.addEventListener('pointerdown', unlockSpeech, { once:true });
+    if(!TEST_MODE && window.speechSynthesis && 'onvoiceschanged' in window.speechSynthesis){
+      window.speechSynthesis.addEventListener('voiceschanged', pickSwedishVoice);
+    }
+    // Dagens tur och automatisk start
+    const tourInput=document.getElementById('tourInput');
+    tourInput.addEventListener('input', () => { saveTour(parseTour(tourInput.value)); renderTourSuggest(); });
+    tourInput.addEventListener('change', () => { tourInput.value=tourTrains().join(' '); prefillFromTour(); });
+    document.getElementById('tourSuggest').addEventListener('click', useTourSuggestion);
+    for(const id of ['startStation','endStation','trainNumber']){
+      document.getElementById(id).addEventListener('input', () => { autoState.moving=null; renderAutoStartStatus(); });
+    }
+    document.getElementById('vehicleType').addEventListener('change', renderAutoStartStatus);
+    document.getElementById('nextTourCard').addEventListener('click', ev => {
+      if(ev.target.closest('[data-tour="edit"]')) resetForNewRun();
+    });
 
     // Statistics
     document.getElementById('btnStatistics').addEventListener('click', () => {
@@ -1588,7 +1701,9 @@
     document.querySelectorAll('.header-menu-dropdown').forEach(m => m.classList.remove('open'));
   }
 
-  async function startJourney(){
+  // opts.auto: { since, fixes } när resan startar av sig själv (autoStartFix) – tåget har redan börjat rulla
+  async function startJourney(opts){
+    const auto=opts && opts.auto ? opts.auto : null;
     if(state.running){
       // Skydd: en ny resa får aldrig skriva över en som pågår
       showView('journey');
@@ -1651,6 +1766,8 @@
       vehicleType,
       notes: (document.getElementById('startNotes').value||'').trim()
     });
+    let lastAutoFix=null;
+    if(auto) lastAutoFix=applyAutoStart(auto);
     hideSetupError();
     showView('journey');
     els.journeyTitle.textContent=journeyTitleText();
@@ -1661,9 +1778,24 @@
     renderRouteMap(true);
     startPanelTimer();
     startInfo();
+    fetchNextTour();
     loadRailGeometry();
     requestGpsWatch();
     enableWakeLockForJourney();
+    renderAutoStartStatus();
+    if(auto){
+      // Senaste positionen räknas som vanligt: avstånd till nästa station och kartan
+      if(lastAutoFix) handlePosition(lastAutoFix.pos);
+      const endName=state.route[state.route.length-1].name;
+      const dep=state.route[0].actualDeparture;
+      speak(`Resan startad.${trainNumber?` Tåg ${spellTrain(trainNumber)}`:''} mot ${endName}.`);
+      vibrate([100, 50, 100]);
+      const ttProblem = trainNumber && timetableResult && !timetableResult.success;
+      showJourneyMessage(`Resan startade av sig själv när tåget rullade – avgång ${formatTime(dep)}` +
+        (ttProblem ? ` · tidtabell: ${timetableResult.error} – bara start- och slutstation mäts` : ''), !!ttProblem);
+      setTimeout(() => { els.journeyMsg.style.display='none'; }, ttProblem ? 8000 : 6000);
+      return;
+    }
 
     if(timetableResult && timetableResult.success){
       const stopCount = state.route.length;
@@ -1735,6 +1867,8 @@
     state.nextIndex=route.length>1?1:null;
     state.autoReason='';
     state.aborted=false;
+    state.startedBy='';   // 'auto' när resan startade av sig själv
+    state.nextTour=null;  // nästa tåg i dagens tur (fetchNextTour)
     state.journeyId=Date.now().toString(36); // blir körningens id när resan sparas
     state.interruptions=[];
     state.lastFix=null;
@@ -1937,6 +2071,7 @@
       userLocation={ lat:pos.coords.latitude, lon:pos.coords.longitude };
       updateGpsStatus(pos);
       showGpsWarmStatus(pos);
+      autoStartFix(pos);
     }, err=>{
       showGpsWarmStatus(null, err);
     }, { enableHighAccuracy:true, maximumAge:0, timeout:30000 });
@@ -1967,6 +2102,142 @@
         el.classList.add('wait');
       }
     }
+  }
+
+  /* ── Resan startar av sig själv när tåget rullar (2026-11-25q) ──
+     Med start- och slutstation och fordon ifyllda (för hand, av tågnumret eller av dagens tur) följer appen
+     GPS:en medan startformuläret eller rapporten visas. Resan startar när tåget
+       – började rulla högst AUTO_START_FROM_M från startstationen och rört sig i sträck minst
+         START_DEPART_CONFIRM_MS (samma krav som avgången från startstationen),
+       – kör minst AUTO_START_MIN_KMH (inte gångfart) och har lämnat stationens zon (radie + marginal),
+       – närmar sig slutstationen, och
+       – det är högst AUTO_START_EARLY_MS före tidtabellens avgång, när tidtabellen är känd (inte vid växling).
+     Avgången från startstationen räknas från första positionen i rörelse, som vid en vanlig start, och
+     positionerna från rörelsens början kommer med i GPS-spåret. */
+  const AUTO_START_MIN_KMH = 15;
+  const AUTO_START_FROM_M = 600;
+  const AUTO_START_ZONE_M = DEFAULT_RADIUS + EXTRA_MARGIN;
+  const AUTO_START_EARLY_MS = 10*60000;
+  const AUTO_BUFFER_MS = 3*60000;
+  const AUTO_MAX_ACCURACY_M = 50;
+  const autoState = { buf:[], moving:null, starting:false, blockedKey:'' };
+
+  function trainNumberValue(){
+    return (document.getElementById('trainNumber').value||'').trim();
+  }
+  // Formulärets rutt med startstationens mittpunkt (egen mittpunkt om den finns)
+  function autoFormRoute(){
+    const start=stationForInput(els.startInput, selectedStartStation);
+    const end=stationForInput(els.endInput, selectedEndStation);
+    if(!start || !end || start.name===end.name || start.lat==null || start.lon==null) return null;
+    const own=loadStationCenters()[stationCenterKey(start)];
+    return { start, end, lat:own?own.lat:start.lat, lon:own?own.lon:start.lon, key:`${start.name}|${end.name}|${trainNumberValue()}` };
+  }
+  function autoStartArmed(){
+    if(!autoStartEnabled || state.running || autoState.starting) return null;
+    if(currentView!=='setup' && currentView!=='report') return null;
+    if(document.getElementById('resumeDialog')) return null;
+    if(!document.getElementById('vehicleType').value) return null;
+    const r=autoFormRoute();
+    if(!r || r.key===autoState.blockedKey) return null;
+    return r;
+  }
+  // Tidtabellens avgång från startstationen, om tidtabellen för tågnumret redan är hämtad
+  function autoPlannedDeparture(r){
+    const train=trainNumberValue().replace(/[^0-9A-Za-z]/g,'');
+    const hit=train ? timetableCache.get(train) : null;
+    const tt=hit && hit.result && hit.result.timetable;
+    const t=tt && r.start.sig ? tt[r.start.sig] : null;
+    const dep=t && (t.operationalDeparture || t.departure);
+    return dep ? new Date(dep).getTime() : null;
+  }
+
+  function autoStartFix(pos){
+    const now=Date.now();
+    const c=pos.coords;
+    const f={ t:now, pos, lat:c.latitude, lon:c.longitude, acc:c.accuracy };
+    let v=Number.isFinite(c.speed) && c.speed>=0 ? c.speed : null;
+    if(v==null){
+      for(let i=autoState.buf.length-1;i>=0;i--){
+        const a=autoState.buf[i], dt=now-a.t;
+        if(dt<SPEED_EST_MIN_MS) continue;
+        if(dt>SPEED_EST_MAX_MS) break;
+        v=haversine(a.lat,a.lon,f.lat,f.lon)/(dt/1000);
+        break;
+      }
+    }
+    f.v=v;
+    autoState.buf.push(f);
+    while(autoState.buf.length && now-autoState.buf[0].t>AUTO_BUFFER_MS) autoState.buf.shift();
+    const r=autoStartArmed();
+    if(!r){ autoState.moving=null; return false; }
+    if(v==null) return false;
+    if(v<SPEED_THRESHOLD_MS){ autoState.moving=null; return false; }
+    if(f.acc!=null && f.acc>AUTO_MAX_ACCURACY_M) return false;
+    if(!autoState.moving){
+      autoState.moving={ f, dEnd:r.end.lat!=null ? haversine(f.lat,f.lon,r.end.lat,r.end.lon) : null };
+    }
+    const m=autoState.moving;
+    const d0=haversine(m.f.lat,m.f.lon,r.lat,r.lon);
+    if(d0>AUTO_START_FROM_M) return false;
+    if(now-m.f.t<START_DEPART_CONFIRM_MS) return false;
+    if(v*3.6<AUTO_START_MIN_KMH) return false;
+    if(haversine(f.lat,f.lon,r.lat,r.lon)<Math.max(AUTO_START_ZONE_M, d0+150)) return false;
+    if(m.dEnd!=null && haversine(f.lat,f.lon,r.end.lat,r.end.lon)>m.dEnd-50) return false; // inte mot slutstationen
+    const dep=autoPlannedDeparture(r);
+    if(dep!=null && now<dep-AUTO_START_EARLY_MS) return false;
+    autoState.starting=true;
+    const since=m.f;
+    startJourney({ auto:{ since, from:Math.max(0, since.t-30000) } }).catch(e=>{
+      console.error('Kunde inte starta resan av sig själv', e);
+    }).finally(()=>{
+      autoState.starting=false;
+      autoState.moving=null;
+      // Startade den inte (till exempel stationen finns inte i listan) försöker appen inte igen för samma rutt
+      if(!state.running) autoState.blockedKey=r.key;
+      renderAutoStartStatus();
+    });
+    return true;
+  }
+
+  // Resan har startat av sig själv: avgången från startstationen räknas från första positionen i rörelse.
+  // Positionerna från en halv minut före rörelsen kommer med i GPS-spåret. Ger senaste positionen.
+  function applyAutoStart(auto){
+    const fixes=autoState.buf.filter(x=>x.t>=auto.from);
+    const last=fixes.length ? fixes[fixes.length-1] : null;
+    if(fixes.length) state.startedAt=new Date(fixes[0].t);
+    fixes.slice(0, -1).forEach(x=>appendTrackPoint(x.pos, x.t));
+    const st=state.route[0];
+    st.actualDeparture=new Date(auto.since.t);
+    st.departSource='gps';
+    st.departurePosition={ lat:auto.since.lat, lon:auto.since.lon, accuracy:auto.since.acc||null };
+    st.reachedLowSpeed=true;
+    state.lastReachedIndex=0;
+    state.nextIndex=state.route.length>1?1:null;
+    state.awaitingDepartureIndex=null;
+    state.startedBy='auto';
+    autoState.buf=[];
+    return last;
+  }
+
+  function renderAutoStartStatus(){
+    const el=document.getElementById('autoStartStatus');
+    if(!el) return;
+    const r=autoStartArmed();
+    el.hidden=!r;
+    if(r){
+      const dep=autoPlannedDeparture(r);
+      el.innerHTML=`Startar av sig själv när tåget rullar från ${escapeHtml(r.start.name)}` +
+        `<small>${dep?`Avgång ${formatClock(dep)} · `:''}Du kan också trycka Starta. Stängs av i ⋮-menyn.</small>`;
+    }
+    renderNextTourCard();
+    keepAwakeWhileArmed(!!r);
+  }
+  // Skärmen hålls vaken medan appen väntar på att tåget ska rulla, annars stannar GPS:en
+  function keepAwakeWhileArmed(armed){
+    if(TEST_MODE) return;
+    if(armed && !keepScreenAwake) enableWakeLockForJourney();
+    else if(!armed && !state.running) releaseWakeLockAfterJourney();
   }
 
   function requestGpsWatch(){
@@ -2803,7 +3074,7 @@
   function startInfo(){
     stopInfo();
     Object.assign(infoState, { our:null, ourKey:null, line:null, trains:null, fetchedAt:null, error:null, messages:[], messagesAt:0,
-      model:null, lastHtml:'', notified:new Map(), meetLog:new Map(), safeFields:false });
+      model:null, lastHtml:'', notified:new Map(), meetLog:new Map(), eventLog:new Map(), safeFields:false });
     infoState.history = INFO ? INFO.historyMedians(allRuns()) : null; // även körningar hämtade från GitHub
     setInfoTab('stations');
     renderInfo();
@@ -2911,6 +3182,7 @@
       if(model){
         rememberDouble(model.doubleSections);
         recordMeetings(model);
+        recordEvents(model);
       }
     }
     infoState.model=model;
@@ -2929,9 +3201,24 @@
       });
     }
   }
+  /* Trafikhändelser som rör platser på vår linje sparas i körningen, även de som inte visades och varför
+     (planerat arbete, annan bana), med Trafikverkets original – så att filtreringen kan prövas i efterhand. */
+  function recordEvents(model){
+    if(!infoState.eventLog) infoState.eventLog=new Map();
+    const add=(m, reason)=>{
+      if(infoState.eventLog.size>=20 && !infoState.eventLog.has(m.id)) return;
+      let raw='';
+      try{ raw=JSON.stringify(m.raw||null).slice(0, 4000); }catch(e){}
+      infoState.eventLog.set(m.id, { id:m.id, header:m.header, type:m.type||'', sigs:m.allSigs||m.sigs, shown:!reason, reason:reason||'',
+        start:m.start!=null?new Date(m.start).toISOString():null, end:m.end!=null?new Date(m.end).toISOString():null, raw });
+    };
+    for(const m of model.messages) add(m, null);
+    for(const m of model.messagesHidden||[]) add(m, m.reason);
+  }
   function infoLogEntry(){
-    if(!infoState.meetLog.size) return null;
-    return { meetings:Array.from(infoState.meetLog.values()) };
+    const events=infoState.eventLog ? Array.from(infoState.eventLog.values()) : [];
+    if(!infoState.meetLog.size && !events.length) return null;
+    return { meetings:Array.from(infoState.meetLog.values()), ...(events.length ? { events } : {}) };
   }
 
   // ── Text och utseende ──
@@ -2971,7 +3258,9 @@
     else if(m.tight) parts.push(`${m.tight} knapp${m.tight>1?'a':''} anslutning${m.tight>1?'ar':''}`);
     if(m.deviations.length) parts.push(m.deviations[0].text);
     if(m.messages.length) parts.push(m.messages[0].header);
-    return { text:parts.join(' · '), level:m.level };
+    const t=tourStatus();
+    if(t && t.level) parts.push(t.turnMin<TOUR_LATE_MIN ? `nästa tur ${t.otn} blir sen` : `vändtid ${t.turnMin} min`);
+    return { text:parts.join(' · '), level:Math.max(m.level, t ? t.level : 0) };
   }
 
   function infoRow(level, time, title, sub, status){
@@ -3038,6 +3327,10 @@
       `${m.reason && !m.end.arrived ? `<span class="ih-why">möte i ${escapeHtml(sigName(m.reason.sig))}</span>` : ''}</div>` +
       `<div class="ih-sub">${sub}</div></div>`;
 
+    // Nästa tåg i dagens tur och vändtiden dit
+    const tour=tourStatus();
+    if(tour) html+=`<div class="info-sec"><span>Nästa tur</span></div>${tourRowHtml(tour)}`;
+
     // Längs vägen: möten, avvikelser för vårt tåg och störningar, i ordning längs linjen
     const idxOf=new Map(line.map((l,i)=>[l.sig,i]));
     const rows=[];
@@ -3073,7 +3366,8 @@
       : `<div class="info-empty">Inga anslutningar ${tmin}–40 min efter vår ankomst.</div>`;
 
     const basis = m.recoveryObs ? `Trafikverkets tider och egna gångtider (upp till ${m.recoveryObs} körningar per sträcka)` : 'Trafikverkets tider och tidtabellen';
-    html+=`<p class="info-foot">Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Tågklareraren kan flytta möten.` +
+    const notShown=(m.messagesHidden||[]).filter(h=>h.reason!=='inte under resan').length;
+    html+=`<p class="info-foot">${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Tågklareraren kan flytta möten.` +
       `${infoState.error?` Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).`:''}</p>`;
     return html;
   }
@@ -3088,10 +3382,11 @@
     np.hidden=!head;
     np.textContent=head ? head.text : '';
     np.className='np-info'+(head && head.level ? ' l'+head.level : '');
-    const att=m ? m.attention : 0;
+    const tour=state.running && m ? tourStatus() : null;
+    const att=m ? m.attention + (tour && tour.level ? 1 : 0) : 0;
     count.hidden=!att;
     count.textContent=att ? String(att) : '';
-    count.className='tab-count'+(m && m.level>=2 ? ' l2' : '');
+    count.className='tab-count'+(m && (m.level>=2 || (tour && tour.level>=2)) ? ' l2' : '');
     const html=infoPaneHtml(m);
     if(html!==infoState.lastHtml){
       infoState.lastHtml=html;
@@ -3123,22 +3418,35 @@
 
   // Vibration och meddelande när något blir värre: nytt möte med väntan, anslutning som blir knapp eller missas,
   // avvikelse eller störning. Samma sak meddelas bara en gång per nivå.
+  // Det viktigaste läses också upp (speak), i ord som går att höra: inga tågnummer, "minuter" utskrivet.
   function notifyInfo(m){
     const alerts=[];
-    const add=(key, level, text)=>{
+    const add=(key, level, text, say)=>{
       const prev=infoState.notified.get(key)||0;
-      if(level>prev){ alerts.push({ level, text }); infoState.notified.set(key, level); }
+      if(level>prev){ alerts.push({ level, text, say }); infoState.notified.set(key, level); }
     };
-    for(const mt of m.meetings) if(mt.level) add(`m|${mt.otn}|${mt.sig}`, mt.level, `Möte ${sigName(mt.sig)}: ${mt.ident||mt.otn} är ${mt.theirDelayMin} min sent – vi väntar ca ${mt.waitMin} min`);
-    for(const c of m.connections) if(c.level) add(`c|${c.otn}`, c.level, `Anslutning ${roundClock(c.adv)} ${placesText(c.to)}: ${c.status==='knappt'?`knappt (${Math.max(c.transferMin,0)} min)`:c.status}`);
-    for(const c of m.incoming||[]) if(c.level) add(`i|${c.otn}`, c.level, `${trainText(c)} från ${placesText(c.from)}: ${c.status==='knappt'?'knappt byte till oss':(c.status==='inställt'?'inställt':'hinner inte till oss')}`);
-    for(const d of m.deviations) add(`d|${d.sig}|${d.text}`, 1, `${sigName(d.sig)}: ${d.text}`);
-    for(const msg of m.messages) add(`t|${msg.id}`, 1, msg.header);
+    const minutes = n => `${n} minut${n===1?'':'er'}`;
+    for(const mt of m.meetings) if(mt.level) add(`m|${mt.otn}|${mt.sig}`, mt.level,
+      `Möte ${sigName(mt.sig)}: ${mt.ident||mt.otn} är ${mt.theirDelayMin} min sent – vi väntar ca ${mt.waitMin} min`,
+      `Möte i ${sigName(mt.sig)}. Mötande tåg ${minutes(mt.theirDelayMin)} sent. Vi väntar cirka ${minutes(mt.waitMin)}.`);
+    for(const c of m.connections) if(c.level) add(`c|${c.otn}`, c.level,
+      `Anslutning ${roundClock(c.adv)} ${placesText(c.to)}: ${c.status==='knappt'?`knappt (${Math.max(c.transferMin,0)} min)`:c.status}`,
+      `Anslutningen mot ${placesText(c.to)} ${roundClock(c.adv)} ${({ knappt:'blir knapp', missas:'hinns inte', 'avgått':'har gått', 'inställt':'är inställd' })[c.status]||c.status}.`);
+    for(const c of m.incoming||[]) if(c.level) add(`i|${c.otn}`, c.level,
+      `${trainText(c)} från ${placesText(c.from)}: ${c.status==='knappt'?'knappt byte till oss':(c.status==='inställt'?'inställt':'hinner inte till oss')}`,
+      `Tåget från ${placesText(c.from)} ${c.status==='knappt'?'ger ett knappt byte till oss':(c.status==='inställt'?'är inställt':'hinner inte till oss')}.`);
+    for(const d of m.deviations) add(`d|${d.sig}|${d.text}`, 1, `${sigName(d.sig)}: ${d.text}`, `${sigName(d.sig)}: ${d.text}.`);
+    for(const msg of m.messages) add(`t|${msg.id}`, 1, msg.header, `${msg.header}.`);
+    const t=tourStatus();
+    if(t && t.level) add(`tour|${t.otn}`, t.level,
+      t.turnMin<TOUR_LATE_MIN ? `Nästa tur ${t.otn} ${formatClock(t.dep)}: vändtiden räcker inte` : `Nästa tur ${t.otn} ${formatClock(t.dep)}: vändtid ca ${t.turnMin} min`,
+      t.turnMin<TOUR_LATE_MIN ? `Vändtiden i ${t.fromName} räcker inte. Nästa tur blir sen.` : `Vändtiden i ${t.fromName} blir cirka ${minutes(t.turnMin)}.`);
     if(!alerts.length) return;
     alerts.sort((a,b)=>b.level-a.level);
     const top=alerts[0];
     vibrate(top.level>=2 ? [150,80,150,80,150] : [120,80,120]);
     playTone(660, 120, top.level>=2 ? 3 : 2);
+    speak(top.say);
     const text=top.text+(alerts.length>1 ? ` (och ${alerts.length-1} till i Info)` : '');
     showJourneyMessage(text, top.level>=2);
     setTimeout(()=>{ if(els.journeyMsg.textContent===text) els.journeyMsg.style.display='none'; }, 8000);
@@ -3420,8 +3728,14 @@
     els.journeyMsg.style.display='none';
     const logEntry=saveLog(aborted);
     renderReport(logEntry);
+    prepareNextTour(logEntry);
     // Rapporten visas ensam överst; startformuläret kommer först via "Starta ny mätning"
     showView('report');
+    if(!aborted && /^Slutstation/.test(reason||'')){
+      const nt=nextTourPrepared && nextTourPrepared.nt;
+      speak(`Framme i ${logEntry.endStation}. Resan är sparad.` +
+        (nextTourPrepared ? ` Nästa tur ${spellTrain(nextTourPrepared.otn)}${nt?` avgår ${formatClock(nt.dep)}`:''}.` : ''));
+    }
     // Spåret sparas klart innan uppladdningen läser det
     afterJourneyPromise=flushTrack().then(()=>afterJourneyTrafikverket(logEntry.id)).then(afterJourneyUpload);
   }
@@ -3430,13 +3744,18 @@
   function showView(view){
     currentView=view;
     els.setup.style.display = view==='setup' ? 'block' : 'none';
-    if(view==='setup') startGpsWarmup();
+    if(wantsGpsWarmup()) startGpsWarmup();
     els.journey.style.display = view==='journey' ? '' : 'none';
     document.body.classList.toggle('journey-mode', view==='journey');
     els.report.style.display = view==='report' ? 'block' : 'none';
     document.getElementById('statistics').style.display = view==='statistics' ? 'block' : 'none';
     document.getElementById('settings').style.display = view==='settings' ? 'block' : 'none';
     window.scrollTo(0,0);
+    renderAutoStartStatus();
+  }
+  // GPS:en hålls igång i startformuläret, och i rapporten när resan kan starta av sig själv (nästa tur)
+  function wantsGpsWarmup(){
+    return currentView==='setup' || (currentView==='report' && autoStartEnabled);
   }
 
   // Skärmen hålls vaken automatiskt under resan, om den inte redan är påslagen manuellt
@@ -4409,6 +4728,7 @@
       startedAt:state.startedAt,
       finishedAt:new Date(),
       aborted:!!aborted,
+      ...(state.startedBy ? { startedBy:state.startedBy } : {}),
       notes:state.notes,
       interruptions:(state.interruptions||[]).slice(),
       ...(infoLogEntry() ? { info:infoLogEntry() } : {}),
@@ -4715,6 +5035,8 @@
       els.endInput.value = endStation.name;
       selectedEndStation = endStation;
     }
+    autoState.moving=null;
+    renderAutoStartStatus();
     return !!(startStation && endStation);
   }
 
@@ -4742,6 +5064,206 @@
     }
     if(!pick && !sel.value && runs.length) pick=runs[0].vehicleType;
     if(pick && Array.from(sel.options).some(o=>o.value===pick)) sel.value=pick;
+    renderAutoStartStatus();
+  }
+
+  /* ── Dagens tur (2026-11-25q) ──
+     Tågen föraren kör i tur och ordning, för i dag. Under resan visas vändtiden till nästa tåg i slutstationen,
+     och när resan är klar fylls nästa tåg i – med rutten från nästa tågs tidtabell – så att den kan starta av
+     sig själv. Förslag: tågen samma veckodag förra gången (ur körningarna, även de från GitHub). */
+  const TOUR_TIGHT_MIN = 4;  // vändtid kortare än så: håll koll
+  const TOUR_LATE_MIN = 1;   // kortare än så: nästa tur blir sen
+  function ymd(d){
+    const p=n=>String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+  }
+  function parseTour(text){
+    const out=[];
+    for(const t of String(text||'').split(/[^0-9]+/)){
+      if(t.length>=2 && t.length<=6 && out[out.length-1]!==t) out.push(t);
+    }
+    return out.slice(0, 20);
+  }
+  // Turen gäller i dag, och gårdagens till kl. 04 (pass över midnatt)
+  function loadTour(){
+    try{
+      const t=JSON.parse(localStorage.getItem(STORAGE_KEY_TOUR)||'null');
+      if(!t || !Array.isArray(t.trains)) return [];
+      const now=new Date();
+      const yesterday=new Date(now); yesterday.setDate(now.getDate()-1);
+      if(t.date===ymd(now) || (t.date===ymd(yesterday) && now.getHours()<4)) return t.trains.map(String);
+    }catch(e){}
+    return [];
+  }
+  function saveTour(trains){
+    try{ localStorage.setItem(STORAGE_KEY_TOUR, JSON.stringify({ date:ymd(new Date()), trains })); }catch(e){}
+  }
+  const tourTrains = () => loadTour();
+  function nextTourTrain(otn){
+    const trains=tourTrains();
+    const i=trains.indexOf(String(otn||''));
+    return i>=0 && i+1<trains.length ? trains[i+1] : null;
+  }
+  // Tågen samma veckodag förra gången, i den ordning de kördes (minst två)
+  function tourFromHistory(){
+    const today=new Date();
+    const byDay=new Map();
+    for(const r of allRuns()){
+      if(!r.trainNumber || !r.startedAt) continue;
+      const d=new Date(r.startedAt);
+      if(isNaN(d) || d.getDay()!==today.getDay() || ymd(d)===ymd(today)) continue;
+      const k=ymd(d);
+      if(!byDay.has(k)) byDay.set(k, []);
+      byDay.get(k).push(r);
+    }
+    const days=Array.from(byDay.keys()).sort().reverse();
+    for(const k of days){
+      const trains=[];
+      for(const r of byDay.get(k).sort((a,b)=>String(a.startedAt).localeCompare(String(b.startedAt)))){
+        const t=String(r.trainNumber);
+        if(trains[trains.length-1]!==t) trains.push(t);
+      }
+      if(trains.length>=2) return { date:k, trains };
+    }
+    return null;
+  }
+  function renderTourSuggest(){
+    const btn=document.getElementById('tourSuggest');
+    if(!btn) return;
+    const s=tourTrains().length ? null : tourFromHistory();
+    btn.hidden=!s;
+    if(s){
+      const day=new Date(s.date+'T12:00:00').toLocaleDateString('sv-SE', { weekday:'long' });
+      btn.textContent=`Som förra ${day}: ${s.trains.join(' → ')}`;
+      btn.dataset.trains=s.trains.join(' ');
+    }
+  }
+  function useTourSuggestion(){
+    const btn=document.getElementById('tourSuggest');
+    const trains=parseTour(btn.dataset.trains);
+    if(!trains.length) return;
+    saveTour(trains);
+    document.getElementById('tourInput').value=trains.join(' ');
+    renderTourSuggest();
+    prefillFromTour();
+  }
+  // Tågnummer tomt och en tur finns: första tåget i turen som inte körts i dag
+  function prefillFromTour(){
+    const tn=document.getElementById('trainNumber');
+    if(state.running || !tn || trainNumberValue()) return;
+    const trains=tourTrains();
+    if(!trains.length) return;
+    const today=ymd(new Date());
+    const driven=new Set(allRuns().filter(r=>r.startedAt && ymd(new Date(r.startedAt))===today).map(r=>String(r.trainNumber)));
+    const next=trains.find(t=>!driven.has(t));
+    if(!next) return;
+    tn.value=next;
+    handleTrainNumberInput({ target:tn });
+  }
+  function showTourInForm(){
+    const input=document.getElementById('tourInput');
+    if(input && document.activeElement!==input) input.value=tourTrains().join(' ');
+    renderTourSuggest();
+  }
+
+  // Nästa tåg i turen: avgång från vår slutstation (annars tågets första station) och vart det går
+  async function fetchNextTour(){
+    state.nextTour=null;
+    const next=nextTourTrain(state.trainNumber);
+    if(!next) return;
+    const endSt=state.route[state.route.length-1];
+    const runId=state.journeyId;
+    const at=planArr(endSt) ? new Date(planArr(endSt)) : new Date();
+    const res=await fetchTimetable(next, at);
+    if(!state.running || state.journeyId!==runId) return;
+    if(!res.success || !res.timetable){
+      state.nextTour={ otn:next, error:res.error||'tidtabellen saknas' };
+      renderInfo();
+      return;
+    }
+    const tt=res.timetable;
+    const timeOf=x=>x && (x.operationalDeparture || x.departure || x.operationalArrival || x.arrival);
+    const order=(res.stationStops||Object.keys(tt)).filter(sig=>timeOf(tt[sig])).sort((a,b)=>new Date(timeOf(tt[a]))-new Date(timeOf(tt[b])));
+    if(!order.length){ state.nextTour={ otn:next, error:'tidtabellen saknas' }; renderInfo(); return; }
+    const fromSig = endSt.sig && tt[endSt.sig] && (tt[endSt.sig].operationalDeparture || tt[endSt.sig].departure) ? endSt.sig : order[0];
+    const toSig=order[order.length-1];
+    const f=tt[fromSig];
+    const dep=new Date(f.operationalDeparture || f.departure).getTime();
+    state.nextTour={
+      otn:next, fromSig, toSig, fromName:sigName(fromSig), toName:sigName(toSig), dep,
+      advDep:f.departure ? new Date(f.departure).getTime() : dep, sameStation:fromSig===endSt.sig
+    };
+    renderInfo();
+  }
+
+  // Vändtiden till nästa tur: nästa tågs avgång − vår ankomst (verklig, annars prognos, annars tidtabell)
+  function tourStatus(){
+    const nt=state.nextTour;
+    if(!nt || nt.dep==null) return nt && nt.error ? { otn:nt.otn, error:nt.error, level:0 } : null;
+    const endSt=state.route[state.route.length-1];
+    const m=infoState.model;
+    let arr=null, src='plan';
+    if(endSt && endSt.actualArrival){ arr=timeMs(endSt.actualArrival); src='faktisk'; }
+    else if(m && m.end && m.end.predArr!=null){ arr=m.end.predArr; src='prognos'; }
+    else if(endSt && planArr(endSt)) arr=timeMs(planArr(endSt));
+    if(arr==null) return null;
+    const plannedArr=endSt && planArr(endSt) ? timeMs(planArr(endSt)) : null;
+    const turnMin=Math.floor((nt.dep-arr)/60000);
+    const level = !nt.sameStation ? 0 : (turnMin<TOUR_LATE_MIN ? 2 : (turnMin<TOUR_TIGHT_MIN ? 1 : 0));
+    return Object.assign({}, nt, { arr, src, turnMin, level,
+      plannedTurnMin: plannedArr!=null ? Math.round((nt.dep-plannedArr)/60000) : null });
+  }
+
+  function tourRowHtml(t){
+    if(t.error) return infoRow(0, '', `Nästa tur ${escapeHtml(t.otn)}`, escapeHtml(t.error), '');
+    const where = t.sameStation ? `${escapeHtml(t.fromName)} → ${escapeHtml(t.toName)}` : `från ${escapeHtml(t.fromName)} → ${escapeHtml(t.toName)}`;
+    const sub=[ t.plannedTurnMin!=null ? `vändtid enligt plan ${t.plannedTurnMin} min` : '', t.src==='prognos' ? 'räknat på prognosen' : '' ].filter(Boolean).join(' · ');
+    const cls = t.level>=2 ? 'dl-very-late' : (t.level ? 'dl-late' : 'dl-live');
+    const status = t.sameStation ? `<span class="${cls}">${t.turnMin} min</span><small>vändtid</small>` : '';
+    return infoRow(t.level, formatClock(t.dep), `${escapeHtml(t.otn)} · ${where}`, sub, status);
+  }
+
+  // Efter resan: nästa tåg i turen fylls i, och rapporten visar det överst
+  function prepareNextTour(entry){
+    const next=entry && !entry.aborted ? nextTourTrain(entry.trainNumber) : null;
+    nextTourPrepared=null;
+    if(!next){ renderNextTourCard(); return; }
+    const nt=state.nextTour && state.nextTour.otn===next && state.nextTour.dep!=null ? state.nextTour : null;
+    const tn=document.getElementById('trainNumber');
+    tn.value=next;
+    currentSuggestion=null;
+    document.getElementById('routeSuggestion').style.display='none';
+    const byS=sig=>allStationsCache.find(s=>s.sig===sig)||null;
+    const from=nt ? byS(nt.fromSig) : null, to=nt ? byS(nt.toSig) : null;
+    if(from && to){
+      els.startInput.value=from.name; selectedStartStation=from;
+      els.endInput.value=to.name; selectedEndStation=to;
+      autoFilledRoute={ start:from.name, end:to.name };
+    }else{
+      // Rutten okänd: fälten töms och tågnumret fyller i dem (GPS + tidtabell) som när föraren skriver det
+      els.startInput.value=''; els.endInput.value='';
+      selectedStartStation=null; selectedEndStation=null; autoFilledRoute=null;
+      handleTrainNumberInput({ target:tn });
+    }
+    prefillVehicleType(next);
+    nextTourPrepared={ otn:next, nt };
+    showTourInForm();
+    renderAutoStartStatus();
+  }
+  let nextTourPrepared=null;
+  function renderNextTourCard(){
+    const card=document.getElementById('nextTourCard');
+    if(!card) return;
+    const p=nextTourPrepared;
+    if(!p || state.running){ card.hidden=true; return; }
+    const nt=p.nt;
+    const route = nt ? `${escapeHtml(nt.fromName)} ${formatClock(nt.dep)} → ${escapeHtml(nt.toName)}` :
+      (els.startInput.value && els.endInput.value ? `${escapeHtml(els.startInput.value)} → ${escapeHtml(els.endInput.value)}` : 'rutten fylls i från tidtabellen');
+    const armed=autoStartArmed();
+    card.hidden=false;
+    card.innerHTML=`<div class="nt-label">Nästa tur</div><div class="nt-main">${escapeHtml(p.otn)} · ${route}</div>` +
+      `<div class="nt-sub">${armed ? 'Startar av sig själv när tåget rullar.' : (autoStartEnabled ? 'Fyll i det som saknas, så startar resan när tåget rullar.' : 'Tryck Ändra för att starta.')}</div>` +
+      `<div class="bar"><button type="button" class="ghost" data-tour="edit">Ändra</button></div>`;
   }
 
   function acceptSuggestion(){
@@ -5359,7 +5881,7 @@
       notes: entry.notes || entry.note || '',
       stops: normalizedStops
     };
-    for(const key of ['format','appVersion','interruptions','trackPath','trv','info']){
+    for(const key of ['format','appVersion','interruptions','trackPath','trv','info','startedBy']){
       if(entry[key]!==undefined) out[key]=entry[key];
     }
     return out;
@@ -5442,7 +5964,7 @@
       }
       // Ett avbrott upptäcks och meddelas vid nästa GPS-position (checkForInterruption)
       scheduleUpload();
-      if(currentView==='setup') startGpsWarmup();
+      if(wantsGpsWarmup()) startGpsWarmup();
       if(state.running && (!infoState.fetchedAt || Date.now()-infoState.fetchedAt>=INFO_REFRESH_MS)) refreshInfo();
       if(Date.now()-versionCheckedAt>=60000) checkForNewVersion(true);
       if(!state.running) Promise.resolve(uploadPromise).then(()=>syncFromGithub(false));
@@ -5471,6 +5993,7 @@
         interruptions: state.interruptions,
         lastFix: state.lastFix,
         interruptionTipShown: state.interruptionTipShown,
+        startedBy: state.startedBy || '',
         lastSaveTime: Date.now()
       };
       const json=JSON.stringify(journeyState);
@@ -5598,6 +6121,8 @@
     state.interruptionTipShown = !!saved.interruptionTipShown;
     state.storageWarned = false;
     state.prunedAtStart = prunedIds.size;
+    state.startedBy = saved.startedBy || '';
+    state.nextTour = null;
 
     // Update UI
     hideSetupError();
@@ -5612,6 +6137,7 @@
     renderRouteMap(true);
     startPanelTimer();
     startInfo();
+    fetchNextTour();
     loadRailGeometry();
     await restoreTrack(state.journeyId); // innan GPS:en startar, så att inga punkter skrivs över
     requestGpsWatch();
@@ -5738,7 +6264,8 @@
 
   // Omladdning utan att störa: ingen resa, startformuläret visas och ingen frågeruta är öppen
   function canReloadNow(){
-    return !state.running && currentView==='setup' && !document.getElementById('resumeDialog');
+    // Inte heller när tåget just börjat rulla och resan kan starta av sig själv
+    return !state.running && currentView==='setup' && !document.getElementById('resumeDialog') && !autoState.moving && !autoState.starting;
   }
 
   function showUpdatePrompt(version){

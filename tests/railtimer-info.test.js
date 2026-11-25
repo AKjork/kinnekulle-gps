@@ -261,15 +261,24 @@ test('störningar (OperativeEvent): bara de som berör resten av vår linje och 
       ] },
     { Id: 'b', EventType: { Description: 'Banarbete' }, StartDateTime: T('10:00'), TrafficImpact: [{ AffectedLocation: [{ Signature: 'Cst' }] }] },
     { Id: 'c', EventType: { Description: 'Växelfel' }, StartDateTime: T('09:00'), EndDateTime: T('10:00'), TrafficImpact: [{ Location: { LocationSignature: 'Vr' } }] },
-    { Id: 'd', EventType: { Description: 'Banarbete' }, StartDateTime: T('10:30'), Location: { Signature: 'Jp' } }
+    { Id: 'd', EventType: { Description: 'Banarbete' }, StartDateTime: T('10:30'), Location: { Signature: 'Jp' } },
+    // En plats på vår linje och en utanför: en annan bana
+    { Id: 'e', EventType: { Description: 'Signalfel' }, StartDateTime: T('10:30'), TrafficImpact: [{ FromLocation: [{ Signature: 'Hr' }], ToLocation: [{ Signature: 'Agå' }] }] },
+    // Två platser på vår linje: en sträcka vi kör
+    { Id: 'f', EventType: { Description: 'Växelfel' }, StartDateTime: T('10:30'), TrafficImpact: [{ FromLocation: [{ Signature: 'Vr' }], ToLocation: [{ Signature: 'Vdm' }] }] },
+    // Banarbete på sträckan vi kör: tidtabellen räknar redan med det
+    { Id: 'g', EventType: { Description: 'Banarbete' }, StartDateTime: T('10:30'), TrafficImpact: [{ PublicMessage: { Header: 'Spårarbete Vara–Vedum' }, FromLocation: [{ Signature: 'Vr' }], ToLocation: [{ Signature: 'Vdm' }] }] }
   ];
   const m = setup([], { messages });
-  assert.deepEqual(m.messages.map(x => x.id), ['a', 'd']);
+  assert.deepEqual(m.messages.map(x => x.id), ['a', 'f']);
   assert.equal(m.messages[0].header, 'Signalfel i Vedum', 'senast ändrade publika meddelandet');
   assert.equal(m.messages[0].text, 'Tågen kör med nedsatt fart.');
   assert.deepEqual(m.messages[0].sigs, ['Vdm']);
   assert.equal(m.messages[0].end, at('13:00'));
-  assert.equal(m.messages[1].header, 'Banarbete', 'utan publikt meddelande: händelsetypen');
+  // Det som inte visas, och varför (sparas i körningen)
+  assert.deepEqual(m.messagesHidden.map(x => [x.id, x.reason]), [['c', 'inte under resan'], ['d', 'planerat arbete'], ['e', 'annan bana'], ['g', 'planerat arbete']]);
+  assert.equal(m.messagesHidden[1].header, 'Banarbete', 'utan publikt meddelande: händelsetypen');
+  assert.equal(m.messagesHidden[1].raw.Id, 'd', 'originalet följer med');
   assert.deepEqual(I.signaturesIn({ a: [{ Signature: 'X' }, { b: { LocationSignature: 'Y' } }] }), ['X', 'Y']);
   assert.ok(I.queryMessages().includes('namespace="ols.open" objecttype="OperativeEvent" schemaversion="1.0"'));
   assert.ok(I.queryMessages().includes('<EQ name="EventState" value="1" />'));

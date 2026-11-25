@@ -2217,6 +2217,220 @@ test('startformulär: tågnumret fyller i rutten när föraren står vid tågets
   assertEqual(route(), ['Lidköping', 'Källby'], 'förarens val gäller');
 });
 
+test('info: banarbeten och händelser på andra banor visas inte, men sparas i körningen med varför', async () => {
+  const r0 = await midJourney();
+  const now = r0.w.Date.now();
+  const iso = t => new Date(t).toISOString();
+  const ev = (id, type, header, impact) => ({ Id: id, EventType: { Description: type }, StartDateTime: iso(now - 3600000),
+    TrafficImpact: [Object.assign({ PublicMessage: { Header: header, ModifiedDateTime: iso(now - 600000) }, EndDateTime: iso(now + 5 * 3600000) }, impact)] });
+  const messages = [
+    ev('w', 'Banarbete', 'Banarbete Råbäck–Hällekis', { FromLocation: [{ Signature: 'Rbk' }], ToLocation: [{ Signature: 'Hlk' }] }),
+    ev('o', 'Signalfel', 'Signalfel Hällekis–Mariestad', { FromLocation: [{ Signature: 'Hlk' }], ToLocation: [{ Signature: 'Mst' }] }),
+    ev('s', 'Växelfel', 'Växelfel i Råbäck', { AffectedLocation: [{ Signature: 'Rbk' }] })
+  ];
+  const trv = fakeTrafikverketInfo(r0.rt.state.route, { messages, meetLateMin: 0 });
+  r0.w.fetch = trv.fetch;
+  await r0.rt.refreshInfo();
+  await realSleep(100); // störningarna hämtas efter tågen
+  r0.rt.setInfoTab('info');
+  const pane = r0.w.document.getElementById('infoPane').textContent;
+  assert(pane.includes('Växelfel i Råbäck'), 'växelfel på vår linje visas');
+  assert(!pane.includes('Banarbete Råbäck') && !pane.includes('Signalfel Hällekis–Mariestad'), pane);
+  assert(pane.includes('2 trafikhändelser på platser längs linjen visas inte'), pane);
+  r0.rt.stopJourney(false, 'test');
+  await realSleep(100);
+  const logs = r0.rt.loadLogs();
+  const events = logs[logs.length - 1].info.events;
+  assertEqual(events.map(e => [e.id, e.shown, e.reason]).sort(), [['o', false, 'annan bana'], ['s', true, ''], ['w', false, 'planerat arbete']], 'alla tre sparas');
+  assert(events.find(e => e.id === 'w').raw.includes('"FromLocation"'), 'med Trafikverkets original');
+});
+
+// ── Automatisk start, uppläsning och dagens tur (2026-11-25q) ──
+const gpsPos = (f, extra) => ({ coords: Object.assign({ latitude: f.lat, longitude: f.lon, accuracy: 5, speed: f.speed, heading: null }, extra || {}), timestamp: f.t });
+
+// Startformuläret med Lidköping → Hällekis och fordon, i testklocka
+async function armedApp(fetchFn) {
+  const r = await appWithStations(1, fetchFn || offlineFetch);
+  const clock = installClock(r.w, START - 60000);
+  pickStation(r.w, 'startStation', 'Lidköping');
+  pickStation(r.w, 'endStation', 'Hällekis');
+  r.w.document.getElementById('vehicleType').value = 'Y31';
+  r.rt.renderAutoStartStatus();
+  return Object.assign(r, { clock });
+}
+// Positionerna till startformulärets GPS, tills resan startat; ger positionen då den startade
+async function feedWarmup(r, fixes) {
+  for (const f of fixes) {
+    r.clock.set(f.t);
+    r.rt.autoStartFix(gpsPos(f));
+    await realSleep(0);
+    if (r.rt.state.running) return f;
+  }
+  return null;
+}
+
+test('autostart: resan startar av sig själv när tåget rullar iväg, med avgången från första positionen i rörelse', async () => {
+  const r = await armedApp();
+  const status = r.w.document.getElementById('autoStartStatus');
+  assert(!status.hidden && status.textContent.includes('Startar av sig själv när tåget rullar från Lidköping'), status.textContent);
+  // Föraren går på perrongen i 5 km/h: ingen start
+  const walk = [];
+  for (let k = 0; k < 40; k++) walk.push({ t: START - 50000 + k * 1000, lat: STATIONS[0][1] + k * 0.000013, lon: STATIONS[0][2], speed: 1.4 });
+  assertEqual(await feedWarmup(r, walk), null, 'gångfart startar ingen resa');
+  // Tåget står och rullar sedan iväg
+  const fixes = buildJourney().filter(f => f.leg <= 0);
+  const firstMoving = fixes.find(f => f.speed > 2 / 3.6);
+  const startedAt = await feedWarmup(r, fixes);
+  assert(startedAt, 'resan startade');
+  await realSleep(50);
+  const rt = r.rt;
+  const d = haversine(startedAt.lat, startedAt.lon, STATIONS[0][1], STATIONS[0][2]);
+  assert(d > 350 && d < 700, `startar när tåget lämnat stationen (${Math.round(d)} m)`);
+  assertEqual(rt.state.startedBy, 'auto', 'startad av sig själv');
+  assertEqual(new Date(rt.state.route[0].actualDeparture).getTime(), firstMoving.t, 'avgången räknas från första positionen i rörelse');
+  assertEqual(rt.state.nextIndex, 1, 'nästa station');
+  assert(rt.spoken().some(t => t === 'Resan startad. mot Hällekis.' || t.startsWith('Resan startad.')), rt.spoken().join(' | '));
+  assert(/Resan startade av sig själv/.test(r.w.document.getElementById('journeyMsg').textContent), 'meddelandet');
+  // GPS-spåret har positionerna från en halv minut före rörelsen
+  await rt.onAppHidden();
+  const tr = await rt.getTrack(rt.state.journeyId);
+  assert(tr && tr.points.length >= fixes.filter(f => f.t >= firstMoving.t - 30000 && f.t <= startedAt.t).length - 1, 'positionerna före starten finns i spåret');
+  assert(Date.parse(tr.t0) <= firstMoving.t, 'spåret börjar före rörelsen');
+  rt.stopJourney(true, 'test');
+  await realSleep(100);
+  const logs = rt.loadLogs();
+  assertEqual(logs[logs.length - 1].startedBy, 'auto', 'körningen visar att den startade av sig själv');
+});
+
+test('autostart: inte när det är avstängt, inte utan fordon och inte långt före tidtabellens avgång', async () => {
+  const fixes = buildJourney().filter(f => f.leg <= 0);
+  let r = await armedApp();
+  r.rt.setAutoStartForTest(false);
+  r.rt.renderAutoStartStatus();
+  assert(r.w.document.getElementById('autoStartStatus').hidden, 'ingen rad när det är avstängt');
+  assertEqual(await feedWarmup(r, fixes), null, 'avstängt: ingen start');
+  r = await armedApp();
+  r.w.document.getElementById('vehicleType').value = '';
+  assertEqual(await feedWarmup(r, fixes), null, 'utan fordon: ingen start');
+  // Tidtabellen säger avgång om 30 min: växling före avgången startar ingen resa
+  const dep = fixes[0].t + 30 * 60000;
+  const otnDate = new Date(dep).toISOString().slice(0, 10);
+  const tt = [['Lkp', 'Avgang', dep], ['Hlk', 'Ankomst', dep + 30 * 60000]].map(([sig, act, t]) => ({
+    LocationSignature: sig, ActivityType: act, AdvertisedTimeAtLocation: new Date(t).toISOString(), LocationDateTimeOTN: new Date(t).toISOString(), DepartureDateOTN: otnDate }));
+  r = await armedApp(async (url, init) => ({ ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: tt }] } }) }));
+  r.w.document.getElementById('trainNumber').value = '3344';
+  await r.rt.fetchTimetable('3344', new Date(fixes[0].t));
+  r.rt.renderAutoStartStatus();
+  assert(r.w.document.getElementById('autoStartStatus').textContent.includes('Avgång'), 'raden visar avgången');
+  assertEqual(await feedWarmup(r, fixes), null, '30 min före avgång: ingen start');
+  // Fem minuter före avgång: startar
+  const later = fixes.map(f => Object.assign({}, f, { t: f.t + 25 * 60000 }));
+  assert(await feedWarmup(r, later), 'fem minuter före avgång startar resan');
+  r.rt.stopJourney(true, 'test');
+});
+
+test('tur: dagens tur läses, föreslås från samma veckodag och fyller i första tåget som inte körts', async () => {
+  const r = await appWithStations(1, offlineFetch);
+  const rt = r.rt;
+  assertEqual(rt.parseTour('23349, 23334 → 23351 23351'), ['23349', '23334', '23351'], 'tågnumren i ordning, utan dubbletter');
+  // Förra veckan samma veckodag: 3344 och sedan 3346
+  const now = new Date();
+  const lastWeek = h => { const d = new Date(now); d.setDate(d.getDate() - 7); d.setHours(h, 0, 0, 0); return d.toISOString(); };
+  const run = (id, train, h) => ({ id, trainNumber: train, vehicleType: 'Y31', startStation: 'Lidköping', endStation: 'Hällekis', startedAt: lastWeek(h), stops: [] });
+  r.w.localStorage.setItem('kmon_gps_logs_v1', JSON.stringify([run('b', '3346', 9), run('a', '3344', 7)]));
+  assertEqual(rt.tourFromHistory().trains, ['3344', '3346'], 'samma veckodag förra gången, i den ordning de kördes');
+  rt.renderTourSuggest && rt.renderTourSuggest();
+  const chip = r.w.document.getElementById('tourSuggest');
+  rt.saveTour([]);
+  r.w.document.getElementById('tourInput').dispatchEvent(new r.w.Event('input'));
+  assert(!chip.hidden && chip.textContent.includes('3344 → 3346'), chip.textContent);
+  chip.click();
+  assertEqual(rt.tourTrains(), ['3344', '3346'], 'förslaget används');
+  assertEqual(r.w.document.getElementById('trainNumber').value, '3344', 'första tåget fylls i');
+  assertEqual(rt.nextTourTrain('3344'), '3346', 'nästa tur');
+  assertEqual(rt.nextTourTrain('3346'), null, 'sista tåget i turen');
+});
+
+// Nästa tåg i turen: 3346 Hällekis → Lidköping, `afterEnd` minuter efter vår planerade ankomst
+function withNextTrain(fetchFn, endAt, afterMin) {
+  const dep = endAt + afterMin * 60000;
+  const otnDate = new Date(dep).toISOString().slice(0, 10);
+  const rows = [['Hlk', 'Avgang', dep], ['Kll', 'Ankomst', dep + 15 * 60000], ['Kll', 'Avgang', dep + 16 * 60000], ['Lkp', 'Ankomst', dep + 30 * 60000]]
+    .map(([sig, act, t]) => ({ OperationalTrainNumber: '3346', AdvertisedTrainIdent: '3346', LocationSignature: sig, ActivityType: act, Advertised: true,
+      AdvertisedTimeAtLocation: new Date(t).toISOString(), LocationDateTimeOTN: new Date(t).toISOString(), DepartureDateOTN: otnDate }));
+  return {
+    dep,
+    fetch: async (url, init) => {
+      if (String(init && init.body || '').includes('value="3346"')) return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: rows }] } }) };
+      return fetchFn(url, init);
+    }
+  };
+}
+
+test('tur: vändtiden till nästa tur visas i infofliken och panelen och läses upp när den blir knapp', async () => {
+  const r = await midJourneyWithInfo();
+  const rt = r.rt;
+  rt.saveTour(['3344', '3346']);
+  const predArr = rt.infoModel().end.predArr;
+  // Nästa tur går 2,5 min efter vår beräknade ankomst: vändtid 2 min
+  const next = withNextTrain(r.trv.fetch, predArr + 150000, 0);
+  r.w.fetch = next.fetch;
+  rt.clearSpoken();
+  await rt.fetchNextTour();
+  rt.updateInfo();
+  const t = rt.tourStatus();
+  assertEqual([t.otn, t.turnMin, t.level, t.sameStation], ['3346', 2, 1, true], 'vändtid 2 min, håll koll');
+  assert(r.w.document.getElementById('npInfo').textContent.includes('vändtid 2 min'), r.w.document.getElementById('npInfo').textContent);
+  const pane = r.w.document.getElementById('infoPane').textContent;
+  assert(pane.includes('Nästa tur') && pane.includes('3346 · Hällekis → Lidköping'), pane);
+  assert(rt.spoken().includes('Vändtiden i Hällekis blir cirka 2 minuter.'), rt.spoken().join(' | '));
+  // Uppläst en gång
+  rt.updateInfo();
+  assertEqual(rt.spoken().filter(s => s.startsWith('Vändtiden')).length, 1, 'samma sak läses en gång');
+});
+
+test('tur: framme i slutstationen – resan avslutas, läses upp och nästa tur fylls i och kan starta av sig själv', async () => {
+  const fixes = buildJourney();
+  const endAt = fixes[fixes.length - 1].t;
+  let next = null;
+  const res = await runJourney(fixes, {
+    trainNumber: '3344',
+    beforeStart: async w => {
+      w.localStorage.setItem('kmon_all_stations_v1', JSON.stringify({ timestamp: Date.now(), stations: STATION_LIST }));
+      await w.__railtimer.loadAllStations();
+      next = withNextTrain(offlineFetch, endAt, 12);
+      w.fetch = next.fetch;
+    },
+    afterStart: async rt => { rt.saveTour(['3344', '3346']); await rt.fetchNextTour(); }
+  });
+  const { w, rt, log } = res;
+  assert(!rt.state.running && !log.aborted, 'resan avslutades vid slutstationen');
+  const said = rt.spoken().join(' | ');
+  assert(said.includes(`Framme i Hällekis. Resan är sparad. Nästa tur 3 3 4 6 avgår`), said);
+  const card = w.document.getElementById('nextTourCard');
+  assert(!card.hidden && card.textContent.includes('3346') && card.textContent.includes('Hällekis'), card.textContent);
+  assertEqual([w.document.getElementById('trainNumber').value, w.document.getElementById('startStation').value, w.document.getElementById('endStation').value],
+    ['3346', 'Hällekis', 'Lidköping'], 'nästa tur ifylld');
+  assertEqual(w.document.getElementById('vehicleType').value, 'Y31', 'samma fordon');
+  assert(rt.autoStartArmed(), 'nästa tur startar av sig själv när tåget rullar');
+  assert(card.textContent.includes('Startar av sig själv'), card.textContent);
+  w.document.querySelector('#nextTourCard [data-tour="edit"]').click();
+  assert(w.document.getElementById('setup').style.display !== 'none', 'Ändra visar startformuläret');
+});
+
+test('uppläsning: av i menyn läser inget, på igen bekräftas', async () => {
+  const r = await midJourneyWithInfo();
+  r.w.document.getElementById('btnSpeech').click();
+  r.rt.clearSpoken();
+  r.trv = fakeTrafikverketInfo(r.rt.state.route, { meetLateMin: 9 });
+  r.w.fetch = r.trv.fetch;
+  await r.rt.refreshInfo();
+  assertEqual(r.rt.spoken(), [], 'avstängt: inget läses upp');
+  r.w.document.getElementById('btnSpeech').click();
+  assertEqual(r.rt.spoken(), ['Uppläsning på'], 'på igen');
+  assertEqual(r.w.localStorage.getItem('railtimer_speech_v1'), 'true', 'valet sparas');
+});
+
 function formatHm(t) {
   return new Date(Math.round(t / 60000) * 60000).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
 }
@@ -2525,6 +2739,34 @@ window.prepareShot = async function (name) {
     const r = await midJourneyWithInfo();
     r.w.document.getElementById('journeyMsg').style.display = 'none';
     r.rt.setInfoTab(name === 'info' ? 'info' : 'stations');
+  } else if (name === 'startformular') {
+    // Startformuläret med dagens tur, ifylld rutt och raden om automatisk start
+    const r = await armedApp();
+    r.w.document.getElementById('trainNumber').value = '3344';
+    r.rt.saveTour(['3344', '3346', '3349']);
+    r.w.document.getElementById('tourInput').value = '3344 3346 3349';
+    r.rt.renderAutoStartStatus();
+  } else if (name === 'nasta-tur') {
+    // Rapporten efter resan, med nästa tur överst
+    const fixes = buildJourney();
+    const endAt = fixes[fixes.length - 1].t;
+    await runJourney(fixes, {
+      trainNumber: '3344',
+      beforeStart: async w => {
+        w.localStorage.setItem('kmon_all_stations_v1', JSON.stringify({ timestamp: Date.now(), stations: STATION_LIST }));
+        await w.__railtimer.loadAllStations();
+        w.fetch = withNextTrain(offlineFetch, endAt, 12).fetch;
+      },
+      afterStart: async rt => { rt.saveTour(['3344', '3346']); await rt.fetchNextTour(); }
+    });
+  } else if (name === 'info-tur') {
+    const r = await midJourneyWithInfo();
+    r.rt.saveTour(['3344', '3346']);
+    r.w.fetch = withNextTrain(r.trv.fetch, r.rt.infoModel().end.predArr + 150000, 0).fetch;
+    await r.rt.fetchNextTour();
+    r.rt.updateInfo();
+    r.w.document.getElementById('journeyMsg').style.display = 'none';
+    r.rt.setInfoTab('info');
   } else if (name === 'rapport') {
     const fixes = buildJourney();
     await runJourney(fixes, { drop: twoStationCall(fixes).drop });

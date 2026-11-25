@@ -1113,3 +1113,75 @@ Appversion `2026-11-25q`.
   - *analys: halka – förarens markeringar i listan och starter som var svagare än vanligt*;
   - *analys: halka – utan markeringar säger listan hur man markerar*.
 - Bild: `--shot=resa-vid-station` visar Halt?-knapparna.
+
+## Uppdatering (2026-11-25r): resan startar av sig själv, uppläsning, dagens tur och störningar som rör tåget
+
+André 2026-11-25:
+- "Gör allt" om förslagen: start och slut av sig själv, uppläst info, nästa tur, mötande tågets position, anslutningar vid alla stopp, utropstext och platsminnen. De tre första finns här; resten kommer i följande versioner.
+- Under resan med 13346: infofliken visade ett banarbete som inte påverkade tåget alls.
+
+Appversion `2026-11-25r`.
+
+### Resan startar av sig själv (`autoStartFix`)
+- Med start, slut och fordon ifyllda följer appen GPS:en medan startformuläret visas, och i rapporten när nästa tur är ifylld. Skärmen hålls vaken medan appen väntar (`keepAwakeWhileArmed`).
+  - Fälten kan vara ifyllda för hand, av tågnumret (2026-11-25o) eller av dagens tur.
+- Raden under Start-knappen (`#autoStartStatus`): *Startar av sig själv när tåget rullar från X*, med avgången när tidtabellen är hämtad.
+- **Villkor**, alla måste gälla:
+  - Rörelsen började högst 600 m från startstationen (`AUTO_START_FROM_M`, egen mittpunkt om den finns).
+  - Tåget har rört sig i sträck minst 8 s (`START_DEPART_CONFIRM_MS`, samma som avgången från startstationen).
+  - Farten är minst 15 km/h (`AUTO_START_MIN_KMH`), alltså inte gångfart.
+  - Tåget har lämnat stationens zon (radie + marginal = 350 m, och minst 150 m längre bort än där rörelsen började).
+  - Tåget har kommit närmare slutstationen.
+  - Det är högst 10 min före tidtabellens avgång (`AUTO_START_EARLY_MS`) när tidtabellen är känd, så att växling före avgång inte startar resan.
+  - Positioner med noggrannhet sämre än 50 m räknas inte.
+- **Avgången** från startstationen räknas från första positionen i rörelse, som vid en vanlig start. Positionerna från en halv minut före rörelsen läggs i GPS-spåret, och resans start är spårets början (`applyAutoStart`).
+- Körningen får `startedBy: 'auto'`. Det sparas även för återupptagen resa.
+- Startar resan inte, till exempel för att stationen inte finns i listan, försöker appen inte igen för samma rutt (`blockedKey`).
+- ⋮ → **Starta när tåget rullar** (`railtimer_auto_start_v1`, förvalt på).
+- Ingen omladdning för ny version medan tåget just börjat rulla (`canReloadNow`).
+- **Slutet** fanns redan: resan avslutas när tåget står still vid slutstationen (`processSpeedTriggers`). Nu läses det upp.
+
+### Uppläsning (`speak`)
+- Svensk röst (`sv-SE`) om telefonen har en. Tågnummer läses siffra för siffra (`spellTrain`).
+- Det som läses upp:
+  - *Resan startad. Tåg 2 3 3 4 9 mot Herrljunga C.*
+  - *Framme i X. Resan är sparad. Nästa tur … avgår …*
+  - Det viktigaste av infoflikens meddelanden (`notifyInfo`, samma som toasten): möte med väntan, anslutning knapp eller missad, tåg som inte hinner till oss, avvikelse, störning och vändtid. Samma sak läses en gång per nivå.
+- ⋮ → **Läs upp info** (`railtimer_speech_v1`, förvalt på). När den slås på säger appen *Uppläsning på*.
+- iPhone läser bara upp efter en tryckning på sidan; första tryckningen låser upp rösten (`unlockSpeech`).
+- I testläge sparas texten i stället (`spoken()`).
+
+### Dagens tur
+- Fältet **Dagens tur** i startformuläret: tågnumren i tur och ordning (`railtimer_tour_v1`, `{ date, trains }`). Turen gäller i dag, och gårdagens till kl. 04.
+- **Förslag** (`tourFromHistory`): tågen samma veckodag förra gången, i den ordning de kördes, ur alla körningar (även från GitHub). Knappen *Som förra onsdagen: 23349 → 23334*.
+- När appen startar och tågnumret är tomt fylls första tåget i turen som inte körts i dag i (`prefillFromTour`). Rutten och fordonet fylls då i som när föraren skriver tågnumret.
+- **Under resan** (`fetchNextTour`, `tourStatus`): nästa tågs tidtabell hämtas. Avgången från vår slutstation gäller, annars tågets första station.
+  - Vändtiden räknas från vår ankomst: verklig, annars infoflikens prognos, annars tidtabellen.
+  - Infofliken har avsnittet *Nästa tur*, till exempel *3346 · Hällekis → Lidköping, vändtid enligt plan 9 min, 2 min vändtid*.
+  - Panelens rad får *vändtid 2 min* när den är kortare än 4 min (`TOUR_TIGHT_MIN`) och *nästa tur … blir sen* under 1 min (`TOUR_LATE_MIN`). Båda meddelas och läses upp.
+- **Efter resan** (`prepareNextTour`): nästa tåg fylls i med start och slut från dess tidtabell, och samma fordon.
+  - Rapporten visar överst *Nästa tur: 3346 · Hällekis 05:41 → Lidköping – Startar av sig själv när tåget rullar*, med knappen Ändra.
+  - Är rutten okänd fylls den i av tågnumret, som när föraren skriver det.
+
+### Störningar som rör tåget (`classifyMessages`)
+- Förut visades varje trafikhändelse (OperativeEvent) som hade någon plats på resten av linjen.
+- **Nu visas** en händelse när den pågår under resan, inte är ett planerat arbete, och antingen har minst två platser på vår linje (en sträcka vi kör) eller bara en plats som ligger på linjen (till exempel växelfel i Råbäck).
+- **Inte visas:**
+  - **Planerade arbeten** (banarbete, spårarbete, underhåll; `PLANNED_WORK` på händelsetyp och rubrik). Tidtabellen räknar redan med dem. Påverkar ett arbete vårt tåg syns det i vårt tågs annonseringar som avvikelse eller inställt.
+  - **Händelser på en annan bana**: en plats på vår linje och andra utanför, till exempel Herrljunga – Alingsås.
+- Infoflikens sista rad säger hur många som inte visas och varför.
+- **Körningen sparar** alla händelser som rör platser på linjen, även de som inte visades: `info.events` med `shown`, `reason` och Trafikverkets original (`raw`, högst 4 000 tecken). Så kan filtreringen prövas mot riktiga svar. Se `docs/railtimer-data-README.md`.
+- OperativeEvent har fortfarande inget sparat svar från Trafikverket. Tolkningen av platserna (`signaturesIn`) är densamma som förut.
+
+### Tester
+- `node --test "tests/*.test.js"` (158): störningstestet har en annan bana, en sträcka vi kör och banarbete på sträckan.
+- `node tests/run-browser-tests.mjs` (110), nya:
+  - *autostart: resan startar av sig själv när tåget rullar iväg …* (gångfart startar inte, avgång från första rörelsen, spåret, uppläsning, `startedBy`);
+  - *autostart: inte när det är avstängt, inte utan fordon och inte långt före tidtabellens avgång*;
+  - *tur: dagens tur läses, föreslås från samma veckodag …*;
+  - *tur: vändtiden till nästa tur …*;
+  - *tur: framme i slutstationen – … nästa tur fylls i och kan starta av sig själv*;
+  - *uppläsning: av i menyn läser inget, på igen bekräftas*;
+  - *info: banarbeten och händelser på andra banor visas inte, men sparas i körningen med varför*.
+- Bilder: `--shot=startformular`, `--shot=nasta-tur` och `--shot=info-tur`.
+- Inte provat på telefon: rösten (Safari och Chrome), att GPS:en fortsätter i startformuläret med skärmen vaken, och starten när ett riktigt tåg rullar. Kontrollera vid första resan att raden under Start-knappen syns och att resan startar efter några hundra meter.

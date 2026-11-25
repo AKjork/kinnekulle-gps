@@ -514,21 +514,49 @@
     }
     const ends = impacts.map(t => ms(t && t.EndDateTime)).concat([ms(m.PrognosticatedEndDateTimeTrafficImpact), ms(m.EndDateTime)]).filter(v => v != null);
     const header = pm.Header || m.Header || (m.EventType && m.EventType.Description) || texts(m.ReasonCode)[0] || 'Trafikhändelse';
-    return {
+    const type = String((m.EventType && m.EventType.Description) || '').replace(/\s+/g, ' ').trim();
+    const out = {
       id: String(m.Id || m.EventId || m.EventID || header),
       header: String(header).replace(/\s+/g, ' ').trim(),
+      type,
       text: String(pm.Description || m.ExternalDescription || '').replace(/\s+/g, ' ').trim(),
       start: ms(m.StartDateTime),
       end: ends.length ? Math.max.apply(null, ends) : null,
       sigs: Array.from(sigs)
     };
+    out.planned = PLANNED_WORK.test(`${out.type} ${out.header}`);
+    Object.defineProperty(out, 'raw', { value: m, enumerable: false }); // originalet, för att spara i körningen
+    return out;
+  }
+  /* Planerade arbeten (banarbete, spårarbete, underhåll): tidtabellen räknar redan med dem. Påverkar ett arbete
+     vårt tåg syns det i vårt tågs annonseringar (avvikelse, inställt), inte här. 2026-11-25: ett banarbete som
+     inte rörde tåg 13346 visades i infofliken. */
+  const PLANNED_WORK = /arbete|underhåll/i;
+
+  /* Händelser som berör resten av vår linje, med varför de andra inte visas (hidden: { …, reason }).
+     En händelse berör oss när minst två av dess platser ligger på vår linje (en sträcka vi kör), eller när den
+     bara har en plats och den ligger på vår linje (t.ex. signalfel i Vara). En händelse med en plats på vår linje
+     och andra utanför gäller en annan bana (t.ex. Herrljunga – Alingsås). */
+  function classifyMessages(messages, sigs, now, until) {
+    const shown = [], hidden = [];
+    for (const raw of messages || []) {
+      const m = raw && raw.sigs ? raw : parseMessage(raw);
+      if (!m) continue;
+      const on = m.sigs.filter(s => sigs.has(s));
+      if (!on.length) continue;
+      const item = Object.assign({}, m, { sigs: on, allSigs: m.sigs });
+      Object.defineProperty(item, 'raw', { value: m.raw, enumerable: false });
+      let reason = null;
+      if (!((m.start == null || m.start <= until) && (m.end == null || m.end >= now))) reason = 'inte under resan';
+      else if (m.planned) reason = 'planerat arbete';
+      else if (!(on.length >= 2 || new Set(m.sigs).size === 1)) reason = 'annan bana';
+      if (reason) hidden.push(Object.assign(item, { reason }));
+      else shown.push(item);
+    }
+    return { shown, hidden };
   }
   function messagesFor(messages, sigs, now, until) {
-    return (messages || [])
-      .map(m => (m && m.sigs ? m : parseMessage(m)))
-      .filter(m => m && m.sigs.some(s => sigs.has(s)))
-      .filter(m => (m.start == null || m.start <= until) && (m.end == null || m.end >= now))
-      .map(m => Object.assign({}, m, { sigs: m.sigs.filter(s => sigs.has(s)) }));
+    return classifyMessages(messages, sigs, now, until).shown;
   }
 
   /* ── Allt för fliken ──
@@ -656,7 +684,8 @@
     }
 
     const remaining = new Set(line.slice(Math.max(frontier, 0)).map(l => l.sig));
-    const messages = messagesFor(input.messages, remaining, now, predArr);
+    const cls = classifyMessages(input.messages, remaining, now, predArr);
+    const messages = cls.shown;
 
     const startDeparted = known[0].dep != null;
     const conn = outgoing(trains, our, endL, predArr, arrived, lineSigs, now, o);
@@ -681,7 +710,7 @@
 
     return {
       now, frontier, end, currentDelayMin, recoveryMin, recoveryObs: rec.obs,
-      meetings, deviations, messages, connections: conn, incoming: startDeparted ? null : inc,
+      meetings, deviations, messages, messagesHidden: cls.hidden, connections: conn, incoming: startDeparted ? null : inc,
       preds: preds.map((p, i) => ({ sig: line[i].sig, arr: p.arr, dep: p.dep, waitMs: p.waitMs })),
       doubleSections: Array.from(newDouble),
       reason: worstMeeting ? { sig: worstMeeting.sig, otn: worstMeeting.ident || worstMeeting.otn, waitMin: worstMeeting.waitMin } : null,
@@ -696,6 +725,6 @@
     DEFAULTS, MIN, ms, localIso, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
     request, queryOurTrain, queryLine, queryNames, queryMessages, resultOf,
     parseAnnouncement, groupTrains, nearestRun, buildLine, crossingOf, latestDelay, theirArrival,
-    historyMedians, recoveryRatios, plannedRun, predict, outgoing, incoming, signaturesIn, parseMessage, messagesFor, compute
+    historyMedians, recoveryRatios, plannedRun, predict, outgoing, incoming, signaturesIn, parseMessage, classifyMessages, messagesFor, compute
   };
 });
