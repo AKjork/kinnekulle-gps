@@ -1506,8 +1506,10 @@ test('startformulär: ändrad stationstext utan val i listan gäller, inte den s
   typeStation(w, 'startStation', 'källby');   // skriver om utan att välja i listan
   pickStation(w, 'endStation', 'Hällekis');
   w.document.getElementById('vehicleType').value = 'Y31';
+  rt.clearSpoken();
   await rt.startJourney();
   assertEqual(rt.state.route.map(s => s.name), ['Källby', 'Hällekis'], 'rutten');
+  assertEqual(rt.spoken(), ['Resan startad mot Hällekis.'], 'tryck på Start läses upp');
   rt.stopJourney(true, 'test');
 });
 
@@ -1517,8 +1519,10 @@ test('startformulär: en text som inte är en station startar ingen resa', async
   typeStation(w, 'startStation', 'Lidk');
   pickStation(w, 'endStation', 'Hällekis');
   w.document.getElementById('vehicleType').value = 'Y31';
+  rt.clearSpoken();
   await rt.startJourney();
   assertEqual(rt.state.running, false, 'resan ska inte starta');
+  assertEqual(rt.spoken(), [], 'ingen resa: inget läses upp');
   assert(/Välj start- och slutstation i listan/.test(w.document.getElementById('setupError').textContent), 'meddelandet');
 });
 
@@ -2000,10 +2004,17 @@ test('info: ett sent mötande tåg ger väntan, prognos och missad anslutning �
   assert(/^Möte Råbäck: 3347 är 6 min sent – vi väntar ca \d+ min \(och 1 till i Info\)$/.test(d.getElementById('journeyMsg').textContent), d.getElementById('journeyMsg').textContent);
 
   np.click();
-  assert(d.getElementById('stationList').classList.contains('show-info'), 'infofliken öppnas från panelen');
-  assertEqual(r.w.getComputedStyle(d.getElementById('cards')).display, 'none', 'stationerna döljs');
+  const shown = id => r.w.getComputedStyle(d.getElementById(id)).display !== 'none';
+  assert(d.getElementById('journey').classList.contains('show-info'), 'infofliken öppnas från panelen');
+  assertEqual(d.getElementById('tabInfo').getAttribute('aria-selected'), 'true', 'fliken Info vald');
+  // Info får hela ytan under flikarna: panel, karta och stationslistan döljs
+  assert(!shown('stationList') && !shown('nextPanel') && !shown('routeMapContainer'), 'stationer, panel och karta döljs');
+  assert(shown('infoView'), 'infon visas');
+  const tabsBottom = d.querySelector('.view-tabs').getBoundingClientRect().bottom;
+  const infoBox = d.getElementById('infoView').getBoundingClientRect();
+  assert(infoBox.top - tabsBottom < 12 && r.w.innerHeight - infoBox.bottom < 20, `infon fyller ytan under flikarna: ${Math.round(infoBox.top)}–${Math.round(infoBox.bottom)} av ${r.w.innerHeight}`);
+  assert(infoBox.height > 0.75 * r.w.innerHeight, 'infon är stor: ' + Math.round(infoBox.height));
   const pane = d.getElementById('infoPane');
-  assert(!pane.hidden, 'fliken visas');
   assert(pane.textContent.includes('Prognos Hällekis'), 'prognos');
   assert(pane.textContent.includes('Råbäck · möte 3347') && pane.textContent.includes('enkelspår') && pane.textContent.includes('enligt Trafikverket'), 'mötet');
   const rows = Array.from(pane.querySelectorAll('.info-row')).map(e => e.textContent);
@@ -2014,14 +2025,22 @@ test('info: ett sent mötande tåg ger väntan, prognos och missad anslutning �
   await r.rt.refreshInfo();
   assertEqual(r.vibrations.length, 1, 'samma sak meddelas inte igen');
 
-  // Bytestiden ändras per slutstation och sparas
-  for (let k = 0; k < 3; k++) pane.querySelector('[data-info="transfer+"]').click();
-  assertEqual(JSON.parse(r.w.localStorage.getItem('railtimer_info_v1')).transfer.Hlk, 7, 'bytestiden sparas');
-  assertEqual(pane.querySelector('#infoTransfer').textContent, '7 min', 'bytestiden visas');
-  assertEqual(r.rt.infoModel().connections.map(c => c.otn).join(), '3053', 'tåget 5 min efter ankomst är ingen anslutning med 7 min bytestid');
+  // Ingen egen bytestid: inga knappar, och förklaringen står under
+  assert(!pane.querySelector('[data-info^="transfer"]') && !pane.textContent.includes('Bytestid'), 'ingen inställning för bytestid');
+  assert(pane.querySelector('.info-foot').textContent.includes('Knappt = under 4 min att byta, missas = tåget går före eller samtidigt som vi kommer.'), 'förklaringen');
+
+  // Bred skärm: Info ersätter bara listan, panel och karta står kvar till vänster
+  r.w.frameElement.style.width = '900px';
+  await new Promise(res => setTimeout(res, 50));
+  assert(shown('nextPanel') && shown('routeMapContainer') && shown('infoView') && !shown('stationList'), 'bred skärm: panel och karta kvar');
+  r.w.frameElement.style.width = '';
+  await new Promise(res => setTimeout(res, 50));
 
   d.getElementById('tabStations').click();
-  assert(!d.getElementById('stationList').classList.contains('show-info'), 'tillbaka till stationerna');
+  assert(!d.getElementById('journey').classList.contains('show-info'), 'tillbaka till stationerna');
+  assert(shown('stationList') && shown('nextPanel') && shown('routeMapContainer') && !shown('infoView'), 'stationer, panel och karta igen');
+  const svg = d.querySelector('#routeMap svg');
+  assert(svg && Math.abs(svg.getBoundingClientRect().width - d.getElementById('routeMap').clientWidth) < 2, 'kartan ritas i rätt storlek');
   assert(d.scrollingElement.scrollHeight <= r.w.innerHeight + 1, 'sidan scrollar inte – bara listan');
 });
 
@@ -2119,10 +2138,25 @@ test('uppdatering: ny version laddas direkt vid start utan resa, men under resan
   await w.__railtimer.checkForNewVersion(true);
   assertEqual(reloads, 1, 'laddar inte om i en slinga för samma version');
   assert(w.document.getElementById('btnUpdate').style.display !== 'none', 'Uppdatera app visas i stället');
+  assertEqual(w.document.getElementById('btnUpdate').textContent, 'Uppdatera app till 2099-01-01a', 'knappen säger vilken version');
   // Samma version som appen: inget händer
   w.__railtimer.setVersionForTest(version(w.__railtimer.appVersion));
   assertEqual(await w.__railtimer.checkForNewVersion(true), null, 'samma version: inget händer');
   assertEqual(reloads, 1, 'ingen omladdning');
+  // Versionen längst ner i menyn; tryck söker och säger vad som hände
+  assertEqual(w.document.getElementById('menuVersion').textContent, w.__railtimer.appVersion, 'versionen i menyn');
+  const menuBtns = Array.from(w.document.querySelectorAll('#moreMenuDropdown > button'));
+  assertEqual(menuBtns[menuBtns.length - 1].id, 'btnVersion', 'längst ner');
+  w.document.getElementById('btnVersion').click();
+  await new Promise(res => setTimeout(res, 30));
+  assertEqual(w.document.getElementById('headerStatus').textContent, `Du har senaste versionen (${w.__railtimer.appVersion})`);
+  w.__railtimer.setVersionForTest(async () => { throw new Error('nät'); });
+  await w.__railtimer.checkVersionByHand();
+  assertEqual(w.document.getElementById('headerStatus').textContent, 'Kunde inte söka ny version just nu');
+  w.__railtimer.setVersionForTest(version('2099-01-01c'));
+  assertEqual(await w.__railtimer.checkVersionByHand(), '2099-01-01c');
+  assertEqual(w.document.getElementById('headerStatus').textContent, 'Ny version 2099-01-01c – ⋮ → Uppdatera app');
+  assertEqual(reloads, 1, 'trycket laddar inte om av sig självt');
   // Under resan: ingen omladdning, men meddelande
   const r = await midJourney();
   w = r.w;
@@ -2384,7 +2418,7 @@ test('autostart: resan startar av sig själv när tåget rullar iväg, med avgå
   assertEqual(rt.state.startedBy, 'auto', 'startad av sig själv');
   assertEqual(new Date(rt.state.route[0].actualDeparture).getTime(), firstMoving.t, 'avgången räknas från första positionen i rörelse');
   assertEqual(rt.state.nextIndex, 1, 'nästa station');
-  assert(rt.spoken().some(t => t === 'Resan startad. mot Hällekis.' || t.startsWith('Resan startad.')), rt.spoken().join(' | '));
+  assert(rt.spoken().some(t => t === 'Resan startad mot Hällekis.' || t.startsWith('Resan startad. Tåg')), rt.spoken().join(' | '));
   assert(/Resan startade av sig själv/.test(r.w.document.getElementById('journeyMsg').textContent), 'meddelandet');
   // GPS-spåret har positionerna från en halv minut före rörelsen
   await rt.onAppHidden();

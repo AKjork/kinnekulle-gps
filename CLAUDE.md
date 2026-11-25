@@ -885,7 +885,7 @@ Dataunderlag (`railtimer-data`, 214 körningar): uppehåll över 2 min vid mella
 - **Vi väntar** på enkelspår till det mötande tåget kommit in + 1 min (`meetMarginMs`). Inget beroende om mötet är på dubbelspår, om det mötande tåget är inställt, eller om det redan passerat mötesplatsen mot oss (*mötet flyttat närmare oss*). Möten vi passerat visas inte.
 - **Prognos** (`predict`): från senaste plats vi har en tid för (appens egna tider före Trafikverkets) framåt: planerad gångtid × faktor, minst 30 s uppehåll vid annonserade stopp, inte före annonserad avgång, och mötena. Platser vi inte nått ligger aldrig före nu.
 - **Egna gångtider** (`historyMedians`, `recoveryRatios`): median för verklig gångtid mellan stationsparen ur telefonens körningar (minst 3). Faktorn är median/planerad, högst 1 och minst 0,85, så de visar hur mycket vi brukar ta igen men gör oss aldrig senare. *Tar igen ca N min* jämför med prognosen utan dem.
-- **Anslutningar i slutstationen** (`outgoing`): annonserade avgångar minst bytestiden och högst 40 min efter vår annonserade ankomst. Tåg som går längs vår linje (har tider på andra platser på linjen, eller destination där) räknas inte. Deras avgång: faktisk, beräknad (aldrig före nu) eller tidtabellen. Status: *ok* (byte ≥ bytestid + 2 min), *knappt*, *missas*, *avgått* (gått innan vi är framme) eller *inställt*.
+- **Anslutningar i slutstationen** (`outgoing`): annonserade avgångar minst bytestiden och högst 40 min efter vår annonserade ankomst. Tåg som går längs vår linje (har tider på andra platser på linjen, eller destination där) räknas inte. Deras avgång: faktisk, beräknad (aldrig före nu) eller tidtabellen. Status: *ok* (byte ≥ bytestid + 2 min), *knappt*, *missas*, *avgått* (gått innan vi är framme) eller *inställt*. *Ingen egen bytestid sedan 2026-11-25u: missas under 1 min, knappt under 4 min.*
 - **Tåg som ansluter till oss i startstationen** (`incoming`), bara före avgång: annonserade ankomster minst bytestiden och högst 30 min före vår avgång, från annat håll. *hinner*, *knappt* eller *hinner inte*.
 - **Avvikelser för vårt tåg** längre fram (`Deviation`, t.ex. Spårändrat, och inställda platser) och spår i slutstationen.
 - **Störningar** (`OperativeEvent` 1.0, namespace `ols.open`, `EventState=1`, var 10:e minut, egen fråga – samma som kontrollsidan sedan 2026-11-25j, eftersom TrainMessage inte finns längre): de som har en signatur kvar på linjen på någon nivå (`signaturesIn`) och pågår (`messagesFor`). Rubrik och text från det senast ändrade `TrafficImpact.PublicMessage`, annars `EventType.Description` (`parseMessage`).
@@ -894,7 +894,7 @@ Dataunderlag (`railtimer-data`, 214 körningar): uppehåll över 2 min vid mella
 ### I appen
 - **Flikarna Stationer och Info** överst i stationslistan (`setInfoTab`); flikarna och kolumnrubrikerna står kvar när listan rullas (`.list-top`). Info visar en siffra (gul, röd vid nivå 2) med antal saker att hålla koll på.
 - **Raden i panelen** (`#npInfo`, `infoHeadline`), högst två rader: *Herrljunga C 12:26 +3 · möte Vara · 1 anslutning missas*. Gul eller röd efter nivå. Tryck öppnar Info.
-- **Fliken** (`infoPaneHtml`): prognos till slutstationen (plan, Trafikverkets beräknade tid, spår, tar igen, uppdaterad), *Längs vägen* (möten med det mötande tågets försening och källa, enkel- eller dubbelspår, vår väntan och avgång; avvikelser; störningar) i ordning längs linjen, *Ansluter till oss* före avgång, *Anslutningar* med **bytestid − / +** (per slutstation, 1–15 min, förval 4, `railtimer_info_v1.transfer`), och en rad om vad prognosen bygger på.
+- **Fliken** (`infoPaneHtml`): prognos till slutstationen (plan, Trafikverkets beräknade tid, spår, tar igen, uppdaterad), *Längs vägen* (möten med det mötande tågets försening och källa, enkel- eller dubbelspår, vår väntan och avgång; avvikelser; störningar) i ordning längs linjen, *Ansluter till oss* före avgång, *Anslutningar* med **bytestid − / +** (per slutstation, 1–15 min, förval 4, `railtimer_info_v1.transfer`), och en rad om vad prognosen bygger på. *Bytestiden går inte att ändra sedan 2026-11-25u, och fliken har hela ytan.*
 - **Hämtning** (`refreshInfo`): vid start och återupptagen resa, varje minut medan appen syns, när appen blir synlig igen och vid `online`. Först vårt tåg (±12 h), sedan alla tåg på platserna kvar från 1 h bakåt till 45 min efter vår planerade ankomst, i en fråga. Tidsgräns 15 s. Namn på driftplatser och destinationer som saknas i stationslistan hämtas en gång (TrainStation) och sparas (`railtimer_sig_names_v1`). Går hämtningen inte visas senaste data med *uppdaterad … (gammal)* och felet; utan data *Ingen kontakt med Trafikverket*.
 - **Omräkning** utan nätet var 5:e sekund (`updateInfo` i panelens timer), så att våra egna tider kommer med direkt. Fliken ritas bara om när innehållet ändrats.
 - **Meddelanden** (`notifyInfo`): när något blir värre (möte med väntan, anslutning knapp eller missas, avvikelse, störning) vibrerar telefonen, ljud om ljudet är på, och en toast visar det viktigaste i 8 s. Samma sak meddelas en gång per nivå.
@@ -1208,7 +1208,7 @@ André 2026-11-25: fortsättning på "Gör allt" (se 2026-11-25r). Appversion `2
 - Vid varje station där vi stannar och inte har åkt från (`stops` i `compute`) visas:
   - tåg som går därifrån åt ett annat håll högst 20 min efter vår ankomst (`midConnectionWindowMin`);
   - tåg som kommer dit högst 20 min före vår avgång och ansluter till oss.
-- Samma regler som i slutstationen: tåg längs vår linje räknas inte, och bytestiden gäller per station (`transferBySig`, förval 4 min).
+- Samma regler som i slutstationen: tåg längs vår linje räknas inte, och bytestiden gäller per station (`transferBySig`, förval 4 min). *`transferBySig` är borttaget 2026-11-25u.*
 - Avsnittet *Anslutningar längs vägen* i Info, till exempel *Blomberg → Mariestad, missas, 3 min att byta*.
 - De räknas i siffran på fliken, i panelens rad (*N anslutningar missas*) och i meddelandena, som läses upp: *Anslutningen i Blomberg mot Mariestad hinns inte.*
 
@@ -1256,3 +1256,59 @@ André 2026-11-25: sista delen av "Gör allt" (se 2026-11-25r och s). Appversion
   - *platsminne: visas i stationsraden, läses upp när tåget är nära och synkas med GitHub*;
   - *halt: förarnas markeringar senaste två veckorna i samma riktning meddelas vid inbromsningen och starten*.
 - Inte provat på telefon. Kontrollera vid första resan med ett platsminne att det läses upp ungefär 2 km före stationen.
+
+## Uppdatering (2026-11-25u): Info får hela skärmen, ingen egen bytestid och versionen i menyn
+
+André 2026-11-25:
+- "Infofliken blir väldigt liten. Jag vill att man helt ska kunna byta mellan info och stationer."
+- "Jag vet inte heller om alternativ att själv välja bytestid är så bra?"
+- Han ville kunna se vilken version appen har. Han hittade inte *Uppdatera app*, eftersom knappen bara visas när en ny version finns.
+
+Appversion `2026-11-25u`.
+
+### Flikarna Stationer och Info
+- Förut låg flikarna överst i stationslistan. Info fick bara listans yta under panelen och kartan, ungefär en tredjedel av skärmen.
+- Nu ligger flikarna (`.view-tabs`) direkt under resans rubrik och står alltid kvar.
+  - **Stationer:** panelen, kartan och stationslistan, som förut.
+  - **Info:** hela ytan under flikarna (`#infoView`, egen scroll). Panelen, kartan och listan döljs (`#journey.show-info`).
+- **Liggande telefon och skärmar ≥ 820 px:** flikarna ligger ovanför högra kolumnen, och Info ersätter bara stationslistan. Panelen och kartan står kvar till vänster.
+- Raden i panelen öppnar Info som förut. Kartan ritas om när Stationer väljs igen, eftersom den var dold och saknade storlek.
+- Avsluta och Avbryt finns under Stationer.
+
+### Ingen egen bytestid
+- Bytestid − / + är borttaget, även per station längs vägen (`transferBySig`, `railtimer_info_v1.transfer`). Ett eget värde kunde glömmas kvar, och det ändrade både vilka tåg som räknades som anslutningar och om de "missades".
+- **Fasta regler** (`connectionStatus` i `railtimer-info.js`):
+  - **missas** (hinner inte): under 1 min att byta (`missedUnderMin`), alltså när tåget går före eller i samma stund som vi kommer. Bara då säger appen och utropet att tåget inte hinns.
+  - **knappt:** 1–3 min att byta (under `transferMin`, 4 min).
+  - **ok:** 4 min eller mer.
+  - Minuterna att byta visas alltid, så att föraren själv ser hur knappt det är.
+- **Vilka tåg som räknas** är oförändrat. Det är tåg som enligt tidtabell går 4–40 min efter vår ankomst åt ett annat håll (vid stationerna längs vägen 4–20 min). Ett knappt byte uppstår alltså bara när något tåg är sent.
+- **Utropet** för knappt byte säger minuterna: *Till tåget mot Skövde C 11:48 har ni cirka 2 minuter att byta, det går från spår 3.* Förut stod det *blir knappt*.
+- Infoflikens sista rad förklarar reglerna.
+- Förut räknades 4–5 min som knappt och under 4 min som missat.
+
+### Versionen i menyn
+- Längst ner i ⋮-menyn: *Version 2026-11-25u – Tryck för att söka ny version* (`btnVersion`, `checkVersionByHand`).
+  - Ett tryck söker direkt och säger *Du har senaste versionen*, *Ny version … – ⋮ → Uppdatera app*, *Ingen täckning …* eller *Kunde inte söka ny version just nu* (`versionCheckResult`).
+  - Trycket laddar aldrig om av sig självt.
+- Knappen *Uppdatera app* säger vilken version den uppdaterar till (*Uppdatera app till 2026-11-25v*).
+
+### Uppläsning
+André 2026-11-25 under resan: "Jag hör inte att något läses upp alls?"
+- "Resan startad" lästes bara upp när resan startade av sig själv. Annars läses något upp bara när det händer något (2026-11-25r), så en resa i tid kan vara tyst.
+- **Tryck på Start** läser nu upp *Resan startad. Tåg 3 3 4 4 mot Hällekis.* (utan tågnummer: *Resan startad mot Hällekis.*). Det sker direkt i tryckningen, före tidtabellshämtningen, så att iPhone släpper fram rösten resten av resan och föraren hör att uppläsningen fungerar. Förut sades *Resan startad. mot Hällekis.* utan tågnummer.
+- **Återuppta** säger *Resan fortsätter.*, också i tryckningen.
+- `speak`: `resume()` om Chrome fastnat i pausat läge, och en referens till yttrandet så att Chrome inte kastar det innan det lästs upp.
+- **iPhone:** står ljudomkopplaret på ljudlöst hörs ingen uppläsning från webbsidor (Apples forum). `navigator.audioSession.type = 'playback'` skulle kanske ändra det, men det är inte provat och inte inlagt.
+
+### Tester
+- `node --test "tests/*.test.js"` (162): anslutningar utan egen bytestid (0 min missas, 1 min knappt, 4 min ok), tåg till oss som hinner knappt eller inte, knappt byte längs vägen när vi är sena, och utropet med minuterna.
+- `node tests/run-browser-tests.mjs info` och `uppdatering`:
+  - Info fyller ytan under flikarna, med panel, karta och lista dolda.
+  - På bred skärm står panel och karta kvar.
+  - Kartan har rätt storlek tillbaka i Stationer.
+  - Det finns ingen bytestidsinställning.
+  - Versionen står längst ner i menyn, och trycket ger rätt meddelande.
+  - Tryck på Start läses upp, men en start som inte blir av läses inte upp.
+- Bilder: `--shot=info`, `--shot=resa-info` och `--shot=resa-liggande`.
+

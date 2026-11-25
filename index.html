@@ -180,15 +180,17 @@
     font-size:.68rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;
   }
   .list-head span:nth-child(n+3){text-align:right}
-  /* Flikarna Stationer och Info överst i listan; de och kolumnrubrikerna står kvar när listan rullas */
-  .list-top{position:sticky;top:0;z-index:2;background:var(--bg)}
-  .list-top .list-head{position:static}
-  .list-tabs{display:flex;border-bottom:1px solid var(--b)}
-  .list-tabs button{flex:1;border:none;border-bottom:2px solid transparent;border-radius:0;background:transparent;color:var(--ink-dim);font-size:.85rem;font-weight:600;padding:.4rem .5rem;display:inline-flex;align-items:center;justify-content:center;gap:.35rem}
-  .list-tabs button[aria-selected="true"]{color:var(--pri);border-bottom-color:var(--pri)}
-  .tab-count{min-width:1.2rem;padding:0 .3rem;border-radius:999px;background:var(--warn);color:#000;font-size:.7rem;line-height:1.2rem;text-align:center}
+  /* Flikarna Stationer och Info överst i resvyn. Stationer: panel, karta och stationslistan.
+     Info: hela ytan under flikarna (på bred skärm och liggande telefon ersätter Info bara listan). */
+  .view-tabs{flex:none;display:flex;gap:.3rem;padding:.2rem;border:1px solid var(--b);border-radius:10px;background:var(--card-bg)}
+  .view-tabs button{flex:1;min-height:2.4rem;border:none;border-radius:7px;background:transparent;color:var(--ink-dim);font-size:.95rem;font-weight:600;padding:.35rem .5rem;display:inline-flex;align-items:center;justify-content:center;gap:.4rem}
+  .view-tabs button[aria-selected="true"]{background:var(--b);color:var(--ink)}
+  .tab-count{min-width:1.3rem;padding:0 .35rem;border-radius:999px;background:var(--warn);color:#000;font-size:.75rem;line-height:1.3rem;text-align:center}
   .tab-count.l2{background:var(--err);color:#fff}
-  #stationList.show-info .list-head,#stationList.show-info #cards{display:none}
+  #journey:not(.show-info) #infoView,
+  #journey.show-info #stationList,
+  #journey.show-info .next-panel,
+  #journey.show-info #routeMapContainer{display:none}
   /* Infofliken: prognos, längs vägen och anslutningar */
   .info-head{padding:.5rem .7rem .45rem;border-bottom:1px solid var(--b)}
   .ih-label{font-size:.68rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
@@ -209,8 +211,6 @@
   .ir-s small{display:block;font-weight:400;color:var(--mut);font-size:.7rem}
   .info-empty{padding:.4rem .7rem .5rem;font-size:.8rem;color:var(--mut)}
   .info-state{padding:.6rem .7rem;font-size:.85rem;color:var(--ink-dim)}
-  .transfer-ctl{display:inline-flex;align-items:center;gap:.3rem;text-transform:none;letter-spacing:0;font-weight:500;font-size:.75rem;color:var(--ink-dim);white-space:nowrap}
-  .transfer-ctl button{padding:.05rem .55rem;font-size:.9rem;line-height:1.3}
   .info-foot{font-size:.7rem;color:var(--mut);padding:.5rem .7rem;margin:0;border-top:1px solid var(--b)}
   .place-note{width:100%;margin-top:.5rem;font-size:.9rem}
   .utrop{margin:0;padding:.5rem .7rem;font-size:.9rem;line-height:1.4;color:var(--ink);border-left:3px solid var(--pri)}
@@ -292,6 +292,9 @@
   .header-menu-dropdown button:first-child{border-radius:6px 6px 0 0}
   .header-menu-dropdown button:last-child{border-radius:0 0 6px 6px}
   .header-menu-dropdown hr{border:none;border-top:1px solid var(--b);margin:0}
+  /* Versionen längst ner i menyn; tryck söker ny version */
+  .header-menu-dropdown .menu-version{border-top:1px solid var(--b);color:var(--mut);font-size:.8rem;font-variant-numeric:tabular-nums}
+  .menu-version small{display:block;font-size:.7rem;color:var(--mut);opacity:.8}
 
   .station-search-container{position:relative;flex:1}
   .station-search{width:100%}
@@ -412,7 +415,7 @@
   .np-info{display:block;width:100%;margin-top:.4rem;padding:.35rem 0 0;border:none;border-top:1px solid var(--b);border-radius:0;background:transparent;color:var(--ink-dim);font-size:.82rem;font-weight:500;line-height:1.3;text-align:left;max-height:calc(2.6em + .35rem);overflow:hidden;font-variant-numeric:tabular-nums}
   .np-info.l1{color:var(--warn)}
   .np-info.l2{color:var(--err)}
-  .np-info:hover:not(:disabled),.list-tabs button:hover:not(:disabled){background:transparent}
+  .np-info:hover:not(:disabled),.view-tabs button:hover:not(:disabled){background:transparent}
   #journeyMsg{
     position:fixed;
     left:50%;
@@ -550,14 +553,20 @@
       grid-template-rows:auto auto minmax(0,1fr);
       gap:.45rem .6rem;
     }
-    .journey-title,.next-panel,#routeMapContainer{grid-column:1}
-    #routeMapContainer{grid-row:3;min-height:0}
+    .journey-title{grid-column:1;grid-row:1;align-self:center}
+    .view-tabs{grid-column:2;grid-row:1}
+    .next-panel{grid-column:1;grid-row:2}
+    #routeMapContainer{grid-column:1;grid-row:3;min-height:0}
     #routeMapContainer:not(.collapsed){display:flex;flex-direction:column}
     #routeMapContainer:not(.collapsed) #routeMap{flex:1;height:auto;min-height:0}
     #routeMapContainer.collapsed{align-self:start}
-    .station-list{grid-column:2;grid-row:1 / span 3;min-height:0}
+    .station-list{grid-column:2;grid-row:2 / span 2;min-height:0}
+    /* Info ersätter bara stationslistan; panel och karta står kvar till vänster */
+    #journey.show-info .next-panel,#journey.show-info #routeMapContainer{display:block}
+    #journey.show-info #routeMapContainer:not(.collapsed){display:flex}
   }
   @media (orientation:landscape) and (max-height:540px){
+    .view-tabs button{min-height:2rem;padding:.2rem .5rem}
     header{padding:.3rem .75rem}
     header h1{font-size:.95rem}
     .next-name,.next-big{font-size:1.25rem}
@@ -643,6 +652,7 @@
         <hr>
         <button id="btnInstall" style="display:none">Installera app</button>
         <button id="btnUpdate" style="display:none">Uppdatera app</button>
+        <button id="btnVersion" class="menu-version" type="button">Version <span id="menuVersion">–</span><small>Tryck för att söka ny version</small></button>
       </div>
     </div>
   </div>
@@ -743,6 +753,10 @@
 
   <section id="journey" style="display:none">
     <h2 id="journeyTitle" class="journey-title">Aktiv resa</h2>
+    <div class="view-tabs" role="tablist">
+      <button type="button" role="tab" id="tabStations" aria-selected="true" aria-controls="stationList">Stationer</button>
+      <button type="button" role="tab" id="tabInfo" aria-selected="false" aria-controls="infoView">Info<span class="tab-count" id="infoCount" hidden></span></button>
+    </div>
     <div class="next-panel" id="nextPanel">
       <div class="np-top">
         <div class="np-where">
@@ -775,20 +789,16 @@
       <span id="mapNote" class="map-note"></span>
       <button id="mapShow" class="map-show">Visa karta</button>
     </div>
-    <div class="station-list" id="stationList">
-      <div class="list-top">
-        <div class="list-tabs" role="tablist">
-          <button type="button" role="tab" id="tabStations" aria-selected="true" aria-controls="cards">Stationer</button>
-          <button type="button" role="tab" id="tabInfo" aria-selected="false" aria-controls="infoPane">Info<span class="tab-count" id="infoCount" hidden></span></button>
-        </div>
-        <div class="list-head"><span></span><span>Station</span><span>Ankomst</span><span>Avgång</span></div>
-      </div>
+    <div class="station-list" id="stationList" role="tabpanel" aria-labelledby="tabStations">
+      <div class="list-head"><span></span><span>Station</span><span>Ankomst</span><span>Avgång</span></div>
       <div id="cards" class="cards"></div>
-      <div id="infoPane" class="info-pane" role="tabpanel" hidden></div>
       <div class="journey-actions">
         <button id="btnFinish" class="primary">Avsluta & spara</button>
         <button id="btnAbort" class="danger">Avbryt resa</button>
       </div>
+    </div>
+    <div class="station-list info-view" id="infoView" role="tabpanel" aria-labelledby="tabInfo">
+      <div id="infoPane" class="info-pane"></div>
     </div>
   </section>
 
@@ -858,7 +868,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25t'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25u'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1039,6 +1049,7 @@
       setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; },
       refreshInfo, updateInfo, setInfoTab, infoModel: () => infoState.model,
       applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
+      checkVersionByHand, versionCheckResult: () => versionCheckResult,
       setVersionForTest: (fetchFn, reloadFn) => { versionFetchForTest = fetchFn; if(reloadFn) reloadPage = reloadFn; },
       appVersion: APP_VERSION,
       syncFromGithub, allRuns, loadRepoRunsFromDevice, prefillVehicleType, renderUploadStatus,
@@ -1145,6 +1156,9 @@
       const u=new SpeechSynthesisUtterance(text);
       u.lang='sv-SE';
       if(swedishVoice) u.voice=swedishVoice;
+      // Chrome kan fastna i pausat läge efter en stund utan uppläsning
+      if(synth.paused) synth.resume();
+      speak.last=u; // behåll en referens, annars kan Chrome kasta yttrandet innan det lästs upp
       synth.speak(u);
       return true;
     }catch(e){
@@ -1609,6 +1623,8 @@
         applyUpdate();
       });
     }
+    document.getElementById('menuVersion').textContent=APP_VERSION;
+    document.getElementById('btnVersion').addEventListener('click', ()=>{ closeAllMenus(); checkVersionByHand(); });
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     // Header dropdown menu
@@ -1739,6 +1755,9 @@
     const trainNumber = (document.getElementById('trainNumber').value||'').trim();
     let slice = null;
     let timetableResult = null;
+    // Föraren tryckte på Start: säg det direkt, medan tryckningen gäller. Då hörs att uppläsningen fungerar,
+    // och iPhone släpper fram rösten resten av resan. (Startar resan av sig själv sägs det längre ner.)
+    if(!auto) speak(`Resan startad${trainNumber?`. Tåg ${spellTrain(trainNumber)}`:''} mot ${endName}.`);
 
     // If train number provided, try to build route from timetable
     if(trainNumber){
@@ -1793,7 +1812,7 @@
       if(lastAutoFix) handlePosition(lastAutoFix.pos);
       const endName=state.route[state.route.length-1].name;
       const dep=state.route[0].actualDeparture;
-      speak(`Resan startad.${trainNumber?` Tåg ${spellTrain(trainNumber)}`:''} mot ${endName}.`);
+      speak(`Resan startad${trainNumber?`. Tåg ${spellTrain(trainNumber)}`:''} mot ${endName}.`);
       vibrate([100, 50, 100]);
       const ttProblem = trainNumber && timetableResult && !timetableResult.success;
       showJourneyMessage(`Resan startade av sig själv när tåget rullade – avgång ${formatTime(dep)}` +
@@ -2755,7 +2774,7 @@
     const go=()=>{
       const card=els.cards.children[idx];
       if(!card) return;
-      const head=list.querySelector('.list-top');
+      const head=list.querySelector('.list-head');
       const top=card.offsetTop - (head?head.offsetHeight:0) - Math.max(0, (list.clientHeight - card.offsetHeight)/3);
       list.scrollTo({ top:Math.max(0, top), behavior:immediate?'auto':'smooth' });
     };
@@ -2954,7 +2973,7 @@
   // Hämtar vårt tåg och alla tåg på resten av linjen från Trafikverket varje minut: möten med sena tåg,
   // prognos till slutstationen, anslutningar där, avvikelser och störningar (OperativeEvent). Kräver tågnummer.
   const INFO = window.RailTimerInfo || null;
-  const STORAGE_KEY_INFO = 'railtimer_info_v1';           // { transfer: { Hr: 4 }, double: ['Vdm|Vr', …] }
+  const STORAGE_KEY_INFO = 'railtimer_info_v1';           // { double: ['Vdm|Vr', …] } (sträckor med dubbelspår)
   const STORAGE_KEY_SIG_NAMES = 'railtimer_sig_names_v1'; // namn på driftplatser som inte finns i stationslistan
   const INFO_REFRESH_MS = 60000;
   const INFO_MESSAGES_MS = 10*60000;  // störningar (hela landet i ett svar)
@@ -2971,22 +2990,11 @@
   function loadInfoSettings(){
     try{
       const s=JSON.parse(localStorage.getItem(STORAGE_KEY_INFO)||'{}')||{};
-      return { transfer: s.transfer && typeof s.transfer==='object' ? s.transfer : {}, double: Array.isArray(s.double) ? s.double : [] };
-    }catch(e){ return { transfer:{}, double:[] }; }
+      return { double: Array.isArray(s.double) ? s.double : [] };
+    }catch(e){ return { double:[] }; }
   }
   function saveInfoSettings(s){
     try{ localStorage.setItem(STORAGE_KEY_INFO, JSON.stringify(s)); }catch(e){ console.warn('Kunde inte spara infoinställningarna', e); }
-  }
-  // Minsta bytestid per slutstation (ändras med − och + i fliken)
-  function transferMinFor(sig){
-    const v=loadInfoSettings().transfer[sig];
-    return Number.isFinite(v) ? v : (INFO ? INFO.DEFAULTS.transferMin : 4);
-  }
-  function setTransferMin(sig, v){
-    const s=loadInfoSettings();
-    s.transfer[sig]=Math.max(1, Math.min(15, Math.round(v)));
-    saveInfoSettings(s);
-    updateInfo();
   }
   // Sträckor där tåg möts mellan stationerna (dubbelspår) sparas, så att kunskapen finns kvar till nästa resa
   function rememberDouble(keys){
@@ -3228,15 +3236,14 @@
         if(st.sig) known.set(st.sig, { arr:timeMs(st.actualArrival), dep:timeMs(st.actualDeparture) });
       }
       const routeNames=new Map(state.route.filter(s=>s.sig).map(s=>[s.sig, s.name]));
-      const endSig=infoState.line[infoState.line.length-1].sig;
       try{
         const lp=state.lastPosition;
         const ourPos = lp && state.lastFixTime && Date.now()-state.lastFixTime<60000 ? { lat:lp.coords.latitude, lon:lp.coords.longitude } : null;
         model=INFO.compute({
           line:infoState.line, trains:infoState.trains, ourKey:infoState.ourKey, known, now:Date.now(),
-          transferMin:transferMinFor(endSig), knownDouble:loadInfoSettings().double,
+          knownDouble:loadInfoSettings().double,
           history:infoState.history, routeNames, messages:infoState.messages,
-          positions:infoState.positions, coords:lineCoords(), ourPos, transferBySig:loadInfoSettings().transfer
+          positions:infoState.positions, coords:lineCoords(), ourPos
         });
       }catch(e){
         console.error('Infofliken: fel i beräkningen', e);
@@ -3453,18 +3460,17 @@
       html+=m.incoming.map(c=>infoRow(c.level, roundClock(c.adv), `Från ${escapeHtml(placesText(c.from)||'?')}`, connectionSub(c), connectionStatusHtml(c, true))).join('');
     }
 
-    // Anslutningar i slutstationen, med bytestiden som kan ändras
-    const tmin=transferMinFor(m.end.sig);
-    html+=`<div class="info-sec"><span>Anslutningar i ${escapeHtml(endName)}</span>` +
-      `<span class="transfer-ctl">Bytestid <button type="button" data-info="transfer-" aria-label="Kortare bytestid">−</button>` +
-      `<span id="infoTransfer">${tmin} min</span><button type="button" data-info="transfer+" aria-label="Längre bytestid">+</button></span></div>`;
+    // Anslutningar i slutstationen. Ingen egen bytestid: minuterna att byta visas (se connectionStatus i railtimer-info.js)
+    const D=INFO.DEFAULTS;
+    html+=`<div class="info-sec"><span>Anslutningar i ${escapeHtml(endName)}</span></div>`;
     html+= m.connections.length
       ? m.connections.map(c=>infoRow(c.level, roundClock(c.adv), escapeHtml(placesText(c.to)||'?'), connectionSub(c), connectionStatusHtml(c, false))).join('')
-      : `<div class="info-empty">Inga anslutningar ${tmin}–40 min efter vår ankomst.</div>`;
+      : `<div class="info-empty">Inga anslutningar ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst enligt tidtabell.</div>`;
 
     const basis = m.recoveryObs ? `Trafikverkets tider och egna gångtider (upp till ${m.recoveryObs} körningar per sträcka)` : 'Trafikverkets tider och tidtabellen';
     const notShown=(m.messagesHidden||[]).filter(h=>h.reason!=='inte under resan').length;
-    html+=`<p class="info-foot">${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Tågklareraren kan flytta möten.` +
+    const transferNote=`Anslutningar: tåg som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. `;
+    html+=`<p class="info-foot">${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Tågklareraren kan flytta möten.` +
       `${infoState.error?` Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).`:''}</p>`;
     return html;
   }
@@ -3491,17 +3497,21 @@
     }
   }
 
+  // Stationer: panel, karta och stationslistan. Info: hela ytan under flikarna (CSS: #journey.show-info)
   function setInfoTab(tab){
     infoState.tab = tab==='info' ? 'info' : 'stations';
-    const list=document.getElementById('stationList');
-    if(!list) return;
+    const journey=document.getElementById('journey');
+    if(!journey) return;
     const showInfo=infoState.tab==='info';
-    list.classList.toggle('show-info', showInfo);
+    journey.classList.toggle('show-info', showInfo);
     document.getElementById('tabStations').setAttribute('aria-selected', String(!showInfo));
     document.getElementById('tabInfo').setAttribute('aria-selected', String(showInfo));
-    document.getElementById('infoPane').hidden=!showInfo;
-    if(showInfo){ list.scrollTop=0; renderInfo(); }
-    else scrollToNextStation(true);
+    if(showInfo){ document.getElementById('infoView').scrollTop=0; renderInfo(); }
+    else{
+      // Kartan var dold och får sin storlek först nu
+      if(state.running) renderRouteMap(true);
+      scrollToNextStation(true);
+    }
   }
 
   function handleInfoClick(ev){
@@ -3518,10 +3528,6 @@
       if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, ()=>showJourneyMessage('Kunde inte kopiera', true));
       return;
     }
-    const endSig=infoState.line[infoState.line.length-1].sig;
-    const cur=transferMinFor(endSig);
-    if(btn.dataset.info==='transfer-') setTransferMin(endSig, cur-1);
-    if(btn.dataset.info==='transfer+') setTransferMin(endSig, cur+1);
   }
 
   // Vibration och meddelande när något blir värre: nytt möte med väntan, anslutning som blir knapp eller missas,
@@ -6328,6 +6334,7 @@
     document.body.appendChild(resumeDialog);
 
     document.getElementById('btnResumeJourney').addEventListener('click', () => {
+      speak('Resan fortsätter.'); // inom tryckningen, så att uppläsningen fungerar även på iPhone
       resumeJourney(saved);
       resumeDialog.remove();
     });
@@ -6492,6 +6499,7 @@
   let latestVersion=null;
   let versionCheckedAt=0;
   let versionPromptShown=null;
+  let versionCheckResult=null;                // senaste kontrollen: 'ny', 'samma', 'offline' eller 'fel'
   let versionFetchForTest=null;               // testerna: simulerad version.json
   let reloadPage=()=>window.location.reload(); // testerna kan fånga omladdningen
 
@@ -6500,19 +6508,23 @@
 
   // Publicerad version enligt version.json, eller null (offline, fel, samma version)
   async function checkForNewVersion(mayReload){
-    if((TEST_MODE && !versionFetchForTest) || navigator.onLine===false) return null;
+    if(TEST_MODE && !versionFetchForTest){ versionCheckResult='fel'; return null; }
+    if(navigator.onLine===false){ versionCheckResult='offline'; return null; }
     versionCheckedAt=Date.now();
     if(swRegistration) swRegistration.update().catch(()=>{});
     let version=null;
     try{
       const url=`${VERSION_URL}?t=${Date.now()}`;
       const resp=versionFetchForTest ? await versionFetchForTest(url) : await fetchWithTimeout(url, { cache:'no-store' }, 8000);
-      if(!resp.ok) return null;
+      if(!resp.ok){ versionCheckResult='fel'; return null; }
       version=String(((await resp.json())||{}).version||'');
     }catch(e){
+      versionCheckResult='fel';
       return null;
     }
-    if(!version || version===APP_VERSION) return null;
+    if(!version){ versionCheckResult='fel'; return null; }
+    if(version===APP_VERSION){ versionCheckResult='samma'; return null; }
+    versionCheckResult='ny';
     latestVersion=version;
     if(mayReload && canReloadNow() && sessionGet(SESSION_KEY_RELOADED_FOR)!==version){
       sessionSet(SESSION_KEY_RELOADED_FOR, version);
@@ -6533,6 +6545,7 @@
     if(!els.updateBtn) return;
     els.updateBtn.style.display='inline-block';
     els.updateBtn.disabled=false;
+    els.updateBtn.textContent = version ? `Uppdatera app till ${version}` : 'Uppdatera app';
     if(versionPromptShown===version) return;
     versionPromptShown=version;
     const text = state.running
@@ -6546,6 +6559,17 @@
   }
 
   // ⋮ → Uppdatera app. Under en resa sparas resan och spåret först, och appen fortsätter resan efter omladdningen.
+  // Tryck på versionen i menyn: sök ny version nu och säg vad som hände
+  async function checkVersionByHand(){
+    showHeaderStatus('Söker efter ny version…', false);
+    const v=await checkForNewVersion(false);
+    if(v) showHeaderStatus(`Ny version ${v} – ⋮ → Uppdatera app${state.running?' (resan fortsätter)':''}`, false);
+    else if(versionCheckResult==='samma') showHeaderStatus(`Du har senaste versionen (${APP_VERSION})`, false);
+    else if(versionCheckResult==='offline') showHeaderStatus('Ingen täckning – kan inte söka ny version nu', true);
+    else showHeaderStatus('Kunde inte söka ny version just nu', true);
+    return v;
+  }
+
   function applyUpdate(){
     updateTriggered=true;
     if(els.updateBtn) els.updateBtn.disabled=true;

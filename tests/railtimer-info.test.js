@@ -40,8 +40,8 @@ function setup(rows, opts) {
   const known = new Map(Object.entries(o.known || {}));
   return I.compute({
     line, trains, ourKey: our.key, known, now: o.now != null ? o.now : at('10:55'),
-    transferMin: o.transferMin, knownDouble: o.knownDouble, history: o.history, routeNames: ROUTE,
-    messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos, transferBySig: o.transferBySig
+    knownDouble: o.knownDouble, history: o.history, routeNames: ROUTE,
+    messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos
   });
 }
 // Ungefärliga lägen längs linjen (norr → söder)
@@ -205,7 +205,7 @@ test('anslutningar: i tid, knappt, missas – och tåg tillbaka längs vår linj
   const late = MEET({ Vr: { a: { EstimatedTimeAtLocation: T('11:26') } } }); // vi kommer 11:46 (+6)
   const deps = departures([
     ['3047', '11:45', null, 'Bs'],
-    ['3049', '11:51'],
+    ['3049', '11:49'],
     ['417', '11:55', { EstimatedTimeAtLocation: T('12:03') }, 'Cst'],
     ['24362', '11:50', null, 'Lkp'],  // tillbaka mot Lidköping
     ['3051', '11:42'],                // går 2 min efter vår ankomst enligt tidtabell: ingen anslutning
@@ -215,7 +215,8 @@ test('anslutningar: i tid, knappt, missas – och tåg tillbaka längs vår linj
   const by = Object.fromEntries(m.connections.map(c => [c.otn, c]));
   assert.deepEqual(m.connections.map(c => c.otn), ['3047', '3049', '417']);
   assert.equal(by['3047'].status, 'missas');
-  assert.equal(by['3049'].status, 'knappt', '5 min byte med bytestid 4');
+  assert.equal(by['3049'].status, 'knappt', '3 min att byta');
+  assert.equal(by['3049'].transferMin, 3);
   assert.equal(by['417'].status, 'ok', 'också sent: 17 min byte');
   assert.equal(by['417'].delayMin, 8);
   assert.equal(by['3047'].track, '3');
@@ -223,9 +224,11 @@ test('anslutningar: i tid, knappt, missas – och tåg tillbaka längs vår linj
   assert.deepEqual(by['3047'].to, ['Bs']);
   assert.equal(m.missed, 1);
   assert.equal(m.tight, 1);
-  // Med bytestid 6 blir 3049 missad och 3047 räknas inte längre som anslutning (5 min enligt tidtabell)
-  const m6 = setup(late.concat(deps), { transferMin: 6 });
-  assert.deepEqual(m6.connections.map(c => [c.otn, c.status]), [['3049', 'missas'], ['417', 'ok']]);
+  // Ingen egen bytestid: hinns inte bara när tåget går före eller i samma minut som vi kommer,
+  // knappt under 4 min, och 4 min att byta räcker
+  const edge = setup(late.concat(departures([['3045', '11:46'], ['3046', '11:47'], ['3048', '11:50']])));
+  assert.deepEqual(edge.connections.map(c => [c.otn, c.transferMin, c.status]), [['3045', 0, 'missas'], ['3046', 1, 'knappt'], ['3048', 4, 'ok']]);
+  assert.equal(I.DEFAULTS.tightMarginMin, undefined);
 });
 
 test('anslutningar: avgånget tåg innan vi kommit fram', () => {
@@ -236,11 +239,12 @@ test('anslutningar: avgånget tåg innan vi kommit fram', () => {
 
 test('tåg som ansluter till oss i startstationen: sent tåg från annat håll hinner inte', () => {
   const arrivals = [
-    ann('3333', 'Lkp', 'a', '10:52', { EstimatedTimeAtLocation: T('10:58'), FromLocation: [{ LocationName: 'Gtp', Order: 0 }] }),
+    ann('3333', 'Lkp', 'a', '10:52', { EstimatedTimeAtLocation: T('11:00'), FromLocation: [{ LocationName: 'Gtp', Order: 0 }] }),
+    ann('3337', 'Lkp', 'a', '10:50', { EstimatedTimeAtLocation: T('10:58'), FromLocation: [{ LocationName: 'Gtp', Order: 0 }] }),
     ann('3335', 'Lkp', 'a', '10:40', { FromLocation: [{ LocationName: 'Gtp', Order: 0 }] })
   ];
   const m = setup(arrivals, { now: at('10:50') });
-  assert.deepEqual(m.incoming.map(c => [c.otn, c.status]), [['3335', 'ok'], ['3333', 'missas']]);
+  assert.deepEqual(m.incoming.map(c => [c.otn, c.status]), [['3335', 'ok'], ['3337', 'knappt'], ['3333', 'missas']]);
   const after = setup(arrivals, { now: at('11:01'), known: { Lkp: { dep: at('11:00') } } });
   assert.equal(after.incoming, null, 'inte efter avgång');
 });
@@ -348,7 +352,7 @@ test('position: mötande tåg som redan passerat mötesplatsen mot oss visas, me
 test('anslutningar längs vägen: tåg från Vara åt annat håll efter vår ankomst, och tåg som kommer dit före vår avgång', () => {
   const to = sig => ({ ToLocation: [{ LocationName: sig, Priority: 1, Order: 0 }] });
   const rows = [
-    ann('X2', 'Vr', 'd', '11:24', to('Sk')),  // 4 min efter vår ankomst: knappt
+    ann('X2', 'Vr', 'd', '11:24', to('Sk')),  // 4 min efter vår ankomst: räcker
     ann('X1', 'Vr', 'd', '11:30', to('G')),   // 10 min: ok
     ann('X9', 'Vr', 'd', '11:50', to('G')),   // 30 min: utanför fönstret
     ann('X3', 'Vr', 'a', '11:15', { FromLocation: [{ LocationName: 'Sk', Priority: 1, Order: 0 }] }) // till oss, 6 min före avgång
@@ -357,12 +361,13 @@ test('anslutningar längs vägen: tåg från Vara åt annat håll efter vår ank
   assert.equal(m.stops.length, 1);
   const st = m.stops[0];
   assert.equal(st.sig, 'Vr');
-  assert.deepEqual(st.connections.map(c => [c.otn, c.status]), [['X2', 'knappt'], ['X1', 'ok']]);
+  assert.deepEqual(st.connections.map(c => [c.otn, c.status]), [['X2', 'ok'], ['X1', 'ok']]);
   assert.deepEqual(st.incoming.map(c => [c.otn, c.status]), [['X3', 'ok']]);
-  assert.equal(m.attention, 1, 'den knappa räknas');
-  // Egen bytestid för Vara
-  const m2 = setup(rows, { transferBySig: { Vr: 2 } });
-  assert.deepEqual(m2.stops[0].connections.map(c => c.status), ['ok', 'ok']);
+  assert.equal(m.attention, 0);
+  // Vi åkte 3 min sent från Lidköping: bytet i Vara blir knappt
+  const late = setup(rows, { now: at('11:04'), known: { Lkp: { dep: at('11:03') } } });
+  assert.deepEqual(late.stops[0].connections.map(c => [c.otn, c.transferMin, c.status]), [['X2', 1, 'knappt'], ['X1', 7, 'ok']]);
+  assert.equal(late.attention, 1, 'den knappa räknas');
   // Har vi åkt från Vara visas inga anslutningar där
   const passed = setup(rows, { now: at('11:22'), known: { Lkp: { dep: at('11:00') }, Jp: { arr: at('11:10'), dep: at('11:11') }, Vr: { arr: at('11:20'), dep: at('11:21') } } });
   assert.equal(passed.stops.length, 0);
@@ -379,6 +384,11 @@ test('utrop: försening med orsak, beräknad ankomst och anslutningar – på sv
   assert.equal(a.sv, 'Vi är cirka 6 minuter försenade på grund av möte med ett försenat tåg. Beräknad ankomst till Herrljunga C 11:46. ' +
     'Tåget mot Göteborg C 11:45 hinns tyvärr inte. Tåget mot Borås C 11:55 hinner ni, det går från spår 3.');
   assert.ok(a.en.startsWith('We are approximately 6 minutes late due to a delayed oncoming train. Expected arrival at Herrljunga C 11:46.'), a.en);
+  // Knappt byte: hur många minuter resenärerna har på sig
+  const mt = setup(MEET({ Vdm: { d: { TimeAtLocationWithSeconds: T('11:20') } } }).concat([ann('S1', 'Hr', 'd', '11:48', to('Sk'))]), { now: at('11:12'), known });
+  const at2 = I.announcement(mt, { name: s => (s === 'Sk' ? 'Skövde C' : names.get(s) || s), clock });
+  assert.ok(at2.sv.endsWith('Till tåget mot Skövde C 11:48 har ni cirka 2 minuter att byta, det går från spår 3.'), at2.sv);
+  assert.ok(at2.en.endsWith('You will have about 2 minutes to change to the train to Skövde C at 11:48, departing from track 3.'), at2.en);
   // I tid och inga anslutningar som påverkas: inget utrop
   assert.equal(I.announcement(setup(MEET()), { clock }), null);
 });

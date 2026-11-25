@@ -20,8 +20,8 @@
   const DEFAULTS = {
     meetMarginMs: 60000,      // vi kan avgå tidigast så här länge efter att det mötande tåget kommit in
     minDwellMs: 30000,        // kortaste uppehåll vid ett annonserat stopp när vi är sena
-    transferMin: 4,           // minsta bytestid (ändras per station i fliken)
-    tightMarginMin: 2,        // upp till så här mycket över bytestiden räknas bytet som knappt
+    transferMin: 4,           // byten kortare än så är knappa; tåg som enligt tidtabell går tidigare än så efter vår ankomst är inga anslutningar
+    missedUnderMin: 1,        // under så här många minuter att byta hinns bytet inte (tåget går före eller i samma stund som vi kommer)
     connectionWindowMin: 40,  // anslutningar som enligt tidtabell går högst så här länge efter vår ankomst
     minPlannedTransferMin: 2, // tåg som enligt tidtabell går tidigare än så efter vår ankomst är inga anslutningar
     incomingWindowMin: 30,    // tåg som ansluter till oss: ankomst högst så här länge före vår avgång
@@ -455,9 +455,11 @@
     return false;
   }
 
-  function connectionStatus(transferMin, minTransfer, tight) {
-    if (transferMin < minTransfer) return 'missas';
-    if (transferMin < minTransfer + tight) return 'knappt';
+  // Ingen egen bytestid: "missas" bara när tåget går före eller i samma stund som vi kommer,
+  // "knappt" under 4 min att byta. Minuterna visas, så att föraren själv ser hur knappt det är.
+  function connectionStatus(transferMin, o) {
+    if (transferMin < o.missedUnderMin) return 'missas';
+    if (transferMin < o.transferMin) return 'knappt';
     return 'ok';
   }
 
@@ -482,7 +484,7 @@
       let status;
       if (dep.canceled) status = 'inställt';
       else if (departed && !arrived) status = 'avgått';
-      else status = connectionStatus(transfer, o.transferMin, o.tightMarginMin);
+      else status = connectionStatus(transfer, o);
       out.push({
         otn: tr.otn, ident: tr.ident, product: tr.product, to: tr.to,
         adv: dep.adv, dep: theirDep, delayMin: roundMin(theirDep - dep.adv), track: dep.track,
@@ -514,7 +516,7 @@
         otn: tr.otn, ident: tr.ident, product: tr.product, from: tr.from,
         adv: arr.adv, arr: theirArr, delayMin: roundMin(theirArr - arr.adv), track: arr.track,
         transferMin: Math.floor(transfer), arrived,
-        status: arr.canceled ? 'inställt' : connectionStatus(transfer, o.transferMin, o.tightMarginMin),
+        status: arr.canceled ? 'inställt' : connectionStatus(transfer, o),
         source: arrived ? 'faktisk' : (arr.est != null ? 'trafikverket' : 'plan')
       });
     }
@@ -597,11 +599,10 @@
   }
 
   /* ── Allt för fliken ──
-     input: { line, trains, ourKey, known: Map(sig → { arr, dep }), now, transferMin, knownDouble,
+     input: { line, trains, ourKey, known: Map(sig → { arr, dep }), now, knownDouble,
               history, routeNames: Map(sig → namn), messages, opts } */
   function compute(input) {
     const o = Object.assign({}, DEFAULTS, input.opts || {});
-    if (input.transferMin != null) o.transferMin = input.transferMin;
     const now = input.now;
     const line = input.line || [];
     const trains = input.trains || new Map();
@@ -757,15 +758,14 @@
 
     // Anslutningar vid stationerna längs vägen där vi stannar och inte har åkt från: tåg som går därifrån åt
     // ett annat håll högst midConnectionWindowMin efter vår ankomst, och tåg som kommer dit före vår avgång
-    const transferFor = sig => (input.transferBySig && Number.isFinite(input.transferBySig[sig])) ? input.transferBySig[sig] : o.transferMin;
     const stops = [];
     for (let i = Math.max(frontier, 1); i < n - 1; i++) {
       const L = line[i];
       if (!L.stop || known[i].dep != null) continue;
-      const oi = Object.assign({}, o, { transferMin: transferFor(L.sig), connectionWindowMin: o.midConnectionWindowMin, incomingWindowMin: o.midConnectionWindowMin });
+      const oi = Object.assign({}, o, { connectionWindowMin: o.midConnectionWindowMin, incomingWindowMin: o.midConnectionWindowMin });
       const out = preds[i].arr != null ? outgoing(trains, our, L, preds[i].arr, known[i].arr != null, lineSigs, now, oi) : [];
       const into = preds[i].dep != null ? incoming(trains, our, L, preds[i].dep, lineSigs, now, oi) : [];
-      if (out.length || into.length) stops.push({ i, sig: L.sig, transferMin: oi.transferMin, connections: out, incoming: into });
+      if (out.length || into.length) stops.push({ i, sig: L.sig, connections: out, incoming: into });
     }
 
     // Nivåer: 0 inget att göra, 1 håll koll, 2 påverkar
@@ -832,9 +832,11 @@
       sv.push(c.status === 'avgått' ? `Tåget mot ${dest(c)} ${clock(c.adv)} har tyvärr redan gått.` : `Tåget mot ${dest(c)} ${clock(c.adv)} hinns tyvärr inte.`);
       en.push(c.status === 'avgått' ? `The train to ${dest(c)} at ${clock(c.adv)} has unfortunately already left.` : `The train to ${dest(c)} at ${clock(c.adv)} will unfortunately be missed.`);
     }
+    // Knappt: hur många minuter det blir att byta, så att resenärerna själva kan avgöra
     for (const c of tight) {
-      sv.push(`Bytet till tåget mot ${dest(c)} ${clock(c.adv)} blir knappt${c.track ? `, det går från spår ${c.track}` : ''}.`);
-      en.push(`The connection to ${dest(c)} at ${clock(c.adv)} will be tight${c.track ? `, departing from track ${c.track}` : ''}.`);
+      const n = Math.max(c.transferMin, 1);
+      sv.push(`Till tåget mot ${dest(c)} ${clock(c.adv)} har ni cirka ${n} minut${n === 1 ? '' : 'er'} att byta${c.track ? `, det går från spår ${c.track}` : ''}.`);
+      en.push(`You will have about ${n} minute${n === 1 ? '' : 's'} to change to the train to ${dest(c)} at ${clock(c.adv)}${c.track ? `, departing from track ${c.track}` : ''}.`);
     }
     if (d >= 3) for (const c of ok) {
       sv.push(`Tåget mot ${dest(c)} ${clock(c.adv)} hinner ni${c.track ? `, det går från spår ${c.track}` : ''}.`);
