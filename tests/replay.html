@@ -1752,6 +1752,167 @@ test('resvy: vid station visar panelen uppehåll och tid till avgång, bara den 
   assertEqual(d.querySelectorAll('#cards .card.active').length, 0, 'ingen annan markerad');
 });
 
+/* Simulerat Trafikverket för infofliken, byggt på resans tidtabell (scheduleFor):
+   vårt tåg 3344, det motgående 3347 som möter oss i Råbäck (opts.meetLateMin sent, förvalt 6 min),
+   och tre tåg från Hällekis: 3051 och 3053 mot Mariestad (5 och 15 min efter vår ankomst) och 3349 tillbaka mot Lidköping. */
+function fakeTrafikverketInfo(route, opts) {
+  const o = opts || {};
+  const M = 60000;
+  const iso = t => new Date(t).toISOString();
+  const row = (otn, sig, act, t, extra) => Object.assign({
+    OperationalTrainNumber: otn, AdvertisedTrainIdent: otn, DepartureDateOTN: '2026-10-15T00:00:00.000+02:00',
+    LocationSignature: sig, ActivityType: act, Advertised: true, AdvertisedTimeAtLocation: iso(t), LocationDateTimeOTN: iso(t)
+  }, extra || {});
+  const ours = [];
+  route.forEach((st, i) => {
+    if (i > 0) ours.push(row('3344', st.sig, 'Ankomst', Date.parse(st.scheduledArrival)));
+    if (i < route.length - 1) ours.push(row('3344', st.sig, 'Avgang', Date.parse(st.scheduledDeparture)));
+  });
+  const A4 = Date.parse(route[4].scheduledArrival);
+  const E = Date.parse(route[5].scheduledArrival);
+  const late = o.meetLateMin != null ? o.meetLateMin : 6;
+  const est = mins => late ? { EstimatedTimeAtLocation: iso(mins) } : {};
+  const meet = [
+    row('3347', 'Hlk', 'Avgang', A4 - 8 * M),
+    row('3347', 'Rbk', 'Ankomst', A4, est(A4 + late * M)),
+    row('3347', 'Rbk', 'Avgang', A4 + M, est(A4 + (late + 1) * M)),
+    row('3347', 'Bmb', 'Ankomst', A4 + 8 * M), row('3347', 'Bmb', 'Avgang', A4 + 9 * M),
+    row('3347', 'Kll', 'Ankomst', A4 + 14 * M)
+  ];
+  const dest = sig => ({ ToLocation: [{ LocationName: sig, Priority: 1, Order: 0 }], ProductInformation: [{ Code: 'PNA054', Description: 'Västtågen' }], TrackAtLocation: '2' });
+  const conns = [
+    row('3051', 'Hlk', 'Avgang', E + 5 * M, dest('Mst')),
+    row('3053', 'Hlk', 'Avgang', E + 15 * M, dest('Mst')),
+    row('3349', 'Hlk', 'Avgang', E + 10 * M, dest('Lkp'))
+  ];
+  const calls = [];
+  const resp = obj => ({ ok: true, status: 200, json: async () => obj });
+  // Fält som inte efterfrågas skickas inte (som Trafikverket)
+  const only = (list, body) => body.includes('LocationDateTimeOTN') ? list : list.map(a => { const c = Object.assign({}, a); delete c.LocationDateTimeOTN; return c; });
+  const fetch = async (url, init) => {
+    const body = String(init && init.body || '');
+    calls.push(body);
+    if (o.fail) throw new TypeError('Failed to fetch');
+    if (o.rejectOtn && body.includes('<INCLUDE>LocationDateTimeOTN</INCLUDE>')) {
+      return { ok: false, status: 400, json: async () => ({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Query', MESSAGE: 'Okänt fält: LocationDateTimeOTN' } }] } }) };
+    }
+    if (body.includes('objecttype="OperativeEvent"')) return resp({ RESPONSE: { RESULT: [{ OperativeEvent: o.messages || [] }] } });
+    if (body.includes('objecttype="TrainStation"')) return resp({ RESPONSE: { RESULT: [{ TrainStation: [{ LocationSignature: 'Mst', AdvertisedLocationName: 'Mariestad' }] }] } });
+    if (body.includes('name="OperationalTrainNumber"')) return resp({ RESPONSE: { RESULT: [{ TrainAnnouncement: only(ours, body) }] } });
+    return resp({ RESPONSE: { RESULT: [{ TrainAnnouncement: only(ours.concat(meet, conns), body) }] } });
+  };
+  return { fetch, calls };
+}
+
+// Mitt på sträckan Källby → Blomberg med simulerat Trafikverket och hämtad info
+async function midJourneyWithInfo(opts) {
+  const r = await midJourney();
+  r.vibrations = [];
+  r.w.navigator.vibrate = p => { r.vibrations.push(p); return true; };
+  r.trv = fakeTrafikverketInfo(r.rt.state.route, opts);
+  r.w.fetch = r.trv.fetch;
+  await r.rt.refreshInfo();
+  await realSleep(50); // namnen på platserna hämtas efteråt
+  return r;
+}
+
+test('info: ett sent mötande tåg ger väntan, prognos och missad anslutning – i panelen och i infofliken', async () => {
+  const r = await midJourneyWithInfo();
+  const d = r.w.document;
+  const m = r.rt.infoModel();
+  assert(m, 'prognos finns');
+  assertEqual(m.meetings.length, 1, 'ett möte');
+  assertEqual(m.meetings[0].sig, 'Rbk', 'mötet i Råbäck');
+  assert(m.meetings[0].waitMin >= 5, 'vi väntar på 3347: ' + m.meetings[0].waitMin);
+  assert(m.end.delayMin >= 6, 'sena till Hällekis: ' + m.end.delayMin);
+  assert(r.trv.calls[0].includes('name="OperationalTrainNumber" value="3344"'), 'först vårt tåg');
+  assert(r.trv.calls[1].includes('<EQ name="LocationSignature" value="Rbk" />'), 'sedan tågen på linjen');
+  const np = d.getElementById('npInfo');
+  assert(!np.hidden && /^Hällekis \d\d:\d\d \+\d+ · möte Råbäck · 1 anslutning missas$/.test(np.textContent), np.textContent);
+  assert(np.offsetHeight < 40, 'raden får plats på högst två rader: ' + np.offsetHeight);
+  assert(np.classList.contains('l2'), 'raden är röd');
+  assert(!d.getElementById('infoCount').hidden, 'siffra på fliken');
+  assertEqual(r.vibrations.length, 1, 'vibrerar en gång');
+  assert(/^Möte Råbäck: 3347 är 6 min sent – vi väntar ca \d+ min \(och 1 till i Info\)$/.test(d.getElementById('journeyMsg').textContent), d.getElementById('journeyMsg').textContent);
+
+  np.click();
+  assert(d.getElementById('stationList').classList.contains('show-info'), 'infofliken öppnas från panelen');
+  assertEqual(r.w.getComputedStyle(d.getElementById('cards')).display, 'none', 'stationerna döljs');
+  const pane = d.getElementById('infoPane');
+  assert(!pane.hidden, 'fliken visas');
+  assert(pane.textContent.includes('Prognos Hällekis'), 'prognos');
+  assert(pane.textContent.includes('Råbäck · möte 3347') && pane.textContent.includes('enkelspår') && pane.textContent.includes('enligt Trafikverket'), 'mötet');
+  const rows = Array.from(pane.querySelectorAll('.info-row')).map(e => e.textContent);
+  assert(rows.some(t => t.startsWith(formatHm(Date.parse(r.rt.state.route[5].scheduledArrival) + 5 * 60000)) && t.includes('Mariestad') && t.includes('missas')), 'tåget 5 min efter missas: ' + rows.join(' | '));
+  assert(rows.some(t => t.includes('Mariestad') && t.includes('att byta') && t.includes('Västtågen 3053') && t.includes('spår 2')), 'tåget 15 min efter hinns');
+  assert(!rows.some(t => t.includes('3349')), 'tåget tillbaka mot Lidköping är ingen anslutning');
+
+  await r.rt.refreshInfo();
+  assertEqual(r.vibrations.length, 1, 'samma sak meddelas inte igen');
+
+  // Bytestiden ändras per slutstation och sparas
+  for (let k = 0; k < 3; k++) pane.querySelector('[data-info="transfer+"]').click();
+  assertEqual(JSON.parse(r.w.localStorage.getItem('railtimer_info_v1')).transfer.Hlk, 7, 'bytestiden sparas');
+  assertEqual(pane.querySelector('#infoTransfer').textContent, '7 min', 'bytestiden visas');
+  assertEqual(r.rt.infoModel().connections.map(c => c.otn).join(), '3053', 'tåget 5 min efter ankomst är ingen anslutning med 7 min bytestid');
+
+  d.getElementById('tabStations').click();
+  assert(!d.getElementById('stationList').classList.contains('show-info'), 'tillbaka till stationerna');
+  assert(d.scrollingElement.scrollHeight <= r.w.innerHeight + 1, 'sidan scrollar inte – bara listan');
+});
+
+test('info: mötande tåg i tid – ingen väntan och inget larm', async () => {
+  const r = await midJourneyWithInfo({ meetLateMin: 0 });
+  const m = r.rt.infoModel();
+  assertEqual(m.meetings[0].waitMin, 0, 'ingen väntan');
+  assert(!r.w.document.getElementById('npInfo').textContent.includes('möte'), 'mötet nämns inte i panelen när det inte kostar något');
+  r.rt.setInfoTab('info');
+  assert(r.w.document.getElementById('infoPane').textContent.includes('ingen väntan'), 'men syns i fliken');
+});
+
+test('info: utan kontakt med Trafikverket säger fliken det och resan fortsätter', async () => {
+  const r = await midJourneyWithInfo({ fail: true });
+  const d = r.w.document;
+  assertEqual(d.getElementById('npInfo').textContent, 'Info: nätverksfel', 'panelen');
+  r.rt.setInfoTab('info');
+  assert(d.getElementById('infoPane').textContent.includes('Ingen kontakt med Trafikverket (nätverksfel)'), d.getElementById('infoPane').textContent);
+  assert(r.rt.state.running, 'resan pågår');
+  assertEqual(r.vibrations.length, 0, 'inget larm');
+});
+
+test('info: godtar Trafikverket inte tågorderns tid frågar fliken igen utan den och fungerar ändå', async () => {
+  const r = await midJourneyWithInfo({ rejectOtn: true });
+  const queries = r.trv.calls.filter(b => b.includes('objecttype="TrainAnnouncement"'));
+  assert(queries[0].includes('LocationDateTimeOTN') && !queries[1].includes('LocationDateTimeOTN'), 'först med fältet, sedan utan');
+  assert(queries.slice(1).every(b => !b.includes('LocationDateTimeOTN')), 'resten av resan utan fältet');
+  const m = r.rt.infoModel();
+  assert(m && m.meetings.length === 1 && m.meetings[0].waitMin >= 5, 'mötet och väntan finns ändå');
+  await r.rt.refreshInfo();
+  assert(r.trv.calls.slice(-1)[0].indexOf('LocationDateTimeOTN') < 0, 'nästa hämtning frågar direkt utan fältet');
+});
+
+test('info: mötena sparas i körningen när resan avslutas', async () => {
+  const r = await midJourneyWithInfo();
+  r.rt.stopJourney(false, 'Avslutad manuellt');
+  const log = r.rt.loadLogs().pop();
+  assert(log.info && log.info.meetings.length === 1, 'ett möte i körningen');
+  const mt = log.info.meetings[0];
+  assertEqual([mt.sig, mt.name, mt.train, mt.theirDelayMin, mt.single], ['Rbk', 'Råbäck', '3347', 6, true], 'mötet');
+  assert(mt.waitMin >= 5, 'beräknad väntan');
+});
+
+test('info: utan tågnummer förklarar fliken varför den är tom', async () => {
+  const fixes = buildJourney();
+  const r = await runJourney(fixes, { drop: f => f.t > fixes[40].t, afterStart: rt => { rt.state.trainNumber = ''; } });
+  r.rt.updateInfo();
+  r.rt.setInfoTab('info');
+  assert(r.w.document.getElementById('infoPane').textContent.includes('Infon bygger på tågnumret'), 'förklaring');
+});
+
+function formatHm(t) {
+  return new Date(Math.round(t / 60000) * 60000).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+}
+
 test('karta: Följ zoomar in kring tåget, Hela visar hela rutten, och valet sparas', async () => {
   const r = await midJourney();
   const d = r.w.document;
@@ -2051,6 +2212,11 @@ window.prepareShot = async function (name) {
       route: scheduleFor(fixes),
       afterStart: async rt => { rt.setRailFetchForTest(ov.fetch); await rt.loadRailGeometry(); }
     });
+  } else if (name === 'info' || name === 'resa-info') {
+    // Mitt i resan med ett sent mötande tåg: infofliken (info) eller stationerna med raden i panelen (resa-info)
+    const r = await midJourneyWithInfo();
+    r.w.document.getElementById('journeyMsg').style.display = 'none';
+    r.rt.setInfoTab(name === 'info' ? 'info' : 'stations');
   } else if (name === 'rapport') {
     const fixes = buildJourney();
     await runJourney(fixes, { drop: twoStationCall(fixes).drop });

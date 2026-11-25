@@ -20,6 +20,7 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 | `sw.js` | Service Worker för PWA |
 | `railtimer-avbrott.js`, `railtimer-github.js`, `railtimer-karta.js`, `railtimer-analys.js` | Avbrott, uppladdning, kartans linje längs spåret, analysens beräkningar |
 | `railtimer-trv.js` | Trafikverkets API: frågor, rapporterade tider för en körning, jämförelse, kontrollen |
+| `railtimer-info.js` | Infofliken: möten, enkel- eller dubbelspår, prognos och anslutningar under resan |
 | `api-koll.html` | Trafikverket-data: visar vad API:t svarar och appens tider mot Trafikverkets |
 | `kinnekulle-gps.webmanifest` | PWA manifest |
 
@@ -869,3 +870,48 @@ André 2026-11-25 körde kontrollsidan för 23349 och sparade svaret i `railtime
 - `node --test "tests/*.test.js"` (128): OperativeEvent, stationsmeddelanden, namespace, hela minuter och `signaturesIn`.
 - `node tests/run-browser-tests.mjs trafikverket` (10), nya: hela minuter i rapporten och äldre körning utan svar.
 - Alla webbläsartester: 87.
+
+## Uppdatering (2026-11-25k): infofliken – läget framåt under resan
+
+André 2026-11-25: förväntas vi möta ett sent tåg så att vi blir sena? Enkel- eller dubbelspår? Hur påverkar det anslutningarna i slutstationen (till exempel Vara → möte med sent tåg → sena till Herrljunga → missade anslutningar, eller ingen påverkan om de anslutande tågen också är sena)? Löpande under resan, utifrån tåget man kör, tidigt och kompakt – ett stöd för den som jobbar på tåget. Appversion `2026-11-25k`.
+
+Dataunderlag (`railtimer-data`, 214 körningar): uppehåll över 2 min vid mellanstationer är vanliga i Gårdsjö (44 %), Forshem (34 %), Laxå (30 %) och Vara (27 %), troligen möten; övriga mellanstationer 0–9 %. 4 av 25 ankomster till Herrljunga med tidtabell var mer än 3 min sena.
+
+### Beräkningen (`railtimer-info.js`, rena funktioner)
+- **Linjen** (`buildLine`): vårt tågs alla platser i Trafikverkets TrainAnnouncement mellan start- och slutstation i tidsordning, även driftplatser där tåget bara passerar (möten kan ligga där). Körningen väljs med `nearestRun` (avgångsdatum närmast resans start). Tider: driftstid (`LocationDateTimeOTN`), annars annonserad tid; annonserad avgång är tidigaste avgång vid annonserade stopp.
+- **Frågorna** har svensk tid oavsett telefonens tidszon (`localIso`, som `swedishLocal` i `railtimer-trv.js`). **Skydd:** godtar Trafikverket inte frågan med alla fält (felsvar, inte tidsgräns eller nätfel) frågas igen utan `LocationDateTimeOTN` och `PlannedEstimatedTimeAtLocation` (`SAFE_ANNOUNCEMENT_FIELDS`, `infoAnnouncements`), som `fetchTimetable` gör sedan 2026-11-25g, och resten av resan frågas utan dem. Driftstiden blir då den annonserade tiden.
+- **Möten** (`crossingOf`): ett motgående tåg (tiden minskar längs vår linje) möter oss vid plats *i* om båda är där samtidigt enligt tidtabell: vi lämnar inte platsen innan de kommit och de har inte lämnat den innan vi kommer. Är de enligt tidtabell på samma sträcka samtidigt minst 1 min möts de mellan stationerna, och då är sträckan **dubbelspår**. Sådana sträckor sparas (`railtimer_info_v1.double`) och gäller även nästa resa. Övriga sträckor räknas som enkelspår.
+- **Det mötande tågets ankomst** (`theirArrival`): faktisk tid, annars Trafikverkets beräknade tid (`EstimatedTimeAtLocation`, eller planerad försening), annars senast rapporterade försening framräknad (`latestDelay`), annars tidtabellen – aldrig före nu om tåget inte kommit.
+- **Vi väntar** på enkelspår till det mötande tåget kommit in + 1 min (`meetMarginMs`). Inget beroende om mötet är på dubbelspår, om det mötande tåget är inställt, eller om det redan passerat mötesplatsen mot oss (*mötet flyttat närmare oss*). Möten vi passerat visas inte.
+- **Prognos** (`predict`): från senaste plats vi har en tid för (appens egna tider före Trafikverkets) framåt: planerad gångtid × faktor, minst 30 s uppehåll vid annonserade stopp, inte före annonserad avgång, och mötena. Platser vi inte nått ligger aldrig före nu.
+- **Egna gångtider** (`historyMedians`, `recoveryRatios`): median för verklig gångtid mellan stationsparen ur telefonens körningar (minst 3). Faktorn är median/planerad, högst 1 och minst 0,85, så de visar hur mycket vi brukar ta igen men gör oss aldrig senare. *Tar igen ca N min* jämför med prognosen utan dem.
+- **Anslutningar i slutstationen** (`outgoing`): annonserade avgångar minst bytestiden och högst 40 min efter vår annonserade ankomst. Tåg som går längs vår linje (har tider på andra platser på linjen, eller destination där) räknas inte. Deras avgång: faktisk, beräknad (aldrig före nu) eller tidtabellen. Status: *ok* (byte ≥ bytestid + 2 min), *knappt*, *missas*, *avgått* (gått innan vi är framme) eller *inställt*.
+- **Tåg som ansluter till oss i startstationen** (`incoming`), bara före avgång: annonserade ankomster minst bytestiden och högst 30 min före vår avgång, från annat håll. *hinner*, *knappt* eller *hinner inte*.
+- **Avvikelser för vårt tåg** längre fram (`Deviation`, t.ex. Spårändrat, och inställda platser) och spår i slutstationen.
+- **Störningar** (`OperativeEvent` 1.0, namespace `ols.open`, `EventState=1`, var 10:e minut, egen fråga – samma som kontrollsidan sedan 2026-11-25j, eftersom TrainMessage inte finns längre): de som har en signatur kvar på linjen på någon nivå (`signaturesIn`) och pågår (`messagesFor`). Rubrik och text från det senast ändrade `TrafficImpact.PublicMessage`, annars `EventType.Description` (`parseMessage`).
+- **Nivåer**: 2 (påverkar: väntan ≥ 5 min, anslutning missas/avgått, försening ≥ 6 min), 1 (håll koll: väntan 1–4 min, knapp anslutning, inställt, avvikelse, störning), 0.
+
+### I appen
+- **Flikarna Stationer och Info** överst i stationslistan (`setInfoTab`); flikarna och kolumnrubrikerna står kvar när listan rullas (`.list-top`). Info visar en siffra (gul, röd vid nivå 2) med antal saker att hålla koll på.
+- **Raden i panelen** (`#npInfo`, `infoHeadline`), högst två rader: *Herrljunga C 12:26 +3 · möte Vara · 1 anslutning missas*. Gul eller röd efter nivå. Tryck öppnar Info.
+- **Fliken** (`infoPaneHtml`): prognos till slutstationen (plan, Trafikverkets beräknade tid, spår, tar igen, uppdaterad), *Längs vägen* (möten med det mötande tågets försening och källa, enkel- eller dubbelspår, vår väntan och avgång; avvikelser; störningar) i ordning längs linjen, *Ansluter till oss* före avgång, *Anslutningar* med **bytestid − / +** (per slutstation, 1–15 min, förval 4, `railtimer_info_v1.transfer`), och en rad om vad prognosen bygger på.
+- **Hämtning** (`refreshInfo`): vid start och återupptagen resa, varje minut medan appen syns, när appen blir synlig igen och vid `online`. Först vårt tåg (±12 h), sedan alla tåg på platserna kvar från 1 h bakåt till 45 min efter vår planerade ankomst, i en fråga. Tidsgräns 15 s. Namn på driftplatser och destinationer som saknas i stationslistan hämtas en gång (TrainStation) och sparas (`railtimer_sig_names_v1`). Går hämtningen inte visas senaste data med *uppdaterad … (gammal)* och felet; utan data *Ingen kontakt med Trafikverket*.
+- **Omräkning** utan nätet var 5:e sekund (`updateInfo` i panelens timer), så att våra egna tider kommer med direkt. Fliken ritas bara om när innehållet ändrats.
+- **Meddelanden** (`notifyInfo`): när något blir värre (möte med väntan, anslutning knapp eller missas, avvikelse, störning) vibrerar telefonen, ljud om ljudet är på, och en toast visar det viktigaste i 8 s. Samma sak meddelas en gång per nivå.
+- **Körningen** sparar mötena (`info.meetings`: plats, tåg, planerad tid, deras försening och källa, vår beräknade väntan, enkelspår, inställt, flyttat) – senaste läget innan vi åkte från mötesstationen. Analysverktyget kan senare visa vad möten kostar per station. `normalizeLogEntry` bevarar `info`. Se `docs/railtimer-data-README.md`.
+- Utan tågnummer säger fliken att infon bygger på tågnumret. I testläge hämtar appen inget själv; testerna anropar `refreshInfo`.
+- Service workern sparar `railtimer-info.js` för offline.
+
+### Provat mot riktiga svar
+- Kontrollsidans svar för 23349 2026-11-25 (`railtimer-data/api-koll/…_23349.json`, 57 annonseringar) genom `groupTrains`, `nearestRun`, `buildLine` och `compute`: linjen Lidköping–Herrljunga C blir Lkp, Fc, Lve, Jps, Stlv, Håp, Vaa, Ved, Hrc med tågorderns tider (Vara 11:53/11:54, annonserad avgång 11:53), destinationen `Hrc`, produkten Västtågen och spår 7. Tåget hade redan gått, så prognosen blev Trafikverkets faktiska ankomst 12:08.
+- Trafikverkets beräknade tid fanns bara på 1 av 57 rader, och faktiska tider bara vid vissa stationer (se 2026-11-25j). Därför räknas ett mötande tågs ankomst ofta fram från senast rapporterade försening.
+
+### Inte provat
+- Möten och anslutningar mot riktiga svar med flera tåg: utvecklingsmiljön når inte Trafikverkets API, och kontrollsidan hämtar bara förarens tåg.
+- `OperativeEvent` har inget sparat svar än; tolkningen följer kontrollsidan. Går frågan inte visas fliken utan störningar.
+- Tågklareraren kan flytta möten. Prognosen räknar med mötet enligt tidtabell tills det mötande tåget passerat mötesplatsen.
+
+### Tester
+- `node --test "tests/*.test.js"` (149), nya i `tests/railtimer-info.test.js` (21): linjen, körningen, möte, väntan med sent tåg, Trafikverkets beräknade tid, dubbelspår (även sparat), inställt och flyttat möte, passerat möte, prognos aldrig före nu, egna gångtider, anslutningar (ok, knappt, missas, avgått, tillbaka längs linjen, bytestid), tåg som ansluter till oss, avvikelser, störningar (OperativeEvent), frågorna (även utan de oprovade fälten) och annonserad tid när tågorderns saknas.
+- `node tests/run-browser-tests.mjs info` (6): sent mötande tåg i panelen och fliken med vibration, toast, anslutningar och bytestid; möte i tid; ingen kontakt; Trafikverket godtar inte tågorderns tid; mötena i körningen; utan tågnummer. Simulerat Trafikverket: `fakeTrafikverketInfo` i `tests/replay.html`. Alla webbläsartester: 93.
+- Bilder: `--shot=info` (fliken) och `--shot=resa-info` (stationerna med raden i panelen).
