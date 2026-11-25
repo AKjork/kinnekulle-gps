@@ -1572,3 +1572,53 @@ André 2026-11-25: räknas den beräknade ankomsttiden på var man är, avstånd
 - `node tests/run-browser-tests.mjs` (123), nytt: *info: flyttat möte – 3347 har åkt från Råbäck mot oss och vi väntar i Blomberg; …* (Info, panelen, meddelandet, loggen, omladdning, körningen, utan mötesplats). Testet *tidtabell: hela vägen …* godtar nu en eller två bokstäver efter datumet.
 - Bild: `--shot=info-flyttat`.
 
+
+## Uppdatering (2026-11-25zc): kort meny, Inställningar och bara det nödvändiga
+
+André 2026-11-25:
+- "Menyn har blivit lång, behövs allt? Modernisera?"
+- "Det är väldigt viktigt att information är lättillgänglig. Att man bara ser det som nödvändigt."
+- Lokföraren som mäter vill ändå se när något dyker upp under Info och kunna byta dit enkelt. Tågvärden bryr sig inte om mätningen men vill se hur resan går och anslutningarna. "Kompakt, lättöverskådligt och relevant."
+- Under en resa från Herrljunga: med Buss visades bara bussar i Lidköping och Mariestad, inget i Herrljunga. "En buss avgår från Lidköping om 6 minuter berör inte mig, det är nästan en timme till Lidköping." Anslutningarna ska gälla där man är, räknat från när man är där.
+
+Appversion `2026-11-25zc`. Logiken för ankomst och avgång är oförändrad.
+
+### ⋮-menyn
+- Förut 18 rader. Nu: *Uppdatera app* (bara när en ny version finns), *Version …*, snabbvalen **Uppläsning · Ljud · Stor text**, **Statistik**, **Analysverktyg**, **Inställningar** och *Installera app* (bara när det går). Menyn ryms på en liten skärm utan att rullas.
+- Snabbvalen (`.menu-quick`, `data-mirror`) slår av och på samma inställning som reglaget under Inställningar (`quickToggles`: `toggleSpeech`, `toggleSound`, `toggleLargeText`). Menyn står kvar efter ett snabbval, så att läget syns. `setMenuToggle` uppdaterar båda.
+- `btnMoreMenu` har `aria-expanded`.
+
+### ⋮ → Inställningar (`#prefs`, `showPrefs`, `renderPrefs`)
+- **Under resan:** Läs upp info, Ljud vid ankomst och avgång, Starta när tåget rullar, Håll skärmen vaken jämt (hålls vaken under resan ändå) och Stor text, som strömbrytare (`.row-btn .toggle-state`; texten På/Av finns kvar för skärmläsare).
+- **Uppladdning och bussar:** Uppladdning till GitHub (*Inställd för …* eller *Inte inställd*) och Västtrafik (bussar) (*Fungerar utan inställningar* eller *Egen nyckel*).
+- **Mätningarna:** antal körningar på telefonen (`#logCountTop`, förut i rubriken), Exportera till Excel (CSV), Exportera JSON, Spara till fil och Synka loggfil (bara på dator, som förut) och Trafikverket-data.
+- **Töm alla körningar på telefonen** säger nu hur många som inte finns i GitHub och försvinner helt (`uploadedRunIds`).
+- Uppladdning och Västtrafik som öppnats härifrån går tillbaka hit med Stäng (`overlayBack`). Öppnade från Info går de tillbaka till resan som förut. *Klar* går tillbaka till resan eller startformuläret.
+- Texter som pekade i menyn säger nu *⋮ → Inställningar → …* (startformuläret, rapporten, `railtimer-vt.js`, `api-koll.html`, `vasttrafik-koll.html`, `docs/vasttrafik-worker.js`).
+
+### Startformuläret
+- Rubriken *Ny resa* (förut *1. Ställ in resan*). Etiketterna i meningsform i hela appen, inte versaler.
+- Tipsen under Tågnummer och Dagens tur är kortare och visas bara när fältet är tomt (`renderSetupHints`, anropas från `renderAutoStartStatus`). I Bara info visas inte tipset om start och slut.
+- Anteckningen är ihopfälld: *+ Anteckning till rapporten* (`details#notesGroup`).
+- Sidfoten och antalet loggar i rubriken är borttagna.
+
+### Info under resan
+- **Utropet** är ihopfällbart (`details.utrop-box`). Öppet från början i Bara info (tågvärden), ihopfällt när föraren mäter, med *färdig text – tryck för att visa*. Valet gäller resten av resan (`infoState.utropOpen`). Språkknapparna fäller inte ihop det.
+- **Så räknas det:** förklaringen av reglerna längst ner är ihopfälld (`details.info-foot`) och står kvar öppen när fliken ritas om (`infoFootOpen`). Ett fel vid hämtningen syns alltid.
+- **Anslutningar längs vägen bara vid stationer vi når inom 30 min** (`midHorizonMin` i `railtimer-info.js`). Rubriken säger *stationer inom 30 min*. Västtrafiks tavlor hämtas bara för dem (`VT_AHEAD_MS` 30 min, förut 60).
+- Varje station längs vägen får raden **Vara · vi är där ca 11:20**: bytena räknas från när vi är framme, inte från nu. Det framgick inte förut.
+- **Bussar, tomma lägen:** med Buss eller Båda visas *Ansluter till oss i X* alltid före avgång. Står det inga bussar säger texten varför:
+  - *Inga bussar kommer till X 4–30 min före vår avgång.*
+  - *Västtrafik har ingen hållplats inom 350 m från X.* (`noStops`, `busEmptyText`).
+  - *Hämtar bussar från Västtrafik…*
+- Inga hållplatser nära en station frågas igen efter ett dygn, inte 30 dagar som förut.
+- *Varningar: bara valda | alla* är en lugnare knapp (en inställning, inte en varning).
+- **Bara info:** knappen heter *Avsluta resan* (inget sparas), i Mät tidtabell *Avsluta & spara*.
+
+### Inte provat
+- Herrljunga mot riktiga Västtrafik: utvecklingsmiljön når inte ext-api.vasttrafik.se. Står det *Västtrafik har ingen hållplats inom 350 m från Herrljunga C* stämmer stationens läge inte med hållplatsen. Står det *Inga bussar kommer till Herrljunga C …* fanns inga bussar från annat håll i fönstret. Provsidan (⋮ → Inställningar → Västtrafik → Provsidan) visar hållplatserna vid resans stationer.
+
+### Tester
+- `node --test "tests/*.test.js"`: *anslutningar längs vägen* provar även 30 min-gränsen.
+- `node tests/run-browser-tests.mjs`, nya: *meny: kort meny med snabbval, och allt som ställs in en gång under Inställningar* och *startformulär: tipsen visas bara när fältet är tomt, och anteckningen är ihopfälld*. Ändrade: *uppdatering: …* (den korta menyn behöver inte rullas), *info: … färdigt utrop* (ihopfällt när föraren mäter), *buss: Buss visar bussarna …* (ingen hållplats) och *bara info: GPS:en följer tåget …* (Avsluta resan).
+- Bilder: `--shot=meny`, `--shot=appinstallningar` och `--shot=info-tagvard` (Info i Bara info, utropet öppet).

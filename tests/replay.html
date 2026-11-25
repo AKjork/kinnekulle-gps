@@ -2210,17 +2210,17 @@ test('uppdatering: ny version laddas direkt vid start utan resa, men under resan
   w.__railtimer.setVersionForTest(version(w.__railtimer.appVersion));
   assertEqual(await w.__railtimer.checkForNewVersion(true), null, 'samma version: inget händer');
   assertEqual(reloads, 1, 'ingen omladdning');
-  // Versionen och Uppdatera app överst i menyn; menyn ryms på skärmen och rullas för sig
+  // Versionen och Uppdatera app överst i menyn; den korta menyn ryms på en liten skärm utan att rullas
   assertEqual(w.document.getElementById('menuVersion').textContent, w.__railtimer.appVersion, 'versionen i menyn');
   const menuBtns = Array.from(w.document.querySelectorAll('#moreMenuDropdown > button'));
   assertEqual(menuBtns.slice(0, 2).map(b => b.id).join(), 'btnUpdate,btnVersion', 'överst');
   const menu = w.document.getElementById('moreMenuDropdown');
-  w.frameElement.style.height = '560px'; // en mindre telefon: menyn är längre än skärmen
+  w.frameElement.style.height = '560px'; // en mindre telefon
   await new Promise(res => setTimeout(res, 50));
   w.document.getElementById('btnMoreMenu').click();
   const box = menu.getBoundingClientRect();
   assert(box.bottom <= w.innerHeight, `menyn ryms på skärmen: ${Math.round(box.bottom)} av ${w.innerHeight}`);
-  assert(menu.scrollHeight > menu.clientHeight && w.getComputedStyle(menu).overflowY === 'auto', `menyn rullas: ${menu.scrollHeight} > ${menu.clientHeight}`);
+  assert(menu.scrollHeight <= menu.clientHeight + 1 && w.getComputedStyle(menu).overflowY === 'auto', `menyn behöver inte rullas: ${menu.scrollHeight} / ${menu.clientHeight}`);
   const ver = w.document.getElementById('btnVersion').getBoundingClientRect();
   const upd = w.document.getElementById('btnUpdate').getBoundingClientRect();
   assert(ver.bottom <= box.bottom && upd.bottom <= box.bottom && upd.width > box.width * 0.85, `versionen och Uppdatera app syns utan att rulla, i hela bredden: ${Math.round(ver.bottom)} ${Math.round(upd.bottom)} ${Math.round(upd.width)}/${Math.round(box.width)}`);
@@ -2247,6 +2247,84 @@ test('uppdatering: ny version laddas direkt vid start utan resa, men under resan
   assertEqual(reloads, 0, 'ingen omladdning under resan');
   assert(/Ny version 2099-01-01b – ⋮ → Uppdatera app \(resan fortsätter\)/.test(w.document.getElementById('journeyMsg').textContent), w.document.getElementById('journeyMsg').textContent);
   assert(w.document.getElementById('btnUpdate').style.display !== 'none', 'Uppdatera app i menyn');
+});
+
+test('meny: kort meny med snabbval, och allt som ställs in en gång under Inställningar', async () => {
+  const r = await midJourneyWithInfo();
+  const w = r.w, d = w.document;
+  // Menyn: version, snabbval och fyra val (Installera app bara när det går)
+  const visible = Array.from(d.querySelectorAll('#moreMenuDropdown > button')).filter(b => b.style.display !== 'none' && !b.hidden);
+  assertEqual(visible.map(b => b.id), ['btnVersion', 'btnStatistics', 'btnAnalysis', 'btnPrefs'], 'menyns val');
+  for (const id of ['btnUploadSettings', 'btnVtSettings', 'btnExportCSV', 'btnExport', 'btnTrvCheck', 'btnClear', 'btnWakeLock', 'btnAutoStart'])
+    assert(d.getElementById(id).closest('#prefs'), id + ' ligger under Inställningar');
+  assert(!d.getElementById('logCountTop').closest('header'), 'antalet körningar står inte i rubriken');
+  // Snabbvalet Uppläsning: samma inställning som reglaget, menyn står kvar
+  const quick = d.querySelector('.menu-quick [data-mirror="btnSpeech"]');
+  d.getElementById('btnMoreMenu').click();
+  assertEqual(d.getElementById('btnMoreMenu').getAttribute('aria-expanded'), 'true', 'aria-expanded');
+  assertEqual(quick.getAttribute('aria-pressed'), 'true', 'uppläsning på från början');
+  quick.click();
+  assertEqual(quick.getAttribute('aria-pressed'), 'false', 'snabbvalet av');
+  assertEqual(d.getElementById('btnSpeech').getAttribute('aria-pressed'), 'false', 'reglaget följer med');
+  assertEqual(w.localStorage.getItem('railtimer_speech_v1'), 'false', 'sparat');
+  assert(d.getElementById('moreMenuDropdown').classList.contains('open'), 'menyn står kvar efter snabbvalet');
+  d.getElementById('btnSpeech').click();
+  assertEqual(quick.getAttribute('aria-pressed'), 'true', 'snabbvalet följer reglaget');
+  // Inställningar under resan: Uppladdning går tillbaka till Inställningar, Klar tillbaka till resan
+  d.getElementById('btnPrefs').click();
+  assert(!d.getElementById('moreMenuDropdown').classList.contains('open'), 'menyn stängs');
+  assert(d.getElementById('prefs').style.display !== 'none' && d.getElementById('journey').style.display === 'none', 'Inställningar visas');
+  assert(/körning(ar)? på telefonen/.test(d.getElementById('logCountTop').textContent), d.getElementById('logCountTop').textContent);
+  d.getElementById('btnUploadSettings').click();
+  assert(d.getElementById('settings').style.display !== 'none', 'Uppladdning öppnas');
+  d.getElementById('btnCloseSettings').click();
+  assert(d.getElementById('prefs').style.display !== 'none', 'Stäng går tillbaka till Inställningar');
+  d.getElementById('btnVtSettings').click();
+  assert(d.getElementById('vtSettings').style.display !== 'none', 'Västtrafik öppnas');
+  d.getElementById('btnCloseVt').click();
+  assert(d.getElementById('prefs').style.display !== 'none', 'och tillbaka till Inställningar');
+  d.getElementById('btnClosePrefs').click();
+  assert(d.getElementById('journey').style.display !== 'none', 'Klar går tillbaka till resan');
+  // Västtrafik öppnat direkt från Info: Stäng går till resan, inte till Inställningar
+  r.rt.showVtSettings();
+  d.getElementById('btnCloseVt').click();
+  assert(d.getElementById('journey').style.display !== 'none', 'från Info tillbaka till resan');
+  // Info: förklaringen är ihopfälld och står kvar öppen när fliken ritas om
+  r.rt.setInfoTab('info');
+  const foot = () => d.querySelector('#infoPane .info-foot');
+  assert(foot() && foot().tagName === 'DETAILS' && !foot().open, 'Så räknas det är ihopfälld');
+  foot().open = true;
+  foot().dispatchEvent(new w.Event('toggle'));
+  r.trv = fakeTrafikverketInfo(r.rt.state.route, { meetLateMin: 9 });
+  w.fetch = r.trv.fetch;
+  await r.rt.refreshInfo();
+  assert(foot().open, 'öppen efter omritning');
+});
+
+test('startformulär: tipsen visas bara när fältet är tomt, och anteckningen är ihopfälld', async () => {
+  const w = await loadApp();
+  await clearAppStorage(w);
+  const w2 = await loadApp();
+  const d = w2.document;
+  const hidden = id => d.getElementById(id).hidden;
+  assert(!hidden('trainHint') && !hidden('tourHint'), 'tomma fält: tipsen syns');
+  const tn = d.getElementById('trainNumber');
+  tn.value = '3344';
+  tn.dispatchEvent(new w2.Event('input'));
+  assert(hidden('trainHint'), 'med tågnummer: tipset döljs');
+  const tour = d.getElementById('tourInput');
+  tour.value = '3344 3346';
+  tour.dispatchEvent(new w2.Event('input'));
+  assert(hidden('tourHint'), 'med tur: tipset döljs');
+  tn.value = '';
+  tn.dispatchEvent(new w2.Event('input'));
+  d.getElementById('purposeInfo').click();
+  assert(hidden('trainHint'), 'Bara info: tipset om start och slut gäller inte');
+  d.getElementById('purposeMeasure').click();
+  assert(!hidden('trainHint'), 'Mät tidtabell igen');
+  const notes = d.getElementById('notesGroup');
+  assert(notes.tagName === 'DETAILS' && !notes.open, 'anteckningen är ihopfälld');
+  assertEqual(d.querySelector('#setup h2').textContent, 'Ny resa', 'rubriken');
 });
 
 test('synk: körningarna i GitHub hämtas till telefonen – statistik, fordonstyp och sparat utan nät', async () => {
@@ -2381,8 +2459,16 @@ test('info: mötande tågets position, anslutningar längs vägen och färdigt u
   const sv = r0.w.document.getElementById('utropText').textContent;
   assert(sv.startsWith('Vi är cirka') && sv.includes('på grund av möte med ett försenat tåg') && sv.includes('Beräknad ankomst till Hällekis'), sv);
   assert(sv.includes('hinns tyvärr inte'), sv);
+  // Föraren mäter: utropet är ihopfällt tills det öppnas, och står sedan kvar öppet
+  const box = () => r0.w.document.querySelector('#infoPane .utrop-box');
+  assert(box() && !box().open && box().textContent.includes('tryck för att visa'), 'ihopfällt när föraren mäter');
+  box().querySelector('summary').click();
+  await realSleep(30);
+  assert(box().open, 'öppnas med ett tryck');
   r0.w.document.querySelector('[data-info="utrop-en"]').click();
+  await realSleep(30);
   assert(r0.w.document.getElementById('utropText').textContent.startsWith('We are approximately'), 'engelska');
+  assert(box().open, 'språkknappen fäller inte ihop utropet');
   r0.rt.stopJourney(false, 'test');
   await realSleep(100);
   const logs = r0.rt.loadLogs();
@@ -2569,6 +2655,12 @@ test('buss: Buss visar bussarna i slutstationen och döljer tågen med antal; va
   await r.rt.refreshInfo();
   assertEqual(r.rt.infoModel().connections.map(c => c.kind), ['tåg', 'tåg'], 'bara tåg');
   assertEqual(r.rt.vtState().buses.size, 0, 'bussarna tas bort');
+  // Ingen hållplats nära slutstationen: Info säger det i stället för bara "inga bussar"
+  r.w.localStorage.setItem('railtimer_vt_stops_v1', JSON.stringify({ Hlk: { at: r.w.Date.now(), areas: [] } }));
+  d.querySelector('[data-info="conn-buss"]').click();
+  await realSleep(80);
+  await r.rt.refreshBuses(true);
+  assert(infoPaneText(r).includes('Västtrafik har ingen hållplats inom 350 m från Hällekis.'), infoPaneText(r));
 });
 
 test('buss: Västtrafik stoppar token i webbläsaren – Info säger det, och med egen server fungerar det', async () => {
@@ -2770,6 +2862,7 @@ test('bara info: GPS:en följer tåget hela vägen, Halt? syns inte, och vid slu
   const box = r2.w.document.getElementById('npHalt');
   assert(!box.hidden, 'appen skulle visa Halt? vid stationen');
   assertEqual(r2.w.getComputedStyle(box).display, 'none', 'men den döljs');
+  assertEqual(r2.w.document.getElementById('btnFinish').textContent, 'Avsluta resan', 'inget sparas: knappen säger bara Avsluta');
 });
 
 // ── Platsminnen och halt (2026-11-25t) ──
@@ -3308,6 +3401,16 @@ window.prepareShot = async function (name) {
     w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'x', branch: 'main' }));
     w.localStorage.setItem('railtimer_upload_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', uploadedIds: ['a', 'b', 'c'], backlogDone: true, uploadedTrackCount: 2, lastSuccessAt: '2026-10-15T06:10:00.000Z' }));
     w.__railtimer.showUploadSettings();
+  } else if (name === 'meny' || name === 'appinstallningar') {
+    // ⋮-menyn under resan, och ⋮ → Inställningar
+    const r = await midJourneyWithInfo();
+    r.w.document.getElementById('journeyMsg').style.display = 'none';
+    if (name === 'meny') r.w.document.getElementById('btnMoreMenu').click();
+    else {
+      document.getElementById('app').style.height = '1000px';
+      r.w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'x', branch: 'main' }));
+      r.w.document.getElementById('btnPrefs').click();
+    }
   } else if (name === 'avbrott') {
     const fixes = buildJourney();
     const call = twoStationCall(fixes);
@@ -3361,7 +3464,7 @@ window.prepareShot = async function (name) {
       },
       afterStart: async rt => { rt.saveTour(['3344', '3346']); await rt.fetchNextTour(); }
     });
-  } else if (name === 'info-utrop') {
+  } else if (name === 'info-utrop' || name === 'info-tagvard') {
     // Infofliken med utrop, mötande tågets position och anslutningar längs vägen
     const frame = document.getElementById('app');
     frame.style.height = '1300px';
@@ -3374,6 +3477,7 @@ window.prepareShot = async function (name) {
       extraRows: (row, dest) => [row('3071', 'Bmb', 'Avgang', B + 6 * 60000, dest('Mst'))]
     });
     r0.w.fetch = trv.fetch;
+    if (name === 'info-tagvard') r0.rt.state.purpose = 'info'; // Bara info: utropet är öppet från början
     await r0.rt.refreshInfo();
     await realSleep(100);
     r0.w.document.getElementById('journeyMsg').style.display = 'none';

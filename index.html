@@ -98,7 +98,7 @@
   .gps-warm.ready{color:var(--good)}
   .gps-warm.wait{color:var(--sec)}
   .btn-start{width:100%;min-height:3rem;font-size:1rem;margin-top:.5rem}
-  label{display:block;margin:.2rem 0;font-weight:500;color:var(--ink-dim);font-size:.8rem;text-transform:uppercase;letter-spacing:.03em}
+  label{display:block;margin:.2rem 0;font-weight:500;color:var(--ink-dim);font-size:.85rem}
   input,select,button,textarea{
     font-size:.95rem;
     padding:.5rem .75rem;
@@ -210,11 +210,23 @@
   .ir-s{text-align:right;font-size:.82rem;font-weight:600;white-space:nowrap;line-height:1.25;font-variant-numeric:tabular-nums}
   .ir-s small{display:block;font-weight:400;color:var(--mut);font-size:.7rem}
   .info-empty{padding:.4rem .7rem .5rem;font-size:.8rem;color:var(--mut)}
+  .info-stop{padding:.35rem .7rem .2rem;font-size:.78rem;font-weight:600;color:var(--ink-dim);border-top:1px solid var(--b);font-variant-numeric:tabular-nums}
   .info-state{padding:.6rem .7rem;font-size:.85rem;color:var(--ink-dim)}
-  .info-foot{font-size:.7rem;color:var(--mut);padding:.5rem .7rem;margin:0;border-top:1px solid var(--b)}
+  .info-foot{font-size:.72rem;color:var(--mut);padding:.5rem .7rem;margin:0;border-top:1px solid var(--b)}
+  details.info-foot{border:0;border-top:1px solid var(--b);border-radius:0;background:none;margin:0}
+  .info-foot summary{cursor:pointer;font-size:.78rem;font-weight:500;color:var(--ink-dim);padding:.15rem 0}
+  .info-foot summary::before{content:none}
+  .info-foot[open] summary{margin-bottom:.3rem}
   .place-note{width:100%;margin-top:.5rem;font-size:.9rem}
   .utrop{margin:0;padding:.5rem .7rem;font-size:.9rem;line-height:1.4;color:var(--ink);border-left:3px solid var(--pri)}
   .utrop-ctl button{padding:.15rem .5rem;font-size:.75rem;margin-left:.3rem}
+  details.utrop-box{border:0;border-radius:0;background:none;padding:0;margin:0}
+  .utrop-box > summary{list-style:none;cursor:pointer}
+  .utrop-box > summary::-webkit-details-marker{display:none}
+  .utrop-box > summary::before{content:none}
+  .utrop-box > summary > span:first-child::after{content:' ▸';color:var(--mut)}
+  .utrop-box[open] > summary > span:first-child::after{content:' ▾'}
+  .utrop-closed{text-transform:none;letter-spacing:0;font-weight:500;color:var(--ink-dim)}
   .utrop-ctl button[aria-pressed="true"]{border-color:var(--pri);color:var(--pri)}
   /* Anslutningar: Tåg | Buss | Båda, och om varningar och utrop följer valet */
   .conn-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .5rem;padding:.5rem .7rem .35rem;border-top:1px solid var(--b)}
@@ -225,7 +237,7 @@
   .seg button[aria-pressed="true"]{background:rgba(34,197,94,.16);color:var(--pri);font-weight:600}
   .seg button:disabled{opacity:.4}
   .cc-alerts{padding:.25rem .6rem;min-height:2.1rem;font-size:.75rem;margin:0}
-  .cc-alerts[aria-pressed="true"]{border-color:var(--pri);color:var(--pri)}
+  .cc-alerts{color:var(--ink-dim);background:transparent}
   .info-hint{margin:0;padding:.05rem .7rem .4rem;font-size:.75rem;color:var(--mut)}
   .info-hint.err{color:var(--warn)}
   .info-hint a, .info-hint button.linkish{color:var(--pri)}
@@ -321,6 +333,48 @@
   .header-menu-dropdown .menu-version{color:var(--mut);font-size:.8rem;font-variant-numeric:tabular-nums}
   .header-menu-dropdown .menu-update{color:var(--pri);font-weight:700}
   .menu-version small{display:block;font-size:.7rem;color:var(--mut);opacity:.8}
+  .header-menu-dropdown{min-width:270px;border-radius:10px}
+  .header-menu-dropdown > button{padding:.75rem .9rem;font-size:.95rem}
+  .header-menu-dropdown > .menu-version{padding:.55rem .9rem;font-size:.8rem}
+  /* Snabbval i menyn: samma inställningar som reglagen under Inställningar (data-mirror) */
+  .menu-quick{display:flex;gap:.35rem;padding:.55rem .6rem;border-top:1px solid var(--b);border-bottom:1px solid var(--b)}
+  .header-menu-dropdown .menu-quick .quick{flex:1 1 0;width:auto;display:flex;align-items:center;justify-content:center;gap:.3rem;min-height:2.5rem;padding:.35rem .3rem;border:1px solid var(--b);border-radius:8px;text-align:center;font-size:.8rem;font-weight:600;white-space:nowrap;color:var(--ink-dim);background:transparent}
+  .header-menu-dropdown .menu-quick .quick[aria-pressed="true"]{border-color:var(--pri);color:var(--pri);background:var(--pri-glow)}
+  .header-menu-dropdown .menu-quick .quick::before{content:'';width:.45rem;height:.45rem;border-radius:50%;background:var(--b-light)}
+  .header-menu-dropdown .menu-quick .quick[aria-pressed="true"]::before{background:var(--pri)}
+
+  /* ⋮ → Inställningar: grupperade rader med reglage */
+  .page-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin:1.1rem 0 .4rem}
+  .page-head h2{margin:0}
+  .page-head button{min-height:2.5rem;padding:.4rem 1rem;font-size:.95rem}
+  .group-title{margin:1.1rem .2rem .4rem;font-size:.85rem;font-weight:600;color:var(--ink-dim)}
+  .group{border:1px solid var(--b);border-radius:12px;background:var(--card-bg);overflow:hidden}
+  .group + .hint{margin:.5rem .2rem 0}
+  .hint + .group{margin-top:1.1rem}
+  .row-btn{display:flex;align-items:center;justify-content:space-between;gap:1rem;width:100%;min-height:3.1rem;padding:.6rem .9rem;border:0;border-radius:0;background:transparent;text-align:left;font-size:.95rem;font-weight:500;color:var(--ink)}
+  .row-btn + .row-btn, .row-note + .row-btn{border-top:1px solid var(--b)}
+  .row-btn:active:not(:disabled){transform:none;background:var(--b)}
+  .row-btn.danger{color:var(--err);justify-content:center}
+  .rb-txt{min-width:0}
+  .rb-txt small{display:block;margin-top:.1rem;font-size:.75rem;font-weight:400;color:var(--mut)}
+  .row-btn.nav::after{content:'›';flex:none;font-size:1.4rem;line-height:1;color:var(--mut)}
+  .row-note{padding:.6rem .9rem;font-size:.85rem;color:var(--ink-dim);font-variant-numeric:tabular-nums}
+  /* Reglaget: texten På/Av finns kvar för skärmläsare men syns som en strömbrytare */
+  .row-btn .toggle-state{position:relative;flex:none;width:2.75rem;height:1.6rem;border-radius:999px;background:var(--b-light);font-size:0;color:transparent;transition:background .15s}
+  .row-btn .toggle-state::after{content:'';position:absolute;top:.2rem;left:.2rem;width:1.2rem;height:1.2rem;border-radius:50%;background:var(--ink-dim);transition:transform .15s,background .15s}
+  .row-btn[aria-pressed="true"] .toggle-state{background:var(--pri)}
+  .row-btn[aria-pressed="true"] .toggle-state::after{transform:translateX(1.15rem);background:#fff}
+  .row-btn:focus-visible, .menu-quick .quick:focus-visible, .header-menu-dropdown button:focus-visible{outline:2px solid var(--pri);outline-offset:-2px}
+  @media (prefers-reduced-motion: reduce){
+    .row-btn .toggle-state, .row-btn .toggle-state::after{transition:none}
+  }
+  /* Anteckningen i startformuläret är ihopfälld: den används sällan */
+  details.notes-group{border:0;border-radius:0;background:none;padding:0;margin:.5rem 0 .2rem}
+  .notes-group summary{list-style:none;display:inline-flex;align-items:center;gap:.4rem;min-height:2.2rem;font-size:.85rem;font-weight:500;color:var(--ink-dim)}
+  .notes-group summary::-webkit-details-marker{display:none}
+  .notes-group summary::before{content:'+';display:inline-grid;place-items:center;width:1.3rem;height:1.3rem;border:1px solid var(--b-light);border-radius:50%;font-size:.95rem;line-height:1;color:var(--pri)}
+  .notes-group[open] summary::before{content:'−'}
+  .notes-group[open] summary{margin-bottom:.3rem}
 
   .station-search-container{position:relative;flex:1}
   .station-search{width:100%}
@@ -391,8 +445,6 @@
   .scheduled{font-size:.8rem;color:var(--ink-dim);margin:.15rem 0 0}
 
   /* ── Resvyn: hela skärmen utan sidscroll, bara stationslistan scrollar ── */
-  body.journey-mode footer,
-  body.journey-mode #logCountTop{display:none}
   body.journey-mode{display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
   body.journey-mode header{flex:none}
   body.journey-mode main{flex:1 1 auto;min-height:0;width:100%;padding:.45rem .5rem calc(.45rem + env(safe-area-inset-bottom, 0px))}
@@ -532,7 +584,6 @@
   }
   summary{cursor:pointer;font-weight:500;font-size:.9rem;color:var(--ink)}
   summary::before{content:'⚙️ ';font-size:.8rem}
-  footer{margin-top:2rem;color:var(--mut);font-size:.75rem;text-align:center;padding:.75rem}
   code{
     font-family:ui-monospace,monospace;
     font-size:.8rem;
@@ -658,32 +709,20 @@
     <span id="offlineIndicator" class="badge warn" style="display:none" role="status" aria-live="polite">Offline</span>
     <span class="header-spacer"></span>
     <span id="gpsStatusBadge" class="badge">GPS</span>
-    <span id="logCountTop" class="badge" role="status" aria-live="polite">0 loggar</span>
     <div class="header-menu">
-      <button id="btnMoreMenu" class="ghost header-menu-btn" aria-label="Meny">⋮</button>
+      <button id="btnMoreMenu" class="ghost header-menu-btn" aria-label="Meny" aria-haspopup="true" aria-expanded="false">⋮</button>
+      <!-- Kort meny: det som används ofta. Det som ställs in en gång ligger under Inställningar (#prefs). -->
       <div id="moreMenuDropdown" class="header-menu-dropdown">
         <button id="btnUpdate" class="menu-update" style="display:none">Uppdatera app</button>
         <button id="btnVersion" class="menu-version" type="button">Version <span id="menuVersion">–</span><small>Tryck för att söka ny version</small></button>
-        <hr>
-        <div class="menu-section">Inställningar</div>
-        <button id="btnWakeLock" class="menu-toggle" aria-pressed="false">Håll skärmen vaken <span class="toggle-state">Av</span></button>
-        <button id="btnSound" class="menu-toggle" aria-pressed="false">Ljud vid ankomst/avgång <span class="toggle-state">Av</span></button>
-        <button id="btnSpeech" class="menu-toggle" aria-pressed="true">Läs upp info <span class="toggle-state">På</span></button>
-        <button id="btnAutoStart" class="menu-toggle" aria-pressed="true">Starta när tåget rullar <span class="toggle-state">På</span></button>
-        <button id="btnTextSize" class="menu-toggle" aria-pressed="false">Stor text <span class="toggle-state">Av</span></button>
-        <hr>
+        <div class="menu-quick" role="group" aria-label="Snabbval">
+          <button type="button" class="quick" data-mirror="btnSpeech" aria-pressed="true">Uppläsning</button>
+          <button type="button" class="quick" data-mirror="btnSound" aria-pressed="false">Ljud</button>
+          <button type="button" class="quick" data-mirror="btnTextSize" aria-pressed="false">Stor text</button>
+        </div>
         <button id="btnStatistics">Statistik</button>
         <button id="btnAnalysis">Analysverktyg</button>
-        <button id="btnUploadSettings">Uppladdning</button>
-        <button id="btnVtSettings">Västtrafik (bussar)</button>
-        <button id="btnTrvCheck">Trafikverket-data</button>
-        <button id="btnExportCSV">Exportera CSV (Excel)</button>
-        <button id="btnExport">Exportera JSON</button>
-        <button id="btnSaveFile">Spara till fil</button>
-        <button id="btnSync">Synka loggfil</button>
-        <hr>
-        <button id="btnClear" class="danger">Töm alla loggar</button>
-        <hr>
+        <button id="btnPrefs">Inställningar</button>
         <button id="btnInstall" style="display:none">Installera app</button>
       </div>
     </div>
@@ -693,7 +732,7 @@
 
 <main>
   <section id="setup">
-    <h2>1. Ställ in resan</h2>
+    <h2>Ny resa</h2>
     <div class="seg purpose-seg" role="group" aria-label="Vad resan är till för">
       <button type="button" id="purposeMeasure" aria-pressed="true">Mät tidtabell</button>
       <button type="button" id="purposeInfo" aria-pressed="false">Bara info</button>
@@ -747,12 +786,12 @@
         </select>
       </div>
     </div>
-    <div class="hint">Tågnumret används för att hämta tidtabellen och stationerna längs vägen. Utan tågnummer mäts bara start- och slutstation.</div>
+    <div class="hint" id="trainHint">Ger tidtabellen och stationerna längs vägen. Utan tågnummer mäts bara start och slut.</div>
     <div class="form-group tour-group">
       <label for="tourInput">Dagens tur <span class="label-note">valfritt</span></label>
       <input id="tourInput" type="text" inputmode="numeric" autocomplete="off" placeholder="t.ex. 23349 23334 23351">
       <button type="button" id="tourSuggest" class="chip" hidden></button>
-      <div class="hint">Tågen du kör i tur och ordning. När en resa är klar fylls nästa tåg i, och under resan visas vändtiden.</div>
+      <div class="hint" id="tourHint">Tågen i tur och ordning. Nästa tåg fylls i när en resa är klar.</div>
     </div>
     <div id="routeSuggestion" style="display:none;margin:.6rem 0;padding:.75rem;background:var(--pri-glow);border:1px solid var(--pri);border-radius:8px">
       <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.4rem">
@@ -778,10 +817,10 @@
       </div>
     </div>
     <div id="stationLoadStatus" class="loading-stations" style="display:none">Laddar stationer...</div>
-    <div class="form-group" id="notesGroup">
-      <label for="startNotes">Anteckningar (syns i rapporten)</label>
-      <textarea id="startNotes" rows="2" placeholder="Skriv här om du vill anteckna något om mätningen …"></textarea>
-    </div>
+    <details class="form-group notes-group" id="notesGroup">
+      <summary>Anteckning till rapporten</summary>
+      <textarea id="startNotes" rows="2" aria-label="Anteckning till rapporten" placeholder="Till exempel väglag eller avvikande fordon"></textarea>
+    </details>
     <span id="setupError" class="badge warn" style="display:none"></span>
     <button id="btnStart" class="primary btn-start">Starta GPS-resan</button>
     <div id="autoStartStatus" class="auto-start" role="status" aria-live="polite" hidden></div>
@@ -862,6 +901,40 @@
     <div id="statsContent"></div>
   </section>
 
+  <!-- ⋮ → Inställningar: reglagen, kontona, export och kontrollsidorna. Menyn har bara det som används ofta. -->
+  <section id="prefs" style="display:none">
+    <div class="page-head">
+      <h2>Inställningar</h2>
+      <button id="btnClosePrefs" class="ghost">Klar</button>
+    </div>
+    <h3 class="group-title">Under resan</h3>
+    <div class="group">
+      <button id="btnSpeech" class="menu-toggle row-btn" aria-pressed="true"><span class="rb-txt">Läs upp info<small>Möten, anslutningar och framme i slutstationen</small></span><span class="toggle-state">På</span></button>
+      <button id="btnSound" class="menu-toggle row-btn" aria-pressed="false"><span class="rb-txt">Ljud vid ankomst och avgång</span><span class="toggle-state">Av</span></button>
+      <button id="btnAutoStart" class="menu-toggle row-btn" aria-pressed="true"><span class="rb-txt">Starta när tåget rullar<small>När start och slut är ifyllda i startformuläret</small></span><span class="toggle-state">På</span></button>
+      <button id="btnWakeLock" class="menu-toggle row-btn" aria-pressed="false"><span class="rb-txt">Håll skärmen vaken jämt<small>Under resan hålls den vaken ändå</small></span><span class="toggle-state">Av</span></button>
+      <button id="btnTextSize" class="menu-toggle row-btn" aria-pressed="false"><span class="rb-txt">Stor text</span><span class="toggle-state">Av</span></button>
+    </div>
+    <h3 class="group-title">Uppladdning och bussar</h3>
+    <div class="group">
+      <button id="btnUploadSettings" class="row-btn nav"><span class="rb-txt">Uppladdning till GitHub<small id="prefsGhState">Inte inställd</small></span></button>
+      <button id="btnVtSettings" class="row-btn nav"><span class="rb-txt">Västtrafik (bussar)<small id="prefsVtState">Fungerar utan inställningar</small></span></button>
+    </div>
+    <h3 class="group-title">Mätningarna</h3>
+    <div class="group">
+      <div class="row-note" id="logCountTop" role="status" aria-live="polite">0 körningar på telefonen</div>
+      <button id="btnExportCSV" class="row-btn">Exportera till Excel (CSV)</button>
+      <button id="btnExport" class="row-btn">Exportera JSON</button>
+      <button id="btnSaveFile" class="row-btn">Spara till fil</button>
+      <button id="btnSync" class="row-btn">Synka loggfil</button>
+      <button id="btnTrvCheck" class="row-btn nav"><span class="rb-txt">Trafikverket-data<small>Vad Trafikverket svarar för ett tåg</small></span></button>
+    </div>
+    <p class="hint">Mätningarna sparas på telefonen och, om uppladdning är inställd, i ditt privata GitHub-repo.</p>
+    <div class="group">
+      <button id="btnClear" class="row-btn danger">Töm alla körningar på telefonen</button>
+    </div>
+  </section>
+
   <section id="settings" style="display:none">
     <h2>Uppladdning till GitHub</h2>
     <p class="hint">Varje resa laddas upp automatiskt till ditt privata repo när den är klar. Token sparas bara på den här enheten.</p>
@@ -925,10 +998,6 @@
 
 </main>
 
-<footer>
-  Mätningarna sparas på den här enheten och, om uppladdning är inställd, i ditt privata GitHub-repo.
-</footer>
-
 <script src="railtimer-avbrott.js"></script>
 <script src="railtimer-github.js"></script>
 <script src="railtimer-karta.js"></script>
@@ -939,7 +1008,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25zb'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25zc'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1051,7 +1120,8 @@
   let expandedCards = new Set(); // Track which cards are expanded
   let renderedRouteKey = ''; // Vilken rutt stationskorten senast byggdes för
   let wakeLockByJourney = false; // Skärmlåset slogs på av resan (inte manuellt)
-  let overlayReturnView = null; // Vyn som var öppen innan Statistik eller Uppladdning öppnades
+  let overlayReturnView = null; // Vyn som var öppen innan Statistik, Inställningar eller Uppladdning öppnades
+  let overlayBack = null;       // 'prefs' när Uppladdning eller Västtrafik öppnats från Inställningar
   let uploadPromise = null;     // pågående körning av uppladdningskön
   let afterJourneyPromise = null; // sparning av spåret och uppladdning efter senaste resan
   let trvFetchForTest = null;     // simulerat Trafikverket i testerna (utan det hämtas inga tider i testläge)
@@ -1270,6 +1340,8 @@
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     const label = btn.querySelector('.toggle-state');
     if(label) label.textContent = on ? 'På' : 'Av';
+    // Snabbvalen i ⋮-menyn (data-mirror) visar samma läge som reglaget under Inställningar
+    if(btn.id) document.querySelectorAll(`[data-mirror="${btn.id}"]`).forEach(q=>q.setAttribute('aria-pressed', on ? 'true' : 'false'));
   }
 
   function updateSoundButton(){
@@ -1688,6 +1760,11 @@
       if(state.route[idx]) setHalt(idx, 'slipOut', !state.route[idx].slipOut);
     });
     document.getElementById('infoPane').addEventListener('click', handleInfoClick);
+    document.getElementById('infoPane').addEventListener('toggle', ev => {
+      if(!ev.target.classList) return;
+      if(ev.target.classList.contains('info-foot')) infoFootOpen=ev.target.open;
+      if(ev.target.classList.contains('utrop-box') && infoState.utropOpen!==ev.target.open){ infoState.utropOpen=ev.target.open; renderInfo(); }
+    }, true);
     document.getElementById('infoPane').addEventListener('keydown', ev => {
       if((ev.key==='Enter' || ev.key===' ') && ev.target.matches && ev.target.matches('.conn-row')){ ev.preventDefault(); handleInfoClick(ev); }
     });
@@ -1711,6 +1788,17 @@
       toggleMenu('moreMenuDropdown');
     });
     document.addEventListener('click', closeAllMenus);
+    // Snabbvalen slår av och på samma sak som reglaget under Inställningar; menyn står kvar så att läget syns
+    const quickToggles={ btnSpeech:toggleSpeech, btnSound:toggleSound, btnTextSize:toggleLargeText };
+    document.querySelectorAll('#moreMenuDropdown [data-mirror]').forEach(q=>{
+      q.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const fn=quickToggles[q.dataset.mirror];
+        if(fn) fn();
+      });
+    });
+    document.getElementById('btnPrefs').addEventListener('click', () => { closeAllMenus(); showPrefs(); });
+    document.getElementById('btnClosePrefs').addEventListener('click', closeOverlay);
 
     // Sound and text size toggles
     document.getElementById('btnSound').addEventListener('click', toggleSound);
@@ -1723,7 +1811,7 @@
     }
     // Dagens tur och automatisk start
     const tourInput=document.getElementById('tourInput');
-    tourInput.addEventListener('input', () => { saveTour(parseTour(tourInput.value)); renderTourSuggest(); });
+    tourInput.addEventListener('input', () => { saveTour(parseTour(tourInput.value)); renderTourSuggest(); renderSetupHints(); });
     tourInput.addEventListener('change', () => { tourInput.value=tourTrains().join(' '); prefillFromTour(); });
     document.getElementById('tourSuggest').addEventListener('click', useTourSuggestion);
     for(const id of ['startStation','endStation','trainNumber']){
@@ -1755,14 +1843,18 @@
     });
     document.getElementById('btnUploadSettings').addEventListener('click', () => {
       closeAllMenus();
+      const fromPrefs=currentView==='prefs';
       showUploadSettings();
+      if(fromPrefs) overlayBack='prefs';
     });
     document.getElementById('purposeMeasure').addEventListener('click', () => setPurpose('measure'));
     document.getElementById('purposeInfo').addEventListener('click', () => setPurpose('info'));
     renderPurpose();
     document.getElementById('btnVtSettings').addEventListener('click', () => {
       closeAllMenus();
+      const fromPrefs=currentView==='prefs';
       showVtSettings();
+      if(fromPrefs) overlayBack='prefs';
     });
     document.getElementById('btnVtSave').addEventListener('click', saveAndTestVt);
     document.getElementById('btnVtRemove').addEventListener('click', removeVtSettings);
@@ -1807,11 +1899,14 @@
     closeAllMenus();
     if(!wasOpen){
       menu.classList.add('open');
+      document.getElementById('btnMoreMenu').setAttribute('aria-expanded', 'true');
     }
   }
 
   function closeAllMenus(){
     document.querySelectorAll('.header-menu-dropdown').forEach(m => m.classList.remove('open'));
+    const btn=document.getElementById('btnMoreMenu');
+    if(btn) btn.setAttribute('aria-expanded', 'false');
   }
 
   /* ── Mät tidtabell | Bara info ──
@@ -2052,6 +2147,9 @@
   function applyPurposeClass(){
     const j=document.getElementById('journey');
     if(j) j.classList.toggle('info-only', state.purpose==='info');
+    // Bara info sparar ingen mätning: knappen säger bara Avsluta
+    const fin=document.getElementById('btnFinish');
+    if(fin) fin.textContent = state.purpose==='info' ? 'Avsluta resan' : 'Avsluta & spara';
   }
 
   // ── GPS-spår ──
@@ -2395,7 +2493,15 @@
     return last;
   }
 
+  // Tipsen i startformuläret visas bara när fältet är tomt – då behövs förklaringen
+  function renderSetupHints(){
+    const tn=document.getElementById('trainNumber'), th=document.getElementById('trainHint');
+    if(tn && th) th.hidden = !!tn.value.trim() || purpose()==='info';
+    const tour=document.getElementById('tourInput'), tourHint=document.getElementById('tourHint');
+    if(tour && tourHint) tourHint.hidden = !!tour.value.trim();
+  }
   function renderAutoStartStatus(){
+    renderSetupHints();
     const el=document.getElementById('autoStartStatus');
     if(!el) return;
     const r=autoStartArmed();
@@ -2403,7 +2509,7 @@
     if(r){
       const dep=autoPlannedDeparture(r);
       el.innerHTML=`Startar av sig själv när tåget rullar från ${escapeHtml(r.start.name)}` +
-        `<small>${dep?`Avgång ${formatClock(dep)} · `:''}Du kan också trycka Starta. Stängs av i ⋮-menyn.</small>`;
+        `<small>${dep?`Avgång ${formatClock(dep)} · `:''}Du kan också trycka Starta. Stängs av under ⋮ → Inställningar.</small>`;
     }
     renderNextTourCard();
     keepAwakeWhileArmed(!!r);
@@ -3144,7 +3250,7 @@
   const STORAGE_KEY_CONN_MARKS = 'railtimer_conn_marks_v1'; // { vårt tågnummer: { nyckel (connKey): tid } }
   const VT_REFRESH_MS = 2*60000;            // bussarna hämtas högst varannan minut
   const VT_STOPS_MAX_AGE_MS = 30*24*3600000; // hållplatserna vid en station frågas igen efter 30 dagar
-  const VT_AHEAD_MS = 60*60000;             // bussar längs vägen bara vid stationer vi når inom en timme
+  const VT_AHEAD_MS = 30*60000;             // bussar längs vägen bara vid stationer vi når inom 30 min (som midHorizonMin i railtimer-info.js)
   const VT_FALLBACK_STATION = { name:'Herrljunga C', lat:58.0796, lon:13.0258 }; // för testet i inställningarna
   const infoState = {
     timer:null, busy:false, our:null, ourKey:null, line:null, trains:null, fetchedAt:null, error:null,
@@ -3297,7 +3403,7 @@
     stopInfo();
     Object.assign(infoState, { our:null, ourKey:null, line:null, trains:null, fetchedAt:null, error:null, messages:[], messagesAt:0,
       model:null, lastHtml:'', notified:new Map(), meetLog:new Map(), eventLog:new Map(), markLog:new Map(), meetKeys:new Set(), trvLog:null, safeFields:false,
-      positions:new Map(), positionsOff:false, utropLang:infoState.utropLang||'sv',
+      positions:new Map(), positionsOff:false, utropLang:infoState.utropLang||'sv', utropOpen:null,
       buses:new Map(), vtAt:0, vtFetchedAt:null, vtError:null, vtBusy:false });
     infoState.history = INFO ? INFO.historyMedians(allRuns()) : null; // även körningar hämtade från GitHub
     restoreInfoLog(); // samma resa efter omladdning: mötena och loggen hittills
@@ -3403,7 +3509,7 @@
 
   /* ── Bussar från Västtrafik (railtimer-vt.js) ──
      Valet Tåg | Buss | Båda (connSettings) avgör vad Info visar. Bussar hämtas bara när Buss eller Båda är valt
-     och Västtrafik är inställt (⋮ → Västtrafik): hållplatsområdena inom 350 m från stationen (sparas per station
+     och Västtrafik är inställt (⋮ → Inställningar → Västtrafik): hållplatsområdena inom 350 m från stationen (sparas per station
      i 30 dagar), sedan avgångarna efter vår ankomst och ankomsterna före vår avgång – i slutstationen, vid
      stationerna längs vägen som vi når inom en timme och i startstationen före avgång. Högst varannan minut.
      Bara bussar: Västtågen kommer från Trafikverket. */
@@ -3466,7 +3572,8 @@
   async function vtStopAreas(client, sig){
     const cache=readJsonKey(STORAGE_KEY_VT_STOPS, {}) || {};
     const c=cache[sig];
-    if(c && Array.isArray(c.areas) && Date.now()-c.at<VT_STOPS_MAX_AGE_MS) return c.areas;
+    // Inga hållplatser frågas igen efter ett dygn, så att ett fel i läget inte ligger kvar i 30 dagar
+    if(c && Array.isArray(c.areas) && Date.now()-c.at<(c.areas.length ? VT_STOPS_MAX_AGE_MS : 24*3600000)) return c.areas;
     const pos=coordOf(sig);
     if(!pos) return [];
     const areas=await client.stopAreasNear(pos.lat, pos.lon, VT.DEFAULTS.stopRadiusM);
@@ -3521,8 +3628,9 @@
         let areas;
         try{ areas=await vtStopAreas(client, t.sig); }
         catch(e){ error=e; if(fatal(e)) break; continue; }
-        if(!areas.length) continue;
         const entry=result.get(t.sig) || { departures:[], arrivals:[] };
+        // Ingen hållplats nära stationen: sägs i Info i stället för bara "inga bussar"
+        if(!areas.length){ entry.noStops=true; result.set(t.sig, entry); continue; }
         for(const a of areas){
           try{ entry[t.kind].push(...VT.busesOnly(await client.board(t.kind, a.gid, t.start, t.span))); ok++; }
           catch(e){ error=e; if(fatal(e)) break; }
@@ -3542,7 +3650,7 @@
     if(infoState.vtAgain){ infoState.vtAgain=false; return refreshBuses(true); }
   }
 
-  // ── Inställningar för Västtrafik (⋮ → Västtrafik) ──
+  // ── Inställningar för Västtrafik (⋮ → Inställningar → Västtrafik) ──
   function setVtResult(text, isError){
     const el=document.getElementById('vtTestResult');
     el.textContent=text;
@@ -3913,14 +4021,14 @@
     if(vtOn) h+=`<button type="button" class="cc-alerts" data-info="conn-alerts" aria-pressed="${alerts}" title="Om varningarna, panelens rad och utropet bara gäller det som visas">Varningar: ${alerts?'bara valda':'alla'}</button>`;
     h+='</div>';
     if(!vtOn) h+='<p class="info-hint">Bussarna från Västtrafik går inte att hämta – ladda om appen.</p>';
-    else if(mode!=='tag' && infoState.vtError) h+=`<p class="info-hint err">Västtrafik: ${escapeHtml(String(infoState.vtError).replace(/\.$/,''))}.${infoState.vtFetchedAt?` Bussarna är från ${formatClock(infoState.vtFetchedAt)}.`:''} <button type="button" class="linkish" data-info="vt-settings">⋮ → Västtrafik</button></p>`;
+    else if(mode!=='tag' && infoState.vtError) h+=`<p class="info-hint err">Västtrafik: ${escapeHtml(String(infoState.vtError).replace(/\.$/,''))}.${infoState.vtFetchedAt?` Bussarna är från ${formatClock(infoState.vtFetchedAt)}.`:''} <button type="button" class="linkish" data-info="vt-settings">Västtrafik-inställningar</button></p>`;
     else if(!alerts && mode!=='bada') h+='<p class="info-hint">Varningarna och utropet gäller alla anslutningar, även de dolda.</p>';
     if(!markedConnections().size) h+='<p class="info-hint">Tryck ☆ på en anslutning som resenärer ska byta till.</p>';
     return h;
   }
   // Rubriken för ett anslutningsavsnitt, med valet och hur många som är dolda: "· bara buss · 2 tåg dolda"
-  function connSecHtml(title, mode, hidden){
-    const parts=[];
+  function connSecHtml(title, mode, hidden, note){
+    const parts=note ? [note] : [];
     if(mode==='buss') parts.push('bara buss');
     else if(mode==='tag' && vtConfigured()) parts.push('bara tåg');
     const h=hidden||{};
@@ -3929,6 +4037,14 @@
     return `<div class="info-sec"><span>${escapeHtml(title)}${parts.length?` <small class="sec-note">· ${parts.join(' · ')}</small>`:''}</span></div>`;
   }
   const connNoun = mode => mode==='buss' ? 'bussar' : 'anslutningar';
+  // Varför det inte finns några bussar vid en station: hämtas fortfarande, eller ingen hållplats nära stationen
+  function busEmptyText(sig, mode, waiting){
+    if(mode==='tag') return '';
+    if(waiting) return 'Hämtar bussar från Västtrafik…';
+    const b=infoState.buses && infoState.buses.get(sig);
+    if(b && b.noStops) return `Västtrafik har ingen hållplats inom ${VT ? VT.DEFAULTS.stopRadiusM : 350} m från ${escapeHtml(sigName(sig))}.`;
+    return '';
+  }
 
   function infoPaneHtml(m){
     const st = text => `<div class="info-state">${text}</div>`;
@@ -3961,11 +4077,14 @@
     const ut=INFO.announcement(m, { name:sigName, clock:roundClock });
     if(ut){
       const lang=infoState.utropLang==='en' ? 'en' : 'sv';
-      html+=`<div class="info-sec"><span>Utrop</span><span class="utrop-ctl">` +
-        `<button type="button" data-info="utrop-sv" aria-pressed="${lang==='sv'}">Svenska</button>` +
-        `<button type="button" data-info="utrop-en" aria-pressed="${lang==='en'}">English</button>` +
-        `<button type="button" data-info="utrop-copy">Kopiera</button></span></div>` +
-        `<p class="utrop" id="utropText">${escapeHtml(ut[lang])}</p>`;
+      const open = infoState.utropOpen!=null ? infoState.utropOpen : state.purpose==='info';
+      html+=`<details class="utrop-box"${open?' open':''}><summary class="info-sec"><span>Utrop</span>` +
+        `<span class="utrop-ctl">${open
+          ? `<button type="button" data-info="utrop-sv" aria-pressed="${lang==='sv'}">Svenska</button>` +
+            `<button type="button" data-info="utrop-en" aria-pressed="${lang==='en'}">English</button>` +
+            `<button type="button" data-info="utrop-copy">Kopiera</button>`
+          : '<span class="utrop-closed">färdig text – tryck för att visa</span>'}</span></summary>` +
+        `<p class="utrop" id="utropText">${escapeHtml(ut[lang])}</p></details>`;
     }
 
     // Nästa tåg i dagens tur och vändtiden dit
@@ -4001,39 +4120,46 @@
 
     // Vid stationerna längs vägen: tåg och bussar därifrån efter vår ankomst, och de som ansluter till oss där
     if((m.stops && m.stops.length) || anyHidden(m.stopsHidden)){
-      html+=connSecHtml('Anslutningar längs vägen', mode, m.stopsHidden);
+      html+=connSecHtml('Anslutningar längs vägen', mode, m.stopsHidden, `stationer inom ${D.midHorizonMin} min`);
       for(const st of m.stops){
         const where=escapeHtml(sigName(st.sig));
+        // Bytena räknas från när vi är framme där, inte från nu: säg det
+        const eta=m.preds && m.preds[st.i] ? m.preds[st.i].arr : null;
+        if(eta!=null) html+=`<div class="info-stop">${where} · vi är där ca ${roundClock(eta)}</div>`;
         for(const c of st.connections) html+=connRow(c, `${where} → ${escapeHtml(connTo(c)||'?')}`, false);
         for(const c of st.incoming) html+=connRow(c, `${where}: från ${escapeHtml(connFrom(c)||'?')} till oss`, true);
       }
       if(!m.stops.length) html+=`<div class="info-empty">Inga ${connNoun(mode)} längs vägen.</div>`;
     }
 
-    // Som ansluter till oss i startstationen (bara före avgång)
-    if(m.incoming && (m.incoming.length || anyHidden(m.incomingHidden))){
-      html+=connSecHtml(`Ansluter till oss i ${sigName(line[0].sig)}`, mode, m.incomingHidden);
+    // Som ansluter till oss i startstationen (bara före avgång). Med bussar visas avsnittet alltid, så att det syns
+    // om det inte finns några – och varför.
+    if(m.incoming && (m.incoming.length || anyHidden(m.incomingHidden) || mode!=='tag')){
+      const startName=sigName(line[0].sig);
+      html+=connSecHtml(`Ansluter till oss i ${startName}`, mode, m.incomingHidden);
       html+= m.incoming.length
         ? m.incoming.map(c=>connRow(c, `Från ${escapeHtml(connFrom(c)||'?')}`, true)).join('')
-        : `<div class="info-empty">Inga ${connNoun(mode)} till oss.</div>`;
+        : `<div class="info-empty">${busEmptyText(line[0].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} kommer till ${escapeHtml(startName)} ${D.transferMin}–${D.incomingWindowMin} min före vår avgång.`}</div>`;
     }
 
     // Anslutningar i slutstationen. Ingen egen bytestid: minuterna att byta visas (se connectionStatus i railtimer-info.js)
     html+=connSecHtml(`Anslutningar i ${endName}`, mode, m.connectionsHidden);
     html+= m.connections.length
       ? m.connections.map(c=>connRow(c, escapeHtml(connTo(c)||'?'), false)).join('')
-      : `<div class="info-empty">${waitingBuses ? 'Hämtar bussar från Västtrafik…' : `Inga ${connNoun(mode)} ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst enligt tidtabell.`}</div>`;
+      : `<div class="info-empty">${busEmptyText(line[line.length-1].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst enligt tidtabell.`}</div>`;
 
     const basis = m.recoveryObs ? `Trafikverkets tider och egna gångtider (upp till ${m.recoveryObs} körningar per sträcka)` : 'Trafikverkets tider och tidtabellen';
     const notShown=(m.messagesHidden||[]).filter(h=>h.reason!=='inte under resan').length;
     const what = mode==='buss' ? 'bussar' : (mode==='bada' ? 'tåg och bussar' : 'tåg');
     const transferNote=`Anslutningar: ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. ` +
       (mode!=='tag' ? `Bussarna kommer från Västtrafik (hållplatser inom ${VT ? VT.DEFAULTS.stopRadiusM : 350} m från stationen), tågen från Trafikverket. ` : '');
-    html+=`<p class="info-foot">${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Är vi sena räknar appen med att tågklareraren flyttar mötet närmare oss när det ger minst väntan sammanlagt (troligen), till en plats där tåg enligt tidtabell kan mötas. Är det mötande tåget sent räknas med mötet enligt tidtabell.` +
-      `${infoState.error?` Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).`:''}</p>`;
+    // Felet syns alltid. Förklaringen av reglerna är ihopfälld: den behövs sällan under resan.
+    if(infoState.error) html+=`<p class="info-hint err">Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).</p>`;
+    html+=`<details class="info-foot"${infoFootOpen?' open':''}><summary>Så räknas det</summary>${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Är vi sena räknar appen med att tågklareraren flyttar mötet närmare oss när det ger minst väntan sammanlagt (troligen), till en plats där tåg enligt tidtabell kan mötas. Är det mötande tåget sent räknas med mötet enligt tidtabell.</details>`;
     return html;
   }
 
+  let infoFootOpen=false; // Så räknas det: öppen eller stängd, så att den inte fälls ihop när fliken ritas om
   function renderInfo(){
     const pane=document.getElementById('infoPane');
     const np=document.getElementById('npInfo');
@@ -4076,6 +4202,7 @@
   function handleInfoClick(ev){
     const btn=ev.target.closest('[data-info]');
     if(!btn || !infoState.line) return;
+    if(btn.closest('summary')) ev.preventDefault(); // knapparna i utropets rubrik fäller inte ihop det
     if(btn.dataset.info==='utrop-sv' || btn.dataset.info==='utrop-en'){
       infoState.utropLang=btn.dataset.info.slice(6);
       renderInfo();
@@ -4461,6 +4588,7 @@
     document.body.classList.toggle('journey-mode', view==='journey');
     els.report.style.display = view==='report' ? 'block' : 'none';
     document.getElementById('statistics').style.display = view==='statistics' ? 'block' : 'none';
+    document.getElementById('prefs').style.display = view==='prefs' ? 'block' : 'none';
     document.getElementById('settings').style.display = view==='settings' ? 'block' : 'none';
     document.getElementById('vtSettings').style.display = view==='vtSettings' ? 'block' : 'none';
     window.scrollTo(0,0);
@@ -4551,7 +4679,7 @@
       if(lastSaveProblem.kind==='unsaved'){
         saveNote=`<p class="save-warn" role="alert">Resan kunde inte sparas på telefonen – lagringen är full. ${loadGithubSettings()
           ? 'Den laddas upp till GitHub när det finns täckning. Stäng inte appen förrän det står att resan är uppladdad.'
-          : 'Exportera den nu via ⋮ → Exportera JSON innan du stänger appen.'}</p>`;
+          : 'Exportera den nu via ⋮ → Inställningar → Exportera JSON innan du stänger appen.'}</p>`;
       }else{
         const n=lastSaveProblem.count;
         saveNote=`<p class="meta">Lagringen var full: ${n} äldre ${n===1?'körning':'körningar'} som redan finns i GitHub togs bort från telefonen.</p>`;
@@ -4585,11 +4713,36 @@
   }
 
   function rememberOverlayReturn(){
-    if(currentView!=='statistics' && currentView!=='settings' && currentView!=='vtSettings') overlayReturnView=currentView;
+    if(!['statistics','settings','vtSettings','prefs'].includes(currentView)) overlayReturnView=currentView;
+    overlayBack=null;
   }
 
-  // Tillbaka till vyn som var öppen – en pågående resa ska alltid gå att komma tillbaka till
+  // ⋮ → Inställningar
+  function showPrefs(){
+    rememberOverlayReturn();
+    renderPrefs();
+    showView('prefs');
+  }
+  function renderPrefs(){
+    const gh=loadGithubSettings();
+    const ghEl=document.getElementById('prefsGhState');
+    if(ghEl) ghEl.textContent = gh ? `Inställd för ${gh.repo}` : 'Inte inställd – körningarna finns bara på telefonen';
+    const vtEl=document.getElementById('prefsVtState');
+    if(vtEl) vtEl.textContent = (typeof vtOwnConfigured==='function' && vtOwnConfigured()) ? 'Egen nyckel' : 'Fungerar utan inställningar';
+    updateLogCount();
+  }
+
+  // Tillbaka till vyn som var öppen – en pågående resa ska alltid gå att komma tillbaka till.
+  // Uppladdning och Västtrafik som öppnats från Inställningar går tillbaka dit.
   function closeOverlay(){
+    if(overlayBack && overlayBack!==currentView){
+      const back=overlayBack;
+      overlayBack=null;
+      if(back==='prefs') renderPrefs();
+      showView(back);
+      return;
+    }
+    overlayBack=null;
     const target = state.running ? 'journey' : (overlayReturnView || 'setup');
     overlayReturnView=null;
     showView(target);
@@ -6398,7 +6551,13 @@
   }
 
   function clearLogs(){
-    if(!confirm('Vill du ta bort alla sparade körningar?')) return;
+    const logs=loadLogs();
+    const uploaded=loadGithubSettings() ? uploadedRunIds() : new Set();
+    const notUploaded=logs.filter(l=>!uploaded.has(String(l.id))).length;
+    const what = notUploaded
+      ? `${notUploaded} av dem finns inte i GitHub och försvinner helt.`
+      : 'Alla finns kvar i GitHub.';
+    if(!confirm(`Ta bort alla ${logs.length} körningar från telefonen? ${what}`)) return;
     localStorage.removeItem(STORAGE_KEY_LOGS);
     unsavedLogs=[];
     updateLogCount();
@@ -6406,8 +6565,7 @@
 
   function updateLogCount(){
     const count=loadLogs().length;
-    els.logCountTop.textContent=`${count} ${count===1?'logg':'loggar'}`;
-    els.logCountTop.title=`${count} sparade loggar`;
+    els.logCountTop.textContent=`${count} ${count===1?'körning':'körningar'} på telefonen`;
   }
 
   // ── Egna mittpunkter ──

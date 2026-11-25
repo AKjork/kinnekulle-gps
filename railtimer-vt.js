@@ -302,7 +302,7 @@
   // Felet i ord för appen och provsidan
   function errorText(e) {
     if (!e) return '';
-    if (e.kind === 'blocked') return /^Västtrafik/.test(e.message) ? `${e.message}. Ta bort den egna nyckeln under ⋮ → Västtrafik, så används den gemensamma.` : String(e.message);
+    if (e.kind === 'blocked') return /^Västtrafik/.test(e.message) ? `${e.message}. Ta bort den egna nyckeln under ⋮ → Inställningar → Västtrafik, så används den gemensamma.` : String(e.message);
     return String(e.message || e);
   }
 

@@ -11,7 +11,7 @@
    3. Edit code: ersätt allt med den här filen. Deploy.
    4. Settings → Variables and Secrets → Add: VT_KEY och VT_SECRET, typ Secret, med nyckeln och hemligheten
       från Västtrafiks utvecklarportal.
-   5. I appen: ⋮ → Västtrafik (bussar) → Egen server: https://railtimer-vt.<ditt-konto>.workers.dev → Spara och testa.
+   5. I appen: ⋮ → Inställningar → Västtrafik (bussar) → Egen nyckel → Egen server: https://railtimer-vt.<ditt-konto>.workers.dev → Testa.
 
    Testas med node --test (tests/vasttrafik-worker.test.js). */
 

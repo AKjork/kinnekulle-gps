@@ -477,6 +477,10 @@ test('anslutningar längs vägen: tåg från Vara åt annat håll efter vår ank
   // Har vi åkt från Vara visas inga anslutningar där
   const passed = setup(rows, { now: at('11:22'), known: { Lkp: { dep: at('11:00') }, Jp: { arr: at('11:10'), dep: at('11:11') }, Vr: { arr: at('11:20'), dep: at('11:21') } } });
   assert.equal(passed.stops.length, 0);
+  // Mer än 30 min till Vara: anslutningarna där berör oss inte än (midHorizonMin)
+  const early = setup(rows, { now: at('10:45') });
+  assert.equal(early.stops.length, 0, 'Vara 35 min bort visas inte');
+  assert.equal(setup(rows, { now: at('10:51') }).stops.length, 1, 'inom 30 min visas Vara');
 });
 
 test('utrop: försening med orsak, beräknad ankomst och anslutningar – på svenska och engelska', () => {

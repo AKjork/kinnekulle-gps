@@ -202,7 +202,7 @@
     if(r.server) h += `<tr><td>Egen server</td><td>${verdict(r.serverCheck)}</td></tr>`;
     h += '</tbody></table></div>';
     if(r.tokenDirect && !r.tokenDirect.ok && r.tokenDirect.kind === 'blocked'){
-      h += '<p class="sub">Västtrafik tillåter inte att token hämtas från webbläsaren med den egna nyckeln. Ta bort den egna nyckeln i appen (⋮ → Västtrafik), så används den gemensamma från GitHub.</p>';
+      h += '<p class="sub">Västtrafik tillåter inte att token hämtas från webbläsaren med den egna nyckeln. Ta bort den egna nyckeln i appen (⋮ → Inställningar → Västtrafik), så används den gemensamma från GitHub.</p>';
     }
     h += '</section>';
     for(const st of r.stations){
@@ -240,7 +240,7 @@
   async function saveToGithub(){
     const s = readJson(KEY_GITHUB, null);
     const repo = s && GH ? GH.parseRepo(s.repo) : null;
-    if(!lastResult || !repo || !s.token){ setStatus('Ställ in uppladdningen i appen först (⋮ → Uppladdning).', 'err'); return; }
+    if(!lastResult || !repo || !s.token){ setStatus('Ställ in uppladdningen i appen först (⋮ → Inställningar → Uppladdning).', 'err'); return; }
     $('btnSave').disabled = true;
     setStatus('Sparar i ' + s.repo + ' …');
     try{

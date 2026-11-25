@@ -31,6 +31,8 @@
     historyMinObs: 3,         // egna gångtider räknas från så här många mätningar
     maxConnections: 8,
     midConnectionWindowMin: 20, // anslutningar vid stationerna längs vägen: högst så här länge efter vår ankomst
+    midHorizonMin: 30,        // anslutningar längs vägen bara vid stationer vi når inom så här lång tid (André 2026-11-25:
+                              // en buss i Lidköping berör inte den som står i Herrljunga, nästan en timme därifrån)
     holdMaxMin: 15,           // förslaget att ringa trafikledningen: bara när det räcker att vänta högst så här länge
     positionMaxAgeMs: 5 * 60000, // tågpositioner äldre än så används inte
     maxSpeedMs: 200 / 3.6,    // inget tåg kör fortare: det mötande tåget kan inte vara framme tidigare än så
@@ -1070,6 +1072,7 @@
     for (let i = Math.max(frontier, 1); i < n - 1; i++) {
       const L = line[i];
       if (!L.stop || known[i].dep != null) continue;
+      if (known[i].arr == null && preds[i].arr != null && preds[i].arr - now > o.midHorizonMin * MIN) continue;
       const oi = Object.assign({}, o, { connectionWindowMin: o.midConnectionWindowMin, incomingWindowMin: o.midConnectionWindowMin });
       const out = preds[i].arr != null ? outgoing(trains, our, L, preds[i].arr, known[i].arr != null, lineSigs, now, oi) : [];
       const into = preds[i].dep != null ? incoming(trains, our, L, preds[i].dep, lineSigs, now, oi) : [];
