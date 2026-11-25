@@ -133,4 +133,54 @@ for (const t of diff) {
 }
 log(`Mönster när ATN ≠ OTN: ${[...pattern].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k}: ${v}`).join(', ')}`);
 
+// 3. Tåg som byter OTN längs vägen vid stationerna i CHAIN_SIGS (förvalt Lidköping, Håkantorp, Öxnered):
+//    alla delar (OTN) av samma ATN, var numret byts, och om tåg-id:t (OperationalTransportIdentifiers TR) är detsamma.
+const CHAIN_SIGS = (process.env.CHAIN_SIGS || 'Lkp,Håp,Öx').split(',').map(x => x.trim()).filter(Boolean);
+log(`\n## Tåg som byter OTN längs vägen (${CHAIN_SIGS.join(', ')})\n`);
+try {
+  const w0 = swedish(new Date(now - 6 * 3600e3)), w1 = swedish(new Date(+now + 18 * 3600e3));
+  const at = await ask(`<QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="5000"><FILTER><AND>` +
+    `<IN name="LocationSignature" value="${CHAIN_SIGS.join(',')}" />` +
+    `<GTE name="AdvertisedTimeAtLocation" value="${w0}" /><LTE name="AdvertisedTimeAtLocation" value="${w1}" />` +
+    `</AND></FILTER>${inc(FIELDS)}</QUERY>`);
+  const atns = [...new Set(at.map(a => a.AdvertisedTrainIdent).filter(Boolean).map(String))];
+  log(`${at.length} annonseringar vid stationerna, ${atns.length} ATN.`);
+  const rows = [];
+  for (let i = 0; i < atns.length; i += 60) {
+    const part = atns.slice(i, i + 60);
+    rows.push(...await ask(`<QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="20000"><FILTER><AND>` +
+      `<IN name="AdvertisedTrainIdent" value="${part.join(',')}" />` +
+      `<GTE name="AdvertisedTimeAtLocation" value="${swedish(new Date(now - 12 * 3600e3))}" /><LTE name="AdvertisedTimeAtLocation" value="${swedish(new Date(+now + 30 * 3600e3))}" />` +
+      `</AND></FILTER>${inc(FIELDS.concat(['OperationalTransportIdentifiers', 'ToLocation', 'FromLocation']))}</QUERY>`));
+  }
+  const byAtn = new Map();
+  for (const r of rows) {
+    const k = `${r.AdvertisedTrainIdent}|${String(r.DepartureDateOTN || '').slice(0, 10)}`;
+    if (!byAtn.has(k)) byAtn.set(k, new Map());
+    const m = byAtn.get(k);
+    const o = String(r.OperationalTrainNumber ?? '');
+    if (!m.has(o)) m.set(o, []);
+    m.get(o).push(r);
+  }
+  let multi = 0, sameTr = 0, diffTr = 0;
+  const lines = [];
+  for (const [k, m] of byAtn) {
+    if (m.size < 2) continue;
+    multi++;
+    const segs = [...m.entries()].map(([o, list]) => {
+      list.sort((a, b) => String(a.AdvertisedTimeAtLocation).localeCompare(String(b.AdvertisedTimeAtLocation)));
+      const tr = list.map(a => (a.OperationalTransportIdentifiers || []).find(x => x.ObjectType === 'TR')).find(Boolean);
+      const first = list[0], last = list[list.length - 1];
+      return { o, first, last, tr: tr ? `${tr.Company}/${tr.Core}/${tr.Variant}` : '–', n: list.length,
+        acts: `${first.LocationSignature} ${first.ActivityType} ${String(first.AdvertisedTimeAtLocation).slice(11, 16)} → ${last.LocationSignature} ${last.ActivityType} ${String(last.AdvertisedTimeAtLocation).slice(11, 16)}` };
+    }).sort((a, b) => String(a.first.AdvertisedTimeAtLocation).localeCompare(String(b.first.AdvertisedTimeAtLocation)));
+    const trs = new Set(segs.map(s => s.tr).filter(t => t !== '–'));
+    if (trs.size <= 1) sameTr++; else diffTr++;
+    lines.push(`- ATN ${k}: ` + segs.map(s => `OTN ${s.o} ${s.acts} (${s.n}, TR ${s.tr})`).join(' · '));
+  }
+  log(`ATN med flera OTN: ${multi} (samma tåg-id TR i alla delar: ${sameTr}, olika: ${diffTr})`);
+  for (const l of lines.slice(0, 40)) log(l);
+  // Byten vid samma station: slutar en del med Ankomst där nästa börjar med Avgang?
+} catch (e) { log(`fel: ${e.message}`); }
+
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join('\n') + '\n');
