@@ -7,6 +7,8 @@ const AN = require('../railtimer-analys.js');
 function at(h, m, s, day) { return new Date(2026, 9, day || 15, h, m, s || 0).toISOString(); }
 
 // En station i en körning. Tider anges som [tim, min, sek] eller [tim, min, sek, dag].
+// sArr/sDep är tågorderns tider (operationalArrival/-Departure); de annonserade sätts lika om inte aArr/aDep anges.
+// advertisedOnly: körning före appversion 2026-11-25f, bara annonserade tider (aArr/aDep, annars sArr/sDep).
 function stop(name, o) {
   const opt = o || {};
   const t = v => (v ? at(...v) : null);
@@ -14,8 +16,10 @@ function stop(name, o) {
     name,
     actualArrival: t(opt.arr),
     actualDeparture: t(opt.dep),
-    scheduledArrival: t(opt.sArr),
-    scheduledDeparture: t(opt.sDep),
+    scheduledArrival: t(opt.aArr || opt.sArr),
+    scheduledDeparture: t(opt.aDep || opt.sDep),
+    operationalArrival: opt.advertisedOnly ? null : t(opt.sArr),
+    operationalDeparture: opt.advertisedOnly ? null : t(opt.sDep),
     arrivalSource: opt.arr ? 'gps' : '',
     departSource: opt.pass ? 'gps-pass' : (opt.dep ? 'gps' : ''),
     shouldStop: opt.shouldStop == null ? true : opt.shouldStop
@@ -252,7 +256,7 @@ test('summarizeTrains: varje tåg mot sin egen tidtabell och vad sträckan tar',
 test('summarizeTrains: ändrad tidtabell, toleransen och stationstyp', () => {
   const runs = trainFixture();
   // Tåg 3346 hade tidigare 3 min B → C (ankomst 10:07 den 13:e och 14:e); den senaste körningen har 2 min
-  runs.filter(r => r.trainNumber === '3346' && r.id !== 'b15').forEach(r => { r.stops[2].scheduledArrival = at(10, 7, 0, Number(r.id.slice(1))); });
+  runs.filter(r => r.trainNumber === '3346' && r.id !== 'b15').forEach(r => { r.stops[2].operationalArrival = at(10, 7, 0, Number(r.id.slice(1))); });
   const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
   const b = AN.summarizeTrains(runs, needs, { tolerance: 1 }).rows.find(r => r.train === '3346');
   assert.deepEqual([b.segments[1].planned, b.segments[1].plannedPrev], [2, [3]]);
@@ -806,4 +810,103 @@ test('motionZones: inbromsning i steg räknas ihop när tåget inte gasar emella
   assert.equal(between.approach.steps, 1, 'ett steg');
   within(between.approach.from, -500, -100, 'bara sista inbromsningen');
   assert.ok(between.zones.some(x => x.kind === 'gas' && x.to < 0), 'gasen emellan');
+});
+
+// ── Tågorderns tider (appversion 2026-11-25f) ──
+
+/* Tåg 23349 Lidköping → Herrljunga C 2026-11-25: verkliga tider ur railtimer-data (hela sekunder), planerade enligt
+   förarens tågorder. Trafikverkets annonserade tider (som appen hade före 2026-11-25f) har ankomst = avgång vid
+   mellanstationerna och Vara avgång 11:53. advertisedOnly: bara de annonserade tiderna, som en gammal körning. */
+function train23349(advertisedOnly, id) {
+  const d = 25;
+  const s = (name, arr, dep, sArr, sDep, aArr, aDep, extra) => stop(name, Object.assign({
+    arr: arr && [...arr, d], dep: dep && [...dep, d], sArr: sArr && [...sArr, 0, d], sDep: sDep && [...sDep, 0, d],
+    aArr: aArr && [...aArr, 0, d], aDep: aDep && [...aDep, 0, d], advertisedOnly
+  }, extra || {}));
+  return run(id || 'k23349', [
+    s('Lidköping', null, [11, 22, 17], null, [11, 22], null, [11, 22]),
+    s('Framnäs city', [11, 24, 9], [11, 24, 52], [11, 23], [11, 24], [11, 24], [11, 24]),
+    s('Lovene', [11, 32, 24], [11, 33, 13], [11, 32], [11, 33], [11, 33], [11, 33]),
+    s('Järpås', [11, 39, 52], [11, 40, 25], [11, 39], [11, 40], [11, 40], [11, 40]),
+    s('Stora Levene', [11, 45, 42], [11, 46, 15], [11, 44], [11, 45], [11, 45], [11, 45]),
+    s('Håkantorp', [11, 48, 51], [11, 48, 53], [11, 48], [11, 49], [11, 49], [11, 49], { pass: true }),
+    s('Vara', [11, 52, 48], [11, 53, 35], [11, 53], [11, 54], [11, 53], [11, 53]),
+    s('Vedum', [12, 0, 9], [12, 1, 5], [12, 0], [12, 1], [12, 1], [12, 1]),
+    s('Herrljunga C', [12, 9, 33], null, [12, 9], null, [12, 9], null)
+  ], { trainNumber: '23349' });
+}
+
+test('tågorderns tider: Var tiden går för 23349 – gångtid +2,9 min och uppehåll −2,6 min', () => {
+  const b = AN.delayBreakdown(train23349(false));
+  close(b.start, 17 / 60, 'avgång start');
+  close(b.end, 33 / 60, 'ankomst slut');
+  close(b.dwell, (263 - 7 * 60) / 60, 'uppehåll: 263 s verkligt mot 7 × 1 min planerat');
+  close(b.running, b.end - b.start - b.dwell, 'gångtid');
+  assert.ok(b.running > 2.88 && b.running < 2.89, `gångtid ${b.running}`);
+});
+
+test('tågorderns tider: ankomst, avgång och tappad tid i Vedum och Vara räknas mot tågordern', () => {
+  const t = AN.stationTimes([train23349(false)]);
+  const ved = t.find(x => x.station === 'Vedum');
+  close(ved.arrivalDev, 9 / 60, 'Vedum ankomst 9 s efter 12:00');
+  close(ved.departureDev, 5 / 60, 'Vedum avgång 5 s efter 12:01');
+  close(ved.dwell, 56 / 60, 'Vedum uppehåll');
+  close(ved.plannedDwell, 1, 'planerat uppehåll 1 min');
+  close(ved.lost, 5 / 60 - 9 / 60, 'tappad tid');
+  const vara = t.find(x => x.station === 'Vara');
+  close(vara.departureDev, -25 / 60, 'Vara avgång 25 s före tågorderns 11:54 (annonserad 11:53)');
+  close(vara.lost, -25 / 60, 'kom tidigt: tappad tid = avgångsavvikelsen');
+});
+
+test('tågorderns tider: en körning med bara annonserade tider jämförs inte mot tidtabellen men räknas i mätningarna', () => {
+  const old = train23349(true, 'gammal');
+  assert.equal(AN.hasTimetable(old), false);
+  assert.equal(AN.hasAdvertisedOnly(old), true);
+  assert.equal(AN.hasAdvertisedOnly(train23349(false)), false);
+  assert.equal(AN.delayBreakdown(old), null, 'Var tiden går');
+  assert.deepEqual(AN.stationTimes([old]), [], 'avvikelser och tappad tid');
+  const obs = AN.segmentObservations([old], {});
+  assert.equal(obs.length, 8, 'alla sträckor mäts');
+  assert.ok(obs.every(o => o.planned == null), 'ingen planerad gångtid');
+  assert.ok(obs.every(o => o.order != null), 'ordningen finns ändå');
+  const need = AN.segmentNeeds(obs).find(n => n.key === 'Vara → Vedum|SS');
+  close(need.median, (6 * 60 + 34) / 60, 'vad sträckan tar Vara → Vedum');
+  assert.deepEqual(AN.trainVariants([old]), [], 'inget tåg med tågorderns tider');
+  const sum = AN.summarizeTrains([old], [], {});
+  assert.deepEqual([sum.rows.length, sum.withoutTimetable.trains, sum.withoutTimetable.runs], [0, 1, 1]);
+  assert.equal(AN.delayBalance([old, train23349(false)]).n, 1, 'bara körningen med tågorderns tider');
+});
+
+test('tågorderns tider: uppehållet i Vedum räknas från tågorderns ankomst, inte från den annonserade', () => {
+  const runs = [train23349(false, 'k1'), train23349(false, 'k2'), train23349(false, 'k3')];
+  const needs = AN.segmentNeeds(AN.segmentObservations(runs, {}));
+  const p = AN.proposeTrainTimetable(runs, needs, '23349');
+  const ved = p.rows.find(r => r.station === 'Vedum');
+  close(ved.dwellValue, 56 / 60, 'tåget kom 12:00:09 och åkte 12:01:05');
+  close(ved.plannedDwell, 1, 'planerat enligt tågordern');
+  const vara = p.rows.find(r => r.station === 'Vara');
+  close(vara.dwellValue, 35 / 60, 'Vara: kom 11:52:48, före tågorderns ankomst 11:53 – räknas från 11:53');
+  // Med de annonserade tiderna (12:01/12:01) blev uppehållet i Vedum bara 5 s: väntan före "ankomsten" 12:01 räknades bort
+});
+
+test('tågorderns tider: nytt tåg räknar gamla körningar som stopp utan tidtabell, med hela uppehållet', () => {
+  const old = [train23349(true, 'g1'), train23349(true, 'g2'), train23349(true, 'g3')];
+  const needs = AN.segmentNeeds(AN.segmentObservations(old, {}));
+  const p = AN.proposeNewTimetable(old, needs, { from: 'Lidköping', to: 'Herrljunga C' });
+  const ved = p.rows.find(r => r.station === 'Vedum');
+  assert.equal(ved.dwellSource, 'utan-tidtabell');
+  close(ved.dwellValue, 56 / 60, 'hela uppehållet (kan innehålla väntan)');
+  const withOtn = [train23349(false, 'n1'), train23349(false, 'n2'), train23349(false, 'n3')];
+  const q = AN.proposeNewTimetable(withOtn, needs, { from: 'Lidköping', to: 'Herrljunga C' });
+  const v2 = q.rows.find(r => r.station === 'Vedum');
+  assert.deepEqual([v2.dwellSource, v2.dwellN, v2.dwellWaited], ['matt', 3, 3]);
+  close(v2.dwellValue, 56 / 60, 'från tågorderns ankomst 12:00 (tåget kom 12:00:09)');
+});
+
+test('tågorderns tider: passage med bara en tid i tågordern', () => {
+  const p = { name: 'X', shouldStop: false, operationalDeparture: at(11, 49), scheduledArrival: at(11, 49), scheduledDeparture: at(11, 49) };
+  assert.equal(AN.plannedArrival(p).toISOString(), at(11, 49));
+  assert.equal(AN.plannedDeparture(p).toISOString(), at(11, 49));
+  const s = { name: 'Y', shouldStop: true, operationalDeparture: at(11, 22) };
+  assert.equal(AN.plannedArrival(s), null, 'stopp utan tågorderns ankomst: ingen planerad ankomst');
 });

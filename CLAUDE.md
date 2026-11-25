@@ -545,6 +545,7 @@ André 2026-10-16:
     4. Medianen för vanliga uppehåll ("schablon"). Utan tidtabell i urvalet används i stället medianen för uppehållen utan tidtabell.
   - **Väntade in avgångstiden** (`dwellWaited`): hur många av de mätta tågen som kom före planerad avgång och avgick inom avgångsminuten. Sådana mätningar visar bara att uppehållet räckte.
     - Lidköping: 14 av 14 och Mariestad: 5 av 7 väntade in avgångstiden. Uppehållet 2,1 min speglar alltså tidtabellen.
+    - *Räknat på annonserade tider (se 2026-11-25f). Sedan 2026-11-25f räknas bara körningar med tågorderns tider som "mätt".*
     - Tåg som inte styrdes av tidtabellen är för få där (2 per station) och stod längre, inte kortare. Därför räknas värdet som förut, och antalet visas.
 - **Alla tåg:** en översikt (restid nu och i förslaget per tåg) och ett förslag per tåg. Allt skrivs ut i en PDF och exporteras i en Excelfil.
 - **Gångtid från: alla tåg / tågets egna** (`legSource`). Med egna används tågets median där det har minst 3 mätningar med samma stoppmönster, annars alla tågs. Tågets mätningar med annat mönster, till exempel passage vid ett behovsstopp, blandas inte in. Underlag visar vilket.
@@ -605,6 +606,8 @@ Logiken för ankomst/avgång är **oförändrad** (regressionsfacit `tests/golde
 André 2026-11-25: gå igenom analysverktyget och förbättra det.
 
 Dataunderlag (`railtimer-data`, 213 körningar 2025-10-29 – 2026-11-24): gångtiderna är jämna (i median 0,1 min från sträckans median), och manuella stämplingar är lika exakta som GPS. I 118 hela körningar med tidtabell kör tågen i median 4,3 min fortare än planerad gångtid och står 3,2 min längre vid stationerna än planerat. Marginalen ligger alltså i gångtiderna och används upp vid stationerna.
+
+> **Fel (2026-11-25f):** siffrorna ovan bygger på Trafikverkets annonserade tider, där ankomst och avgång har samma minut vid de flesta mellanstationer. Tågordern har ankomsten en minut tidigare, så uppehållsminuten räknades som gångtid. 23349 2026-11-25 med tågorderns tider: gångtid +2,9 min och uppehåll −2,6 min mot planerat, alltså tvärtom. Slutsatsen gäller inte.
 
 ### Borttaget
 - Lägena **Gångtider/Uppehållstider**, sifferrutorna, *Slå ihop riktningar* och flikarna **Diagram, Tabell, Avvikare, Detaljer** med sina funktioner (`buildRunningSegments`, `buildDwellSegments`, `buildSegmentsBetweenStations`, `renderChart`, `renderOutliersTable` m.fl.). De skilde inte på stopp och passage, och Avvikare jämförde ett tågs medelvärde med spridningen för enskilda mätningar (fel), så små skillnader flaggades.
@@ -708,3 +711,36 @@ Dataunderlag (`railtimer-data`, 51 spår okt–nov 2026, 1 punkt/s, noggrannhet 
 - `node --test "tests/*.test.js"` (103), med en simulerad körning (`simulateRun`: gas 0,4 m/s², broms 0,5 m/s², stopp, hastighetsbegränsning). Testerna täcker broms, gas och brus, stationens läge, zonerna i båda riktningarna, linjens km utan genvägar och inbromsning i steg med och utan gas emellan.
 - `node tests/run-browser-tests.mjs` (68), nytt: *analys: Broms och gas visar var tågen bromsar och gasar vid uppehållen*. Testet täcker sträcka, byt riktning, körningar som bara går en del av sträckan (Källby → Blomberg), Station 1 och 2, Hela linjen, export och utskrift.
 - Bilder: `--shot=broms-och-gas`, `--shot=broms-och-gas-mobil` och `--shot=broms-och-gas-utskrift`.
+
+## Uppdatering (2026-11-25f): tågorderns tider (driftstid)
+
+André 2026-11-25: "Det är extremt viktigt att vi presenterar rätt data." Upptäckt med förarens tågorder för 23349 Lidköping–Herrljunga C 2026-11-25.
+
+### Problemet
+- `fetchTimetable` hämtade bara `AdvertisedTimeAtLocation`, den annonserade tiden. Vid de flesta mellanstationer är annonserad ankomst samma minut som avgången, men tågordern har ankomsten en minut tidigare: Vedum annonserad 12:01/12:01, tågorder 12:00/12:01. Annonserad avgång kan också vara tidigare än tågorderns: Vara 11:53 mot 11:54 (tågordern skriver "Annonserad avg-tid 11:53").
+- Datan 2026-11-25: 1 206 av 1 479 mellanstationer hade samma annonserade ankomst och avgång.
+- Följder i analysen:
+  - **Var tiden går** räknade uppehållsminuten som gångtid. 23349 2026-11-25: med annonserade tider gångtid −4,1 och uppehåll +4,4 min; med tågorderns gångtid +2,9 och uppehåll −2,6 min. Start (+0,3) och slut (+0,6) lika.
+  - **Uppehåll utan väntan** räknades från den annonserade ankomsten (= avgångstiden), så uppehållen blev för korta: Vedum 5 s i stället för 56 s.
+  - Planerad gångtid, marginal, tappad tid, ankomstavvikelse och Tid över påverkades på samma sätt.
+
+### Appen
+- `fetchTimetable` hämtar även `LocationDateTimeOTN` – Trafikverkets fältbeskrivning: det operativa tågets ankomst- eller avgångstid enligt tidtabell, kan skilja sig från den annonserade. Fältet hette `TechnicalDateTime` före schema 1.8.
+- **Körningsformat 3:** per station `operationalArrival` och `operationalDeparture` (tågorderns tider) bredvid `scheduledArrival` och `scheduledDeparture` (annonserade, oförändrad betydelse). `normalizeLogEntry` bevarar fälten.
+- `planArr`/`planDep`: tågorderns tid gäller. Utan den den annonserade, men vid en mellanstation där annonserad ankomst = avgång visas ingen planerad ankomst (den är okänd). Passage: samma tid för båda. Används i panelen, stationslistan, rapporten och CSV:n.
+- Panelen visar "ankomst plan" enligt tågordern, och "avgång plan" när ankomsten är okänd. Vid station står den annonserade avgången när den skiljer sig ("avgång plan · annons 11:53"). Utfällt kort: "Tågorder: ankomst 12:00, avgång 12:01", eller "Annonserad tid: … (tågorderns tider saknas)".
+- CSV: Schema Ank/Avg är tågorderns tider; nya kolumner Tidtabell (tågorder/annonserad), Annonserad Ank och Annonserad Avg sist.
+- **Inte provat mot Trafikverket:** varken API:et eller Chrome nås från utvecklingsmiljön. Kontrollera vid nästa resa att det utfällda kortet visar samma tider som tågordern.
+
+### Analysen
+- `plannedArrival`/`plannedDeparture` ger bara tågorderns tider (passage: den tid som finns). `hasTimetable` = körningen har tågorderns tider; `hasAdvertisedOnly` = bara annonserade.
+- **Jämförelser mot tidtabellen görs bara på körningar med tågorderns tider:** avvikelser, tappad tid, planerad gångtid och marginal, planerat uppehåll, uppehåll utan väntan, Var tiden går, Tid över, tågens tidtabeller och förslag, planerad restid i Jämför perioder.
+- Körningar med bara annonserade tider räknas bara i det som mäts: vad sträckorna tar, verkliga uppehåll, GPS-spår. Annonserade tider används bara för att ordna stationerna (`anyPlannedTime`, `anyPlannedArrivalFirst`).
+- **Nytt tåg:** gamla körningar räknas som stopp utan tidtabell, alltså hela det verkliga uppehållet (kan innehålla väntan), etiketten "mätt utan tågorderns tider". Mätningar med tågorderns tider går före.
+- Analys.html visar under urvalet hur många körningar som jämförs och hur många som bara har annonserade tider (`#basisLine`). Texterna säger "med tågorderns tider" i stället för "med tidtabell".
+- Datan 2026-11-25 (214 körningar): 0 med tågorderns tider, 152 med bara annonserade och 62 utan tidtabell. Per tåg, Sträckor (planerad tid), Tidtabell för befintliga tåg och Var tiden går är därför tomma tills nya körningar kommer.
+- Gamla körningar kompletteras inte i efterhand: det är okänt hur långt bakåt Trafikverkets API har tidtabeller, och det kan inte provas härifrån. Tågorderns tider gissas aldrig.
+
+### Tester
+- `node --test "tests/*.test.js"` (109), nya: `tågorderns tider: …` med 23349 2026-11-25 (verkliga tider och tågorderns).
+- `node tests/run-browser-tests.mjs` (73), nya: `tidtabell: tågorderns tider …`, `tidtabell: planerad tid är tågorderns …`, `tidtabell: resvyn räknar mot tågordern …`, `analys: körningar med bara annonserade tider …`. Testdatan i analysproven har tågorderns tider (`sArr`/`sDep`), och `format 3` ersätter `format 2`.

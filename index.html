@@ -768,7 +768,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25d';
+  const APP_VERSION = '2026-11-25f';
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const DEFAULT_RADIUS = 200;
@@ -919,7 +919,7 @@
       setRailFetchForTest: fn => { railFetchForTest = fn; }, loadRailGeometry, renderRouteMap,
       scheduleUpload, whenUploadIdle, showUploadSettings, saveAndTestGithub,
       loadAllStations, stationNames: () => allStationsCache.map(s => s.name), checkForInterruptedJourney,
-      removeOrphanTracks, startJourney, fetchTimetable, logsCsv
+      removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog
     };
   }
 
@@ -1585,6 +1585,8 @@
       actualDeparture:null,
       scheduledArrival:st.scheduledArrival||null,
       scheduledDeparture:st.scheduledDeparture||null,
+      operationalArrival:st.operationalArrival||null,
+      operationalDeparture:st.operationalDeparture||null,
       arrivalSource:'',
       departSource:'',
       arrivalPosition:null,
@@ -1769,7 +1771,9 @@
         radius: DEFAULT_RADIUS,
         time: time,
         scheduledArrival: info.arrival || null,
-        scheduledDeparture: info.departure || null
+        scheduledDeparture: info.departure || null,
+        operationalArrival: info.operationalArrival || null,
+        operationalDeparture: info.operationalDeparture || null
       });
     }
 
@@ -2380,6 +2384,33 @@
     return null;
   }
 
+  /* Planerade tider. Tågorderns tid (driftstiden, LocationDateTimeOTN) gäller när den finns. Utan den används den
+     annonserade tiden, men vid en mellanstation där annonserad ankomst är samma minut som avgången är den annonserade
+     ankomsten bara avgångstiden – tågorderns ankomst är okänd (oftast en minut tidigare) och visas inte.
+     Passage (inget planerat stopp): en tid gäller för både ankomst och avgång. */
+  function sameTime(a, b){ return !!a && !!b && new Date(a).getTime()===new Date(b).getTime(); }
+  function hasOperationalTimes(st){ return !!(st && (st.operationalArrival || st.operationalDeparture)); }
+  function planArr(st){
+    if(!st) return null;
+    if(st.operationalArrival) return st.operationalArrival;
+    if(st.shouldStop===false) return st.operationalDeparture || st.scheduledArrival || st.scheduledDeparture || null;
+    if(hasOperationalTimes(st)) return null;
+    if(sameTime(st.scheduledArrival, st.scheduledDeparture)) return null;
+    return st.scheduledArrival || null;
+  }
+  function planDep(st){
+    if(!st) return null;
+    if(st.operationalDeparture) return st.operationalDeparture;
+    if(st.shouldStop===false) return st.operationalArrival || st.scheduledDeparture || st.scheduledArrival || null;
+    if(hasOperationalTimes(st)) return null;
+    return st.scheduledDeparture || null;
+  }
+  // Annonserad avgång när den skiljer sig från tågorderns (t.ex. Vara 23349: tågorder 11:54, annonserad 11:53)
+  function advertisedDepartureIfDifferent(st){
+    if(!st || !st.operationalDeparture || !st.scheduledDeparture) return null;
+    return sameTime(st.operationalDeparture, st.scheduledDeparture) ? null : st.scheduledDeparture;
+  }
+
   // Avvikelse i hela minuter och färgklass: i tid inom ±1 min, gul upp till 5 min sen, röd därefter
   function delayInfo(actual, scheduled){
     if(!actual || !scheduled) return null;
@@ -2394,7 +2425,7 @@
   function currentDelay(){
     for(let i=state.route.length-1;i>=0;i--){
       const st=state.route[i];
-      const d=delayInfo(st.actualDeparture, st.scheduledDeparture) || delayInfo(st.actualArrival, st.scheduledArrival);
+      const d=delayInfo(st.actualDeparture, planDep(st)) || delayInfo(st.actualArrival, planArr(st));
       if(d) return d;
     }
     return null;
@@ -2443,8 +2474,10 @@
         els.nextValue1.textContent=st.lastSeenDistance!=null?formatDistance(st.lastSeenDistance):'–';
         els.nextSub1.textContent='från stationen';
       }
-      setPanelCell(els.nextValue2, els.nextSub2, st.scheduledDeparture?formatClock(st.scheduledDeparture):'–', 'avgång plan');
-      const c=countdown(st.scheduledDeparture);
+      const pDep=planDep(st);
+      const adv=advertisedDepartureIfDifferent(st);
+      setPanelCell(els.nextValue2, els.nextSub2, pDep?formatClock(pDep):'–', adv?`avgång plan · annons ${formatClock(adv)}`:'avgång plan');
+      const c=countdown(pDep);
       setPanelCell(cd, cdSub, c?c.text:'–', c?c.sub.replace('plan','avgång'):'till avgång', c?c.cls:'');
       return;
     }
@@ -2462,8 +2495,11 @@
     els.nextStop.textContent=st.name;
     els.nextValue1.textContent=st.lastSeenDistance!=null?formatDistance(st.lastSeenDistance):'–';
     els.nextSub1.textContent='kvar';
-    const planned=st.scheduledArrival||st.scheduledDeparture;
-    setPanelCell(els.nextValue2, els.nextSub2, planned?formatClock(planned):'–', st.shouldStop?'ankomst plan':'passage plan');
+    // Ankomsten enligt tågordern; är den okänd visas avgången, och det står då "avgång plan"
+    const pArr=planArr(st);
+    const planned=pArr||planDep(st);
+    const plannedLabel=!st.shouldStop ? 'passage plan' : (pArr || !planned ? 'ankomst plan' : 'avgång plan');
+    setPanelCell(els.nextValue2, els.nextSub2, planned?formatClock(planned):'–', plannedLabel);
     const c=countdown(planned);
     setPanelCell(cd, cdSub, c?c.text:'–', c?c.sub:'till plan', c?c.cls:'');
   }
@@ -2535,6 +2571,22 @@
     </div>`;
   }
 
+  // Tidtabellsraden i det utfällda kortet: tågorderns tider, och den annonserade avgången när den skiljer sig.
+  // Utan tågorderns tider står de annonserade tiderna (ankomsten bara när den skiljer sig från avgången).
+  function scheduleText(station){
+    const parts=[];
+    if(hasOperationalTimes(station)){
+      if(station.operationalArrival) parts.push(`ankomst ${formatClock(station.operationalArrival)}`);
+      if(station.operationalDeparture) parts.push(`avgång ${formatClock(station.operationalDeparture)}`);
+      const adv=advertisedDepartureIfDifferent(station);
+      return `Tågorder: ${parts.join(', ')}${adv?` · annonserad avgång ${formatClock(adv)}`:''}`;
+    }
+    const a=planArr(station);
+    if(a) parts.push(`ankomst ${formatClock(a)}`);
+    if(station.scheduledDeparture) parts.push(`avgång ${formatClock(station.scheduledDeparture)}`);
+    return parts.length ? `Annonserad tid: ${parts.join(', ')} (tågorderns tider saknas)` : 'Ingen tidtabell för stationen';
+  }
+
   // Uppdaterar ett befintligt kort utan att bygga om det, så att fokus i
   // anteckningsfält och kryssrutor inte tappas vid varje GPS-position
   function updateCard(card, station, idx){
@@ -2557,18 +2609,15 @@
     else if(state.nextIndex===idx) note = (station.lastSeenDistance!=null ? formatDistance(station.lastSeenDistance)+' kvar' : 'nästa') + (station.shouldStop?'':' · passeras');
     else if(!station.shouldStop) note='passeras';
     else if(station.notes) note='📝 '+station.notes;
-    const arr = idx>0 || station.actualArrival ? timeCell(station.actualArrival, station.scheduledArrival, station.arrivalWindow) : '<span class="st-t plan"><b></b></span>';
-    const dep = !isLast || station.actualDeparture ? timeCell(station.actualDeparture, station.scheduledDeparture, station.departureWindow) : '<span class="st-t plan"><b></b></span>';
+    const arr = idx>0 || station.actualArrival ? timeCell(station.actualArrival, planArr(station), station.arrivalWindow) : '<span class="st-t plan"><b></b></span>';
+    const dep = !isLast || station.actualDeparture ? timeCell(station.actualDeparture, planDep(station), station.departureWindow) : '<span class="st-t plan"><b></b></span>';
     card.querySelector('.card-main').innerHTML=`<div class="st-row">
         <span class="st-num">${station.order}</span>
         <span class="st-name"><b>${escapeHtml(station.name)}${station.shouldStop?'':' <span title="Passeras utan stopp">⏩</span>'}</b>${note?`<small>${escapeHtml(note)}</small>`:''}</span>
         ${station.missedReason?'<span class="st-t plan"><b>–</b></span><span class="st-t plan"><b>–</b></span>':arr+dep}
       </div>`;
 
-    const sched=[];
-    if(station.scheduledArrival) sched.push(`Ankomst ${formatClock(station.scheduledArrival)}`);
-    if(station.scheduledDeparture) sched.push(`avgång ${formatClock(station.scheduledDeparture)}`);
-    card.querySelector('[data-role="sched"]').textContent = sched.length ? `Tidtabell: ${sched.join(', ')}` : 'Ingen tidtabell för stationen';
+    card.querySelector('[data-role="sched"]').textContent = scheduleText(station);
     card.querySelector('[data-role="geo"]').textContent = `${Math.round(station.radius)} m radie${station.ownCenter?' · egen mittpunkt':''}`;
     const resetBtn=card.querySelector('[data-action="reset-pos"]');
     if(resetBtn) resetBtn.hidden=!station.ownCenter;
@@ -2772,8 +2821,8 @@
     const tripSeconds=tripStart&&tripEnd?(new Date(tripEnd)-new Date(tripStart))/1000:null;
 
     let endDelay='–';
-    if(last.actualArrival && last.scheduledArrival){
-      const m=Math.round((new Date(last.actualArrival)-new Date(last.scheduledArrival))/60000);
+    if(last.actualArrival && planArr(last)){
+      const m=Math.round((new Date(last.actualArrival)-new Date(planArr(last)))/60000);
       endDelay = Math.abs(m)<=1 ? 'I tid' : (m>0?`+${m} min`:`${m} min`);
     }
 
@@ -2794,10 +2843,12 @@
         parts.push('<span>missad – avbrott</span>');
       }else{
         if(idx>0 || st.actualArrival){
-          parts.push(`<span>↓ <strong>${shown(st.actualArrival, st.arrivalWindow)}</strong>${st.scheduledArrival?` <small>(${formatClock(st.scheduledArrival)})</small>`:''}${delayBadge(st.actualArrival, st.scheduledArrival)}</span>`);
+          const pa=planArr(st);
+          parts.push(`<span>↓ <strong>${shown(st.actualArrival, st.arrivalWindow)}</strong>${pa?` <small>(${formatClock(pa)})</small>`:''}${delayBadge(st.actualArrival, pa)}</span>`);
         }
         if(idx<stops.length-1 || st.actualDeparture){
-          parts.push(`<span>↑ <strong>${shown(st.actualDeparture, st.departureWindow)}</strong>${st.scheduledDeparture?` <small>(${formatClock(st.scheduledDeparture)})</small>`:''}${delayBadge(st.actualDeparture, st.scheduledDeparture)}</span>`);
+          const pd=planDep(st);
+          parts.push(`<span>↑ <strong>${shown(st.actualDeparture, st.departureWindow)}</strong>${pd?` <small>(${formatClock(pd)})</small>`:''}${delayBadge(st.actualDeparture, pd)}</span>`);
         }
       }
       if(st.actualArrival && st.actualDeparture && idx>0 && idx<stops.length-1){
@@ -3408,7 +3459,7 @@
     const logs=loadLogs();
     const entry={
       id:state.journeyId||Date.now().toString(36),
-      format:2,
+      format:3,
       appVersion:APP_VERSION,
       trainNumber:state.trainNumber,
       vehicleType:state.vehicleType,
@@ -3430,6 +3481,8 @@
           actualDeparture:st.actualDeparture,
           scheduledArrival:st.scheduledArrival,
           scheduledDeparture:st.scheduledDeparture,
+          operationalArrival:st.operationalArrival||null,
+          operationalDeparture:st.operationalDeparture||null,
           arrivalSource:st.arrivalSource,
           departSource:st.departSource,
           shouldStop:st.shouldStop,
@@ -3888,7 +3941,10 @@
 
   // CSV med en rad per station: semikolon och citattecken, som Excel med svenska inställningar vill ha
   function logsCsv(logs){
-    const rows=[['Datum','Tåg','Fordon','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa']];
+    // Schema Ank/Avg är tågorderns tider när de finns (kolumnen Tidtabell säger vilka); de annonserade står sist.
+    // Utan tågorderns tider är Schema Ank tom vid mellanstationer där annonserad ankomst = avgång (se planArr).
+    const rows=[['Datum','Tåg','Fordon','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa','Tidtabell','Annonserad Ank','Annonserad Avg']];
+    const clock=v=>v?new Date(v).toLocaleTimeString('sv-SE'):'';
     logs.forEach(log=>{
       const logDate=log.startedAt?new Date(log.startedAt).toLocaleDateString('sv-SE'):'';
       const trainNum=log.trainNumber||'';
@@ -3898,14 +3954,16 @@
       (log.stops||[]).forEach((st, idx)=>{
         const arr=st.actualArrival?new Date(st.actualArrival).toLocaleTimeString('sv-SE'):'';
         const dep=st.actualDeparture?new Date(st.actualDeparture).toLocaleTimeString('sv-SE'):'';
-        const schArr=st.scheduledArrival?new Date(st.scheduledArrival).toLocaleTimeString('sv-SE'):'';
-        const schDep=st.scheduledDeparture?new Date(st.scheduledDeparture).toLocaleTimeString('sv-SE'):'';
+        const pa=planArr(st);
+        const schArr=clock(pa);
+        const schDep=clock(planDep(st));
         let delay='';
-        if(st.actualArrival&&st.scheduledArrival){
-          delay=Math.round((new Date(st.actualArrival)-new Date(st.scheduledArrival))/60000);
+        if(st.actualArrival&&pa){
+          delay=Math.round((new Date(st.actualArrival)-new Date(pa))/60000);
         }
         const source=st.arrivalSource||'';
-        rows.push([logDate,trainNum,vehicleType,fromSt,toSt,st.name,idx+1,arr,dep,schArr,schDep,delay,source]);
+        const basis=hasOperationalTimes(st) ? 'tågorder' : (st.scheduledArrival||st.scheduledDeparture ? 'annonserad' : '');
+        rows.push([logDate,trainNum,vehicleType,fromSt,toSt,st.name,idx+1,arr,dep,schArr,schDep,delay,source,basis,clock(st.scheduledArrival),clock(st.scheduledDeparture)]);
       });
     });
     return rows.map(r=>r.map(c=>'"'+(c+'').replace(/"/g,'""')+'"').join(';')).join('\n');
@@ -4149,6 +4207,7 @@
           <INCLUDE>ActivityType</INCLUDE>
           <INCLUDE>OperationalTrainNumber</INCLUDE>
           <INCLUDE>DepartureDateOTN</INCLUDE>
+          <INCLUDE>LocationDateTimeOTN</INCLUDE>
           <INCLUDE>Advertised</INCLUDE>
         </QUERY>
       </REQUEST>`;
@@ -4173,10 +4232,15 @@
       const timetable = {};
       const stationStops = new Set();
 
+      // AdvertisedTimeAtLocation är den annonserade tiden (den resenärerna ser). Vid mellanstationer är annonserad
+      // ankomst ofta samma minut som avgången. LocationDateTimeOTN är tågorderns tid (driftstiden), till exempel
+      // Vedum 2026-11-25 tåg 23349: annonserad ankomst 12:01, tågorderns ankomst 12:00, avgång 12:01.
       announcements.forEach(ann => {
         const sig = ann.LocationSignature;
         const time = ann.AdvertisedTimeAtLocation;
         const activity = ann.ActivityType;
+        const otn = ann.LocationDateTimeOTN ? new Date(ann.LocationDateTimeOTN) : null;
+        const operational = otn && !isNaN(otn.getTime()) ? otn : null;
 
         if(!sig || !time) return;
 
@@ -4184,9 +4248,11 @@
 
         if(activity === 'Ankomst') {
           timetable[sig].arrival = new Date(time);
+          timetable[sig].operationalArrival = operational;
           timetable[sig].hasArrival = true;
         } else if(activity === 'Avgang') {
           timetable[sig].departure = new Date(time);
+          timetable[sig].operationalDeparture = operational;
           timetable[sig].hasDeparture = true;
         }
       });
@@ -4266,8 +4332,8 @@
         excludeInboundRun: !!(stop.excludeInboundRun || stop.exclude),
         notes: stop.notes || ''
       };
-      // Fält från format 2 bevaras när de finns
-      for(const key of ['sig','lat','lon','radius','arrivalWindow','departureWindow','missedReason']){
+      // Fält från format 2 och 3 bevaras när de finns
+      for(const key of ['sig','lat','lon','radius','arrivalWindow','departureWindow','missedReason','operationalArrival','operationalDeparture']){
         if(stop[key]!==undefined) out[key]=stop[key];
       }
       return out;

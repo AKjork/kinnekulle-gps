@@ -464,6 +464,7 @@
       </label>
     </div>
     <p class="meta" id="selectionLine"><span id="statTrips">0</span> körningar i urvalet<span id="trackLine"></span></p>
+    <p class="meta" id="basisLine" title="Trafikverkets annonserade tider har vid de flesta mellanstationer samma minut för ankomst och avgång, fast tågordern har ankomsten en minut tidigare. Därför jämförs bara körningar med tågorderns tider mot tidtabellen." hidden></p>
   </div>
 
   <div class="tabs">
@@ -489,7 +490,7 @@
             <thead><tr>
               <th>Tåg</th>
               <th>Sträcka</th>
-              <th class="num" title="Körningar med tidtabell">Körningar</th>
+              <th class="num" title="Körningar med tågorderns tider">Körningar</th>
               <th class="num" title="Avvikelse vid avgång från första mätta station, median (min)">Avgång start</th>
               <th class="num" title="Avvikelse vid ankomst till sista mätta station, median (min)">Ankomst slut</th>
               <th class="num" title="Planerad restid − vad tåget behöver: sträckornas tid och tågets egna uppehåll utan väntan (min). Positivt = tid över, negativt = för lite tid">Tid över</th>
@@ -500,7 +501,7 @@
           </table>
         </div>
         <div id="trainDetail"></div>
-        <p class="meta no-print">Klicka på ett tåg för att se dess sträckor, uppehåll och gångerna det tappade tid. <strong>Sträckan tar</strong> = median av mätta gångtider för alla tåg som stannade och passerade som tidtabellen säger; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Tid över</strong> = planerad restid − vad tåget behöver (sträckornas tid och tågets egna uppehåll utan väntan). <strong>Marginal gångtid</strong> per sträcka = planerad gångtid − vad sträckan tar; den räknar inte med uppehållen, som ofta ryms i den planerade gångtiden när ankomst och avgång har samma minut. <strong>Tappad tid</strong> vid en station = avgångens avvikelse − ankomstens försening (tidig ankomst räknas som 0), alltså hur mycket längre tåget stod än tidtabellen gav utrymme för. Vid första mätta stationen är orsaken okänd (till exempel ett sent inkommande tåg): den visas som Avgång från start i tågkortet men räknas inte i Tappat tid. Resandeantal finns inte i mätningarna; datum, veckodag och klockslag visas så att mönster syns.</p>
+        <p class="meta no-print">Klicka på ett tåg för att se dess sträckor, uppehåll och gångerna det tappade tid. <strong>Sträckan tar</strong> = median av mätta gångtider för alla tåg som stannade och passerade som tidtabellen säger; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Tid över</strong> = planerad restid − vad tåget behöver (sträckornas tid och tågets egna uppehåll utan väntan). <strong>Marginal gångtid</strong> per sträcka = planerad gångtid − vad sträckan tar; den räknar inte med uppehållen. Planerade tider är tågorderns (driftstiden från Trafikverket), och bara körningar som har dem jämförs. <strong>Tappad tid</strong> vid en station = avgångens avvikelse − ankomstens försening (tidig ankomst räknas som 0), alltså hur mycket längre tåget stod än tidtabellen gav utrymme för. Vid första mätta stationen är orsaken okänd (till exempel ett sent inkommande tåg): den visas som Avgång från start i tågkortet men räknas inte i Tappat tid. Resandeantal finns inte i mätningarna; datum, veckodag och klockslag visas så att mönster syns.</p>
       </div>
     </div>
   </div>
@@ -539,7 +540,7 @@
         </div>
         <div id="segmentDetail"></div>
         <div id="unplannedSection"></div>
-        <p class="meta no-print">Varje rad är en sträcka med ett planerat stoppmönster. <strong>Sträckan tar</strong> är medianen för alla tåg i urvalet som stannade och passerade som tidtabellen säger, även körningar utan tidtabell; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Planerad tid per tåg</strong> visar varje planerad gångtid med marginalen mot vad sträckan tar inom parentes och tågen som har den. <strong>Snål och generös</strong>: något tåg har för lite tid och något annat för mycket. Marginalen gäller gångtiden: när ankomst och avgång har samma minut i tidtabellen ryms uppehållet i den planerade gångtiden, så se Tid över i Per tåg för hela tåget. Klicka på en rad för att se mätningarna.</p>
+        <p class="meta no-print">Varje rad är en sträcka med ett planerat stoppmönster. <strong>Sträckan tar</strong> är medianen för alla tåg i urvalet som stannade och passerade som tidtabellen säger, även körningar utan tidtabell; med färre än 3 sådana mätningar används alla mätningar på sträckan. <strong>Planerad tid per tåg</strong> visar varje planerad gångtid med marginalen mot vad sträckan tar inom parentes och tågen som har den. <strong>Snål och generös</strong>: något tåg har för lite tid och något annat för mycket. Marginalen gäller gångtiden enligt tågordern, utan uppehållen; se Tid över i Per tåg för hela tåget. Bara körningar med tågorderns tider har planerad gångtid. Klicka på en rad för att se mätningarna.</p>
       </div>
     </div>
   </div>
@@ -690,6 +691,7 @@
     btnClearFilters: document.getElementById('btnClearFilters'),
     chkSkipUnplanned: document.getElementById('chkSkipUnplanned'),
     statTrips: document.getElementById('statTrips'),
+    basisLine: document.getElementById('basisLine'),
     trackLine: document.getElementById('trackLine')
   };
 
@@ -1056,7 +1058,9 @@
     }
     // Samma urval i alla flikar (datum, tid på dygnet och dag i lokal tid)
     const filter = currentFilter();
-    els.statTrips.textContent = allLogs.filter(log => AN.runMatches(log, filter)).length;
+    const matched = allLogs.filter(log => AN.runMatches(log, filter));
+    els.statTrips.textContent = matched.length;
+    updateBasisLine(matched);
     updateTrackLine();
     tState = timetableData();
     renderTrains();
@@ -1074,6 +1078,16 @@
     motionMap = AN.motionTracks(allLogs, allTracks);
   }
 
+  // Vilka körningar som jämförs mot tidtabellen: bara de med tågorderns tider (appversion 2026-11-25f och senare)
+  function updateBasisLine(matched){
+    const otn = matched.filter(AN.hasTimetable).length;
+    const adv = matched.filter(AN.hasAdvertisedOnly).length;
+    els.basisLine.hidden = !adv;
+    els.basisLine.textContent = adv
+      ? `Jämförelser mot tidtabellen bygger på ${otn} körningar med tågorderns tider. ${adv} körningar har bara Trafikverkets annonserade tider (appen före version 2026-11-25f) och räknas bara i det som mäts: vad sträckorna tar, uppehåll och GPS-spår.`
+      : '';
+  }
+
   function updateTrackLine(){
     const n = trackInfo.size;
     els.trackLine.textContent = trackStatus ? ' · ' + trackStatus
@@ -1082,6 +1096,7 @@
 
   function showEmpty(){
     els.statTrips.textContent = '0';
+    els.basisLine.hidden = true;
     updateTrackLine();
     lastTimetable = null;
     tState = null;
@@ -1194,7 +1209,8 @@
     const obs = AN.segmentObservations(base, { tolerance: tol, tracks: trackInfo });
     const needs = AN.segmentNeeds(obs, { skipUnplanned });
     const trainRuns = filter.train ? base.filter(r => String(r.trainNumber || '') === filter.train) : base;
-    const withTimetable = trainRuns.filter(r => (r.stops || []).some(s => s.scheduledArrival || s.scheduledDeparture));
+    // Bara körningar med tågorderns tider jämförs mot tidtabellen (se railtimer-analys.js, plannedArrival)
+    const withTimetable = trainRuns.filter(AN.hasTimetable);
     const stationType = els.filterStationType.value;
     return {
       tol, filter, stationType, route: onRoute ? from + ' → ' + to : '', skipUnplanned,
@@ -1218,7 +1234,7 @@
     const content = document.getElementById('trainsContent');
     const d = tState;
     if(!d || !d.trains.rows.length){
-      summary.textContent = 'Inga körningar med tidtabellstider i urvalet.';
+      summary.textContent = 'Inga körningar med tågorderns tider i urvalet. Körningar från appen före version 2026-11-25f har bara annonserade tider och jämförs inte mot tidtabellen.';
       content.style.display = 'none';
       openTrain = '';
       document.getElementById('trainDetail').innerHTML = '';
@@ -1226,11 +1242,11 @@
     }
     content.style.display = '';
     const w = d.trains.withoutTimetable;
-    summary.textContent = `Bygger på ${d.timetableRuns} körningar med tidtabell av ${d.runCount} i urvalet · ${d.trains.rows.length} tåg · period ${periodText(d.period)} · tolerans ${fmtTol(d.tol)}` +
-      (w.trains ? ` · ${w.trains} tågnummer utan tidtabell (${w.runs} körningar) visas inte` : '') +
+    summary.textContent = `Bygger på ${d.timetableRuns} körningar med tågorderns tider av ${d.runCount} i urvalet · ${d.trains.rows.length} tåg · period ${periodText(d.period)} · tolerans ${fmtTol(d.tol)}` +
+      (w.trains ? ` · ${w.trains} tågnummer utan tågorderns tider (${w.runs} körningar) visas inte` : '') +
       (d.route ? ` · sträcka ${d.route}` : '');
     document.getElementById('trainsBalance').innerHTML = balanceHtml(d.balance,
-      'Var tiden går i en hel körning med tidtabell, median för alla tåg i urvalet');
+      'Var tiden går i en hel körning med tågorderns tider, median för alla tåg i urvalet');
     document.querySelector('#trainsTable tbody').innerHTML = d.trains.rows.map(r => `<tr data-train="${esc(r.key)}">
       <td>${esc(r.label)}</td>
       <td>${esc(r.routeLabel)}</td>
@@ -1261,7 +1277,7 @@
     const r = tState && tState.trains.rows.find(x => x.key === openTrain);
     if(!r){ el.innerHTML = ''; return; }
     const tol = tState.tol;
-    let html = `<h3>Tåg ${esc(r.label)} · ${esc(r.routeLabel)} · ${r.timetableRuns} körningar med tidtabell` +
+    let html = `<h3>Tåg ${esc(r.label)} · ${esc(r.routeLabel)} · ${r.timetableRuns} körningar med tågorderns tider` +
       (r.runCount > r.timetableRuns ? ` (av ${r.runCount})` : '') + ` · period ${esc(periodText(r.period))}</h3>` +
       `<div class="report-actions no-print"><button class="ghost" data-proposal="${esc(r.key)}">Tidtabellsförslag för tåget</button></div>`;
 
@@ -1436,7 +1452,7 @@
 
   function trainsMeta(d){
     const meta = [
-      ['Bygger på', `${d.timetableRuns} körningar med tidtabell (av ${d.runCount} i urvalet), ${d.trains.rows.length} tåg`],
+      ['Bygger på', `${d.timetableRuns} körningar med tågorderns tider (av ${d.runCount} i urvalet), ${d.trains.rows.length} tåg`],
       ['Period', periodText(d.period)],
       ['Urval', describeFilter(d.route ? 'Sträcka: ' + d.route : '')],
       ['Tolerans', fmtTol(d.tol)]
@@ -1452,7 +1468,7 @@
     if(!d || !d.trains.rows.length) return null;
     const sections = [{
       title: 'Tåg',
-      header: ['Tåg', 'Sträcka', 'Körningar med tidtabell', 'Körningar totalt', 'Avgång start median (min)', 'Ankomst slut median (min)',
+      header: ['Tåg', 'Sträcka', 'Körningar med tågorderns tider', 'Körningar totalt', 'Avgång start median (min)', 'Ankomst slut median (min)',
         'Tid över (min)', 'Restid planerad (min)', 'Restid behövs (min)', 'Gångtidsmarginal summa (min)', 'Sträckor med marginal',
         'Sträckor totalt', 'Gånger tappat tid', 'Mest tappat (min)'],
       rows: d.trains.rows.map(r => [r.label, r.routeLabel, r.timetableRuns, r.runCount, r.startDelay.median, r.endDelay.median,
@@ -1507,7 +1523,7 @@
     const content = document.getElementById('segmentsContent');
     const d = tState;
     if(!d || !d.segments.length){
-      summary.textContent = 'Inga sträckor med tidtabell i urvalet.';
+      summary.textContent = 'Inga sträckor med tågorderns tider i urvalet.';
       content.style.display = 'none';
       openSegment = '';
       document.getElementById('segmentDetail').innerHTML = '';
@@ -1515,7 +1531,7 @@
     }
     content.style.display = '';
     const differing = d.segments.filter(r => r.plans.length > 1).length;
-    summary.textContent = `${d.segments.length} sträckor med tidtabell, ${differing} med olika planerad tid för olika tåg · vad sträckan tar bygger på ${d.base.length} körningar (alla tåg i urvalet) · period ${periodText(AN.period(d.base))} · tolerans ${fmtTol(d.tol)}` +
+    summary.textContent = `${d.segments.length} sträckor med tågorderns tider, ${differing} med olika planerad tid för olika tåg · vad sträckan tar bygger på ${d.base.length} körningar (alla tåg i urvalet) · period ${periodText(AN.period(d.base))} · tolerans ${fmtTol(d.tol)}` +
       (d.filter.train ? ` · sträckor som tåg ${d.filter.train} kör` : '') + (d.route ? ` · sträcka ${d.route}` : '') +
       (d.trackedObs ? ` · ${d.trackedObs} mätningar har GPS-spår` + (d.skipUnplanned ? `, ${d.skippedObs} av dem stod still mellan stationerna och räknas inte` : '') : '');
     renderUnplanned();
@@ -1550,7 +1566,7 @@
       if(!t) continue;
       for(const leg of t.legs) if(leg.key === r.segment) legs.push({ leg, date: AN.localDate(AN.runStart(run)), train: run.trainNumber || '' });
     }
-    el.innerHTML = `<h3>${esc(r.segment)} (${esc(AN.PATTERN_LABELS[r.pattern])}) – ${list.length} mätningar med tidtabell</h3>` +
+    el.innerHTML = `<h3>${esc(r.segment)} (${esc(AN.PATTERN_LABELS[r.pattern])}) – ${list.length} mätningar med tågorderns tider</h3>` +
       (legs.length ? `<h3>Fartprofil (${legs.length} körningar med GPS-spår)</h3>` + speedChartHtml(legs) : '') +
       '<div class="table-wrap"><table id="segmentObs"><thead><tr><th>Datum</th><th>Tåg</th>' +
       '<th class="num">Planerad (min)</th><th class="num">Verklig (min)</th><th>Stannade</th>' +
@@ -1594,7 +1610,7 @@
   function segmentsMeta(d){
     const show = document.getElementById('segmentsShow');
     const meta = [
-      ['Bygger på', `${d.segments.length} sträckor med tidtabell; vad sträckan tar från ${d.base.length} körningar (alla tåg i urvalet)` +
+      ['Bygger på', `${d.segments.length} sträckor med tågorderns tider; vad sträckan tar från ${d.base.length} körningar (alla tåg i urvalet)` +
         (d.skippedObs ? `, utan ${d.skippedObs} mätningar där tåget stod still mellan stationerna` : '')],
       ['Period', periodText(AN.period(d.base))],
       ['Urval', describeFilter(d.route ? 'Sträcka: ' + d.route : '')],
@@ -1680,14 +1696,14 @@
     document.getElementById('ttResult').innerHTML = '';
     if(isNew){ renderNewTimetable(); return; }
     if(!rows.length){
-      summary.textContent = 'Inga tåg med tidtabell i urvalet. Välj Nytt tåg för att bygga en tidtabell från mätningarna.';
+      summary.textContent = 'Inga tåg med tågorderns tider i urvalet. Välj Nytt tåg för att bygga en tidtabell från mätningarna.';
       return;
     }
     if(isAll){ renderAllTimetables(); return; }
     const legSource = document.getElementById('ttLegSource').value;
     const p = AN.proposeTrainTimetable(tState.trainRuns, tState.needs, train, { basis: document.getElementById('ttTimeBasis').value, legSource });
     if(p.error){
-      summary.textContent = `Tåg ${train} saknar körningar med tidtabell i urvalet.`;
+      summary.textContent = `Tåg ${train} saknar körningar med tågorderns tider i urvalet.`;
       return;
     }
     lastTimetable = p;
@@ -1852,12 +1868,12 @@
 
   // ── Tidtabell: nytt tåg från Station 1 till Station 2 ──
 
-  const DWELL_SOURCE_LABELS = { matt: 'mätt', 'utan-tidtabell': 'mätt utan tidtabell', angivet: 'angivet', schablon: 'schablon', planerat: 'planerat' };
+  const DWELL_SOURCE_LABELS = { matt: 'mätt', 'utan-tidtabell': 'mätt utan tågorderns tider', angivet: 'angivet', schablon: 'schablon', planerat: 'planerat' };
 
   // Varifrån uppehållet kommer, t.ex. "mätt 14, 12 väntade in avgångstiden"
   function dwellSourceText(r){
     if(r.dwellSource === 'matt') return `mätt ${r.dwellN}` + (r.dwellWaited ? `, ${r.dwellWaited} väntade in avgångstiden` : '');
-    if(r.dwellSource === 'utan-tidtabell') return `mätt utan tidtabell ${r.dwellN}`;
+    if(r.dwellSource === 'utan-tidtabell') return `mätt utan tågorderns tider ${r.dwellN} (kan innehålla väntan)`;
     return DWELL_SOURCE_LABELS[r.dwellSource] || 'saknas';
   }
 
@@ -1979,7 +1995,7 @@
     if(p.missing.length){
       html += `<p class="tt-note">Saknar mätningar: ${esc(p.missing.join(', '))}. Tiderna efter det kan inte räknas fram.</p>`;
     }
-    html += '<p class="meta">Gångtiderna är vad sträckorna tar för alla tåg i urvalet (vald tidsbas), med stopp och passage som du valt. Uppehållen är vad tåg med vanligt kort planerat uppehåll (högst 2 min) står vid stationen, utan väntan på tidtabellen – eller det du skrivit in. Har tågen väntat in avgångstiden (kommit före och åkt på avgångsminuten) visar mätningen bara att uppehållet räckte; de kan ha behövt kortare tid. Saknar stationen tidtabell används tågens verkliga uppehåll där (högst 5 min), och saknas mätningar helt ett vanligt uppehåll vid banans stationer (schablon). Välj Tid på dygnet och Dag i filtren för att bygga på till exempel morgontrafiken. Klockslagen är exakta tider avrundade till hela minuter. Möten och anslutningar ingår inte.</p>';
+    html += '<p class="meta">Gångtiderna är vad sträckorna tar för alla tåg i urvalet (vald tidsbas), med stopp och passage som du valt. Uppehållen är vad tåg med vanligt kort planerat uppehåll (högst 2 min) står vid stationen, utan väntan på tidtabellen – eller det du skrivit in. Har tågen väntat in avgångstiden (kommit före och åkt på avgångsminuten) visar mätningen bara att uppehållet räckte; de kan ha behövt kortare tid. Finns inga sådana mätningar med tågorderns tider används tågens hela verkliga uppehåll där (högst 5 min), även från körningar med bara annonserade tider – det kan innehålla väntan på avgångstiden, och saknas mätningar helt ett vanligt uppehåll vid banans stationer (schablon). Välj Tid på dygnet och Dag i filtren för att bygga på till exempel morgontrafiken. Klockslagen är exakta tider avrundade till hela minuter. Möten och anslutningar ingår inte.</p>';
     document.getElementById('ttResult').innerHTML = html;
   }
 
@@ -2105,7 +2121,7 @@
       <td class="num">${fmtMin(t.a.actual.median)}</td><td class="num">${fmtMin(t.b.actual.median)}</td>${diffCell(t.diffActual, c.tol)}
       <td class="num">${fmtSigned(t.a.endDelay.median)}</td><td class="num">${fmtSigned(t.b.endDelay.median)}</td>${diffCell(t.diffEnd, c.tol)}
       <td class="num">${t.a.eventsPerRun == null ? '–' : AN.formatMinutes(t.a.eventsPerRun, 1)}</td><td class="num">${t.b.eventsPerRun == null ? '–' : AN.formatMinutes(t.b.eventsPerRun, 1)}</td></tr>`).join('')
-      : '<tr><td colspan="14" class="empty">Inga tåg med tidtabell i perioderna</td></tr>';
+      : '<tr><td colspan="14" class="empty">Inga tåg med tågorderns tider i perioderna</td></tr>';
     html += '</tbody></table></div>';
 
     const both = c.segments.filter(x => x.diff != null);
@@ -2681,10 +2697,10 @@
     if(!active) return;
     if(active.id === 'tabTrains'){
       if(tState && tState.trains.rows.length) preparePrint('trainsReport', TRAINS_TITLE, trainsMeta(tState));
-      else preparePrint('trainsReport', TRAINS_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga körningar med tidtabellstider i urvalet.']]);
+      else preparePrint('trainsReport', TRAINS_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga körningar med tågorderns tiderstider i urvalet.']]);
     }else if(active.id === 'tabSegments'){
       if(tState && tState.segments.length) preparePrint('segmentsReport', SEGMENTS_TITLE, segmentsMeta(tState));
-      else preparePrint('segmentsReport', SEGMENTS_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga sträckor med tidtabell i urvalet.']]);
+      else preparePrint('segmentsReport', SEGMENTS_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga sträckor med tågorderns tider i urvalet.']]);
     }else if(active.id === 'tabCompare'){
       if(lastCompare) preparePrint('compareReport', COMPARE_TITLE, compareMeta(lastCompare));
       else preparePrint('compareReport', COMPARE_TITLE, [['Urval', describeFilter()], ['Resultat', 'Båda perioderna behöver körningar.']]);
@@ -2693,7 +2709,7 @@
       else preparePrint('motionReport', MOTION_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga körningar med GPS-spår i urvalet.']]);
     }else if(active.id === 'tabTimetable'){
       if(lastTimetable) preparePrint('ttReport', timetableTitle(lastTimetable), ttMeta(lastTimetable));
-      else preparePrint('ttReport', TIMETABLE_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga tåg med tidtabell i urvalet.']]);
+      else preparePrint('ttReport', TIMETABLE_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga tåg med tågorderns tider i urvalet.']]);
     }
   }
   window.addEventListener('beforeprint', fillActivePrintHeader);

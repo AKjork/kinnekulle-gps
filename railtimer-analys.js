@@ -164,9 +164,33 @@
     return 'itid';
   }
 
-  // Passagepunkter har bara planerad avgång; den används då som planerad passagetid
-  function plannedDeparture(stop) { return toDate(stop.scheduledDeparture) || toDate(stop.scheduledArrival); }
-  function plannedArrival(stop) { return toDate(stop.scheduledArrival) || toDate(stop.scheduledDeparture); }
+  /* Planerade tider: bara tågorderns tider (driftstid, Trafikverkets LocationDateTimeOTN, fälten operationalArrival och
+     operationalDeparture från appversion 2026-11-25f). Körningar före det har bara annonserade tider (scheduledArrival,
+     scheduledDeparture), och de stämmer inte med tågordern:
+       - Vid de flesta mellanstationer är annonserad ankomst samma minut som avgången. Tågordern har ankomsten en minut
+         tidigare (23349 2026-11-25 Vedum: annonserad 12:01/12:01, tågorder 12:00/12:01). Uppehållet räknades då som
+         gångtid. 1 206 av 1 479 mellanstationer i datan 2026-11-25 hade samma annonserade ankomst och avgång.
+       - Annonserad avgång kan vara tidigare än tågorderns (Vara: 11:53 mot 11:54).
+     Annonserade tider används därför bara för ordning och gruppering (anyPlannedTime), aldrig för jämförelser.
+     Passage (inget planerat stopp): en tid gäller för både ankomst och avgång. */
+  function plannedArrival(stop) {
+    if (!stop) return null;
+    return toDate(stop.operationalArrival) || (plannedType(stop) === 'passage' ? toDate(stop.operationalDeparture) : null);
+  }
+  function plannedDeparture(stop) {
+    if (!stop) return null;
+    return toDate(stop.operationalDeparture) || (plannedType(stop) === 'passage' ? toDate(stop.operationalArrival) : null);
+  }
+  function hasOperational(stop) { return !!(stop && (toDate(stop.operationalArrival) || toDate(stop.operationalDeparture))); }
+  // Vilken planerad tid som helst (tågorder eller annonserad), avgång före ankomst: bara för att ordna stationer
+  function anyPlannedTime(stop) {
+    if (!stop) return null;
+    return toDate(stop.operationalDeparture) || toDate(stop.operationalArrival) || toDate(stop.scheduledDeparture) || toDate(stop.scheduledArrival);
+  }
+  function anyPlannedArrivalFirst(stop) {
+    if (!stop) return null;
+    return toDate(stop.operationalArrival) || toDate(stop.operationalDeparture) || toDate(stop.scheduledArrival) || toDate(stop.scheduledDeparture);
+  }
 
   function minutes(a, b) { return (b - a) / 60000; }
 
@@ -203,6 +227,7 @@
         const pDep = plannedDeparture(a);
         const pArr = plannedArrival(b);
         const planned = pDep && pArr && pArr >= pDep ? minutes(pDep, pArr) : null;
+        const orderAt = pDep || anyPlannedTime(a);
         const deviation = planned != null ? actual - planned : null;
         const tInfo = tracks ? tracks.get(info.runId) : null;
         const legIndex = i + (run.sliceOffset || 0); // index i hela körningen, även när den är avskuren
@@ -213,7 +238,7 @@
           fromType: stopType(a), toType: stopType(b),
           plannedPattern: patternOf(a, b, plannedType),
           actualPattern: patternOf(a, b, stopType),
-          order: pDep ? clockMinutes(pDep, info.start) : null,
+          order: orderAt ? clockMinutes(orderAt, info.start) : null,
           hasTrack: !!leg,
           unplannedStop: leg ? leg.stops.reduce((t, s) => t + s.minutes, 0) : null
         }, info));
@@ -277,8 +302,15 @@
 
   // ── Analys per tåg ──
 
+  // Har körningen tågorderns tider? Bara sådana körningar jämförs mot tidtabellen (se plannedArrival).
   function hasTimetable(run) {
-    return ((run && run.stops) || []).some(s => s.scheduledArrival || s.scheduledDeparture);
+    return ((run && run.stops) || []).some(hasOperational);
+  }
+
+  // Körning med bara annonserade tider (före appversion 2026-11-25f): räknas bara i det som mäts, inte mot tidtabellen
+  function hasAdvertisedOnly(run) {
+    const stops = (run && run.stops) || [];
+    return !stops.some(hasOperational) && stops.some(s => s.scheduledArrival || s.scheduledDeparture);
   }
 
   // Planerade tider jämförs på hela sekunder
@@ -360,8 +392,9 @@
           lost = departureDev - Math.max(arrivalDev, 0);
           dwell = aDep >= aArr ? minutes(aArr, aDep) : null;
         }
-        const sArr = toDate(s.scheduledArrival);
-        const sDep = toDate(s.scheduledDeparture);
+        // Planerat uppehåll enligt tågordern (bara när ankomsten finns där)
+        const sArr = toDate(s.operationalArrival);
+        const sDep = toDate(s.operationalDeparture);
         out.push({
           runId: info.runId, train: info.trainNumber, vehicleType: info.vehicleType,
           date: info.date, weekday: info.weekday, start: info.start,
@@ -412,7 +445,7 @@
     const base = runStart(run);
     const m = new Map();
     for (const s of run.stops || []) {
-      m.set(s.name, { arr: clockMinutes(s.scheduledArrival, base), dep: clockMinutes(s.scheduledDeparture, base) });
+      m.set(s.name, { arr: clockMinutes(plannedArrival(s), base), dep: clockMinutes(plannedDeparture(s), base) });
     }
     return m;
   }
@@ -496,7 +529,7 @@
     for (const run of runs || []) {
       const base = runStart(run);
       for (const s of run.stops || []) {
-        const c = clockMinutes(plannedArrival(s), base);
+        const c = clockMinutes(anyPlannedArrivalFirst(s), base);
         if (c == null) continue;
         if (!clocks.has(s.name)) clocks.set(s.name, []);
         clocks.get(s.name).push(c);
@@ -711,8 +744,10 @@
       for (const s of run.stops || []) {
         if (!current.has(s.name)) current.set(s.name, { arr: null, dep: null, type: plannedType(s) });
         const c = current.get(s.name);
-        if (c.arr == null && s.scheduledArrival) c.arr = clockMinutes(s.scheduledArrival, base);
-        if (c.dep == null && s.scheduledDeparture) c.dep = clockMinutes(s.scheduledDeparture, base);
+        const pa = plannedArrival(s);
+        const pd = plannedDeparture(s);
+        if (c.arr == null && pa) c.arr = clockMinutes(pa, base);
+        if (c.dep == null && pd) c.dep = clockMinutes(pd, base);
       }
     }
     for (const c of current.values()) {
@@ -731,7 +766,7 @@
         if (plannedType(s) !== 'stopp' || stopType(s) !== 'stopp') continue;
         const a = toDate(s.actualArrival);
         const d = toDate(s.actualDeparture);
-        const pa = toDate(s.scheduledArrival);
+        const pa = plannedArrival(s);
         const from = a && d && pa && pa > a && pa < d ? pa : a;
         if (!from || !d) continue;
         const m = minutes(from, d);
@@ -921,8 +956,10 @@
         const a = toDate(s.actualArrival);
         const d = toDate(s.actualDeparture);
         if (!a || !d) continue;
-        const pa = toDate(s.scheduledArrival);
-        const pd = toDate(s.scheduledDeparture);
+        // Tågorderns tider. Körningar utan dem (även de med bara annonserade tider) räknas som stopp utan tidtabell:
+        // hela det verkliga uppehållet, som kan innehålla väntan på avgångstiden
+        const pa = plannedArrival(s);
+        const pd = plannedDeparture(s);
         if (!pa && !pd) {
           const m = minutes(a, d);
           if (m > 0.05 && m <= MAX_UNTIMED_DWELL) { add(untimed, s.name, m); untimedAll.push(m); }
@@ -1753,7 +1790,7 @@
     stopType, plannedType, PATTERN_LABELS, classify, segmentObservations,
     segmentNeeds, stationTimes, trainVariants, summarizeTrains, segmentPlans, proposeTrainTimetable,
     routeBetween, proposeNewTimetable,
-    delayBreakdown, delayBalance, delayProfile,
+    delayBreakdown, delayBalance, delayProfile, hasTimetable, hasAdvertisedOnly, plannedArrival, plannedDeparture,
     trackPoints, analyzeTrack, analyzeTracks, unplannedStops, distanceM,
     MOTION_ACCEL, ZONE_BIN_M, LINE_BIN_M, ZONE_WINDOW_M, ZONE_SHARE, ZONE_MIN_RUNS,
     motionPoints, motionTracks, stationAnchor, motionZones,
