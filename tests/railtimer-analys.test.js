@@ -148,7 +148,8 @@ test('stats och formatMinutes', () => {
   close(s.median, 2.5, 'median');
   close(s.p90, 3.7, 'p90');
   close(s.mean, 2.5, 'medel');
-  assert.deepEqual(AN.stats([]), { n: 0, median: null, p90: null, mean: null });
+  close(s.p10, 1.3, 'p10');
+  assert.deepEqual(AN.stats([]), { n: 0, median: null, p90: null, mean: null, p10: null });
   assert.deepEqual([AN.formatMinutes(3.26), AN.formatMinutes(-1.04), AN.formatMinutes(null), AN.formatMinutes(2, 0)], ['3,3', '-1,0', '', '2']);
 });
 
@@ -515,4 +516,135 @@ test('proposeNewTimetable: utan tidtabell i urvalet räknas uppehållen och scha
   const p = AN.proposeNewTimetable(runs, needs, { from: 'A', to: 'D', stops: { C: true } });
   assert.deepEqual(p.rows.slice(1, 3).map(r => [r.station, r.dwellValue, r.dwellSource]), [['B', 0.6, 'utan-tidtabell'], ['C', 0.6, 'schablon']]);
   assert.deepEqual(p.missing, []);
+});
+
+// ── Försening längs linjen ──
+
+// A 07:00 → B 07:10/07:12 → C 07:20. Avgår 1 min sent, kör 2 min fortare till B, står 1 min för länge, kör som planerat.
+function delayRun(id, extra) {
+  return run(id, [
+    stop('A', { dep: [7, 1], sDep: [7, 0] }),
+    stop('B', { arr: [7, 9], dep: [7, 12], sArr: [7, 10], sDep: [7, 12] }),
+    stop('C', { arr: [7, 20], sArr: [7, 20] })
+  ], extra);
+}
+
+test('delayBreakdown: slut = start + gångtid + uppehåll', () => {
+  const b = AN.delayBreakdown(delayRun('d1'));
+  close(b.start, 1, 'start');
+  close(b.running, -2, 'gångtid'); // 8 mot 10 min, sedan 8 mot 8
+  close(b.dwell, 1, 'uppehåll');   // 3 mot 2 min
+  close(b.end, 0, 'slut');
+  close(b.start + b.running + b.dwell, b.end, 'summan');
+});
+
+test('delayBreakdown: saknad tid eller avskuren körning ger null', () => {
+  const r = delayRun('d2');
+  r.stops[1].actualDeparture = null;
+  assert.equal(AN.delayBreakdown(r), null);
+  assert.equal(AN.delayBreakdown(Object.assign(delayRun('d3'), { cutStart: true })), null);
+});
+
+test('delayProfile: avvikelse per station i tågets ordning, och balansen', () => {
+  const p = AN.delayProfile([delayRun('d4'), delayRun('d5')]);
+  assert.deepEqual(p.route, ['A', 'B', 'C']);
+  assert.equal(p.points[0].arr.n, 0, 'ingen ankomst vid första stationen');
+  close(p.points[0].dep.median, 1, 'avgång A');
+  close(p.points[1].arr.median, -1, 'ankomst B');
+  close(p.points[1].dep.median, 0, 'avgång B');
+  assert.equal(p.points[2].dep.n, 0, 'ingen avgång vid sista stationen');
+  assert.equal(p.balance.n, 2);
+  close(p.balance.running.median, -2, 'gångtid');
+  close(p.balance.sum.dwell, 2, 'summa uppehåll');
+});
+
+// ── GPS-spår ──
+
+// Spår längs en rak linje norrut från A (58.0, 13.0), 1 punkt/s. segments: [[sekunder, m/s], ...]
+function straightTrack(runId, t0, segments) {
+  const points = [];
+  let t = 0;
+  let d = 0;
+  for (const [secs, v] of segments) {
+    for (let k = 0; k < secs; k++) {
+      points.push([t * 1000, 58 + d / 111195, 13, 5, v, null, 0]);
+      t += 1;
+      d += v;
+    }
+  }
+  return { format: 1, runId, t0, fields: ['t_ms', 'lat', 'lon', 'acc_m', 'speed_ms', 'heading_deg', 'fixAge_ms'], points };
+}
+
+function trackRun(id, legSeconds) {
+  const t0 = new Date(2026, 9, 15, 7, 0, 0);
+  const r = run(id, [
+    Object.assign(stop('A', {}), { actualDeparture: t0.toISOString(), lat: 58, lon: 13, radius: 100 }),
+    Object.assign(stop('B', {}), { actualArrival: new Date(t0.getTime() + legSeconds * 1000).toISOString(), lat: 58 + 5000 / 111195, lon: 13, radius: 100 })
+  ]);
+  return { run: r, t0: t0.toISOString() };
+}
+
+test('analyzeTrack: stopp mitt på sträckan hittas, inte vid stationerna', () => {
+  // 20 m/s i 125 s (2,5 km), står 60 s, 20 m/s i 125 s → B 5 km bort
+  const { run: r, t0 } = trackRun('t1', 310);
+  const t = AN.analyzeTrack(r, straightTrack('t1', t0, [[125, 20], [60, 0], [125, 20]]));
+  assert.equal(t.legs.length, 1);
+  assert.equal(t.legs[0].stops.length, 1);
+  assert.ok(Math.abs(t.legs[0].stops[0].minutes - 59 / 60) < 1e-9, 'stoppets längd');
+  assert.ok(Math.abs(t.legs[0].stops[0].d - 2500) < 30, 'läget på sträckan');
+  assert.ok(Math.abs(t.legs[0].length - 5000) < 30, 'sträckans längd');
+});
+
+test('analyzeTrack: kort stillastående och falsk fart slås ihop, men under 10 s räknas inte', () => {
+  const { run: r, t0 } = trackRun('t2', 400);
+  // står 8 s (räknas inte), kör, står 6 s + 2 s falsk fart (1 m/s) + 6 s = ett stopp på 13 s
+  const t = AN.analyzeTrack(r, straightTrack('t2', t0, [[60, 20], [8, 0], [60, 20], [6, 0], [2, 1], [6, 0], [130, 20], [134, 0]]));
+  assert.equal(t.legs[0].stops.length, 1, 'ett stopp');
+  assert.ok(Math.abs(t.legs[0].stops[0].minutes * 60 - 13) < 1e-9, 'ihopslaget');
+});
+
+test('segmentObservations med spår och segmentNeeds utan körningar som stannade på linjen', () => {
+  const a = trackRun('t3', 310);
+  const b = trackRun('t4', 250);
+  const tracks = AN.analyzeTracks([a.run, b.run], [
+    straightTrack('t3', a.t0, [[125, 20], [60, 0], [125, 20]]),
+    straightTrack('t4', b.t0, [[250, 20]])
+  ]);
+  const obs = AN.segmentObservations([a.run, b.run], { tracks });
+  assert.deepEqual(obs.map(o => o.unplannedStop > 0), [true, false]);
+  assert.ok(obs.every(o => o.hasTrack));
+  const all = AN.segmentNeeds(obs).find(n => n.pattern === '*');
+  const skip = AN.segmentNeeds(obs, { skipUnplanned: true }).find(n => n.pattern === '*');
+  assert.equal(all.n, 2);
+  assert.equal(skip.n, 1);
+  assert.equal(skip.skipped, 1);
+  const list = AN.unplannedStops([a.run, b.run], tracks);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].segment, 'A → B');
+});
+
+// ── Jämför perioder ──
+
+test('comparePeriods: sträcka och tåg i period A mot B', () => {
+  const mk = (id, day, arrMin) => run(id, [
+    stop('A', { dep: [7, 0, 0, day], sDep: [7, 0, 0, day] }),
+    stop('B', { arr: [7, arrMin, 0, day], sArr: [7, 10, 0, day] })
+  ]);
+  const runs = [mk('p1', 1, 9), mk('p2', 2, 9), mk('p3', 3, 9), mk('p4', 20, 11), mk('p5', 21, 11), mk('p6', 22, 11)];
+  const c = AN.comparePeriods(runs, { from: '2026-10-01', to: '2026-10-10' }, { from: '2026-10-11', to: '2026-10-31' }, {});
+  assert.equal(c.a.runs, 3);
+  assert.equal(c.b.runs, 3);
+  const s = c.segments.find(x => x.key === 'A → B|SS');
+  close(s.a.median, 9, 'A');
+  close(s.b.median, 11, 'B');
+  close(s.diff, 2, 'skillnad');
+  const t = c.trains.find(x => x.train === '3344');
+  close(t.a.endDelay.median, -1, 'slut A');
+  close(t.diffEnd, 2, 'slut skillnad');
+  close(t.diffPlanned, 0, 'samma planerade restid');
+});
+
+test('defaultPeriods: B = sista 30 dagarna, A = före', () => {
+  const runs = [run('q1', [stop('A', { dep: [7, 0, 0, 1] })]), run('q2', [stop('A', { dep: [7, 0, 0, 31] })])];
+  assert.deepEqual(AN.defaultPeriods(runs, 30), { a: { from: '2026-10-01', to: '2026-10-01' }, b: { from: '2026-10-02', to: '2026-10-31' } });
 });

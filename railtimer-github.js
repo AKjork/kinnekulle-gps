@@ -398,13 +398,45 @@
     await Promise.all(Array.from({ length: workers }, worker));
     const imports = wanted.filter(f => f.path.startsWith('import/') && parsed.has(f.path)).map(f => parsed.get(f.path));
     const singles = wanted.filter(f => f.path.startsWith('korningar/') && parsed.has(f.path)).map(f => parsed.get(f.path));
-    return { runs: mergeRuns(imports, singles), newFiles, totalFiles: wanted.length, trackFiles, errors };
+    return { runs: mergeRuns(imports, singles), newFiles, totalFiles: wanted.length, trackFiles,
+      trackList: files.filter(f => /\.json$/i.test(f.path) && f.path.startsWith('gps-spar/')), errors };
+  }
+
+  /* GPS-spåren (gps-spar/…) till analysen. opts: { client, cache, files (trackList från loadRunsFromRepo, annars
+     läses trädet), concurrency }. Returnerar { tracks, newFiles, totalFiles, errors }. */
+  async function loadTracksFromRepo(opts) {
+    const files = (opts.files || (await opts.client.listTree()).filter(f => /\.json$/i.test(f.path) && f.path.startsWith('gps-spar/')))
+      .slice().sort((a, b) => a.path.localeCompare(b.path));
+    const tracks = [];
+    const errors = [];
+    let newFiles = 0;
+    const queue = files.slice();
+    async function worker() {
+      while (queue.length) {
+        const f = queue.shift();
+        try {
+          let json = opts.cache ? await opts.cache.get(f.sha) : undefined;
+          if (json === undefined) {
+            json = JSON.parse(await opts.client.getBlob(f.sha));
+            newFiles += 1;
+            if (opts.cache) await opts.cache.set(f.sha, json);
+          }
+          if (json && typeof json === 'object') tracks.push(json);
+        } catch (e) {
+          if (e instanceof GitHubError) throw e;
+          errors.push({ path: f.path, message: e.message });
+        }
+      }
+    }
+    const workers = Math.max(1, Math.min(opts.concurrency || 6, queue.length));
+    await Promise.all(Array.from({ length: workers }, worker));
+    return { tracks, newFiles, totalFiles: files.length, errors };
   }
 
   return {
     API, IMPORT_CHUNK, MIN_WRITE_INTERVAL_MS, DEFAULT_REPO, MESSAGES, GitHubError,
     parseRepo, localDate, runPath, trackPath, importPath, runCommitMessage, trackCommitMessage,
     encodeBase64, decodeBase64, createClient, testAccess,
-    normalizeState, planUpload, runUploadPass, mergeRuns, loadRunsFromRepo
+    normalizeState, planUpload, runUploadPass, mergeRuns, loadRunsFromRepo, loadTracksFromRepo
   };
 });

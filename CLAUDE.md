@@ -279,6 +279,8 @@ state.departureProvisionalIdx     // Index för station med provisorisk avgång
 
 ## Analys.html - Tidsanalysverktyg
 
+> Historik: lägena Gångtider/Uppehållstider och flikarna Diagram, Tabell, Avvikare och Detaljer nedan är borttagna (se 2026-11-25c).
+
 ### Översikt
 Fristående analysverktyg för att analysera sparade körningsloggar. Visar statistik för gångtider (tid mellan stationer) och uppehållstider (tid stillastående vid station).
 
@@ -598,3 +600,33 @@ Logiken för ankomst/avgång är **oförändrad** (regressionsfacit `tests/golde
 - `node --test "tests/*.test.js"` – även `tests/railtimer-karta.test.js` (graf, kortaste väg, glapp, förenkling, fråga, cache, nätfel).
 - `node tests/run-browser-tests.mjs karta` och `… resvy`.
 - Bilder: `--shot=resa`, `--shot=resa-vid-station`, `--shot=resa-liggande`.
+
+## Uppdatering (2026-11-25c): analysverktyget – längs linjen, GPS-spår och jämför perioder
+
+André 2026-11-25: gå igenom analysverktyget och förbättra det.
+
+Dataunderlag (`railtimer-data`, 213 körningar 2025-10-29 – 2026-11-24): gångtiderna är jämna (i median 0,1 min från sträckans median), och manuella stämplingar är lika exakta som GPS. I 118 hela körningar med tidtabell kör tågen i median 4,3 min fortare än planerad gångtid och står 3,2 min längre vid stationerna än planerat. Marginalen ligger alltså i gångtiderna och används upp vid stationerna.
+
+### Borttaget
+- Lägena **Gångtider/Uppehållstider**, sifferrutorna, *Slå ihop riktningar* och flikarna **Diagram, Tabell, Avvikare, Detaljer** med sina funktioner (`buildRunningSegments`, `buildDwellSegments`, `buildSegmentsBetweenStations`, `renderChart`, `renderOutliersTable` m.fl.). De skilde inte på stopp och passage, och Avvikare jämförde ett tågs medelvärde med spridningen för enskilda mätningar (fel), så små skillnader flaggades.
+- Kvar under filtret: en rad med antal körningar i urvalet (`#statTrips`) och antal körningar med GPS-spår.
+
+### Försening längs linjen (Per tåg)
+- **Var tiden går** (`delayBreakdown`, `delayBalance`): för en hel körning gäller exakt *ankomst slut = avgång start + gångtid + uppehåll*, där gångtid = Σ(verklig − planerad gångtid) och uppehåll = Σ(verkligt − planerat uppehåll; passage 0). Medianer visas som rutor överst i Per tåg (alla tåg) och i tågkortet. Körningar med saknad tid eller avskurna (`cutStart`) räknas inte.
+- **Diagram** i tågkortet (`delayProfile`, SVG utan bibliotek): avvikelse vid ankomst (fylld punkt) och avgång (ring) vid varje station, median och band för P10–P90. Muspekaren visar värde och antal. `stats` ger nu även `p10`.
+
+### GPS-spår
+- `railtimer-github.js`: `loadRunsFromRepo` ger `trackList`; `loadTracksFromRepo` hämtar `gps-spar/…` med samma cache (IndexedDB per sha). Analysen visas först och räknas om när spåren kommit. Importerade JSON-filer med `runId` och `points` läses som spår.
+- `analyzeTrack`/`analyzeTracks`: per sträcka (avgång A → ankomst B) fartprofil och **stillastående mellan stationerna**: minst 10 s under 2 km/h, utanför stationens radie + 150 m (utan koordinater: första och sista 30 s), noggrannhet högst 50 m. Stillaståenden med högst 5 s och 30 m glapp slås ihop (falsk fart).
+- `segmentObservations(runs, { tracks })` ger `hasTrack`, `unplannedStop` (minuter) och `legIndex` (index i hela körningen; `sliceRuns` sätter `sliceOffset`). `segmentNeeds(obs, { skipUnplanned })` räknar inte sådana mätningar och anger `skipped`.
+- Filtret **Räkna inte körningar som stod still mellan stationerna** (förvalt på).
+- **Sträckor**: listan *Stod still mellan stationerna* (`unplannedStops`) med datum, tåg, minuter, läge och om föraren redan undantagit sträckan (`excludeInboundRun`). Klick på en rad eller sträcka visar **fartprofilen** (fart mot km från avgång, en linje per körning, de som stod still i orange). Mätningstabellen har kolumnen *Stod still på linjen*. CSV-exporten har stoppen som egen del.
+- Datan 2026-11-25: 6 stopp i 51 spår; 5 av dem hade föraren redan undantagit (till exempel två signalstopp ca 0,7 km före Håkantorp). Spår finns från oktober 2026.
+
+### Jämför perioder (ny flik)
+- `comparePeriods(runs, a, b, opts)`: samma urval (filtrets datum används inte) i period A och B. Var tiden går per period; **tåg** per tågnummer (planerad och verklig restid, ankomst slut, gånger tappat per körning) så att en ny tidtabell syns som ändrad planerad restid; **sträckor** per verkligt stoppmönster med skillnad när båda har minst 3 mätningar. Skillnad större än toleransen färgas (rött längre/senare i B, blått kortare/tidigare).
+- Förval (`defaultPeriods`): B = de sista 30 dagarna med mätningar, A = allt före. Knapp för att återställa. Export till Excel och utskrift som i övriga flikar.
+
+### Tester
+- `node --test "tests/*.test.js"` (97) och `node tests/run-browser-tests.mjs analys` (25), nya: försening längs linjen, GPS-spår och Jämför perioder.
+- I en Linux-miljö som root fungerar webbläsartesterna med `CHROME_PATH=/usr/bin/google-chrome`.

@@ -343,3 +343,21 @@ test('klienten skickar token i Authorization och inga andra egna rubriker', asyn
   assert.equal(h.Authorization, 'Bearer test-token');
   assert.deepEqual(Object.keys(h).sort(), ['Accept', 'Authorization']);
 });
+
+test('loadTracksFromRepo: spåren hämtas en gång och läses sedan från cachen', async () => {
+  const env = setup();
+  const c = makeLog(3);
+  env.gh.putFileDirect(GH.runPath(c), JSON.stringify(c));
+  env.gh.putFileDirect(GH.trackPath(c), JSON.stringify({ format: 1, runId: c.id, points: [[0, 58, 13, 5, 0, null, 0]] }));
+  const cache = new Map();
+  const cacheAdapter = { get: async sha => cache.get(sha), set: async (sha, json) => { cache.set(sha, json); } };
+  const runs = await GH.loadRunsFromRepo({ client: env.client, cache: cacheAdapter });
+  assert.equal(runs.trackList.length, 1);
+  const first = await GH.loadTracksFromRepo({ client: env.client, cache: cacheAdapter, files: runs.trackList });
+  assert.equal(first.tracks.length, 1);
+  assert.equal(first.tracks[0].runId, c.id);
+  assert.equal(first.newFiles, 1);
+  const second = await GH.loadTracksFromRepo({ client: env.client, cache: cacheAdapter });
+  assert.equal(second.newFiles, 0, 'från cachen');
+  assert.equal(second.tracks.length, 1);
+});

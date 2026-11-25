@@ -774,7 +774,62 @@ test('analys: Sträckor visar vad sträckan tar och planerad tid per tåg', asyn
   const detail = w.document.getElementById('segmentDetail');
   assertEqual(detail.querySelector('h3').textContent, 'Filsbäck → Källby (Stopp–stopp) – 6 mätningar med tidtabell', 'rubrik');
   assertEqual(tableRows(w, 'segmentObs').length, 6, 'mätningar');
-  assertEqual(tableRows(w, 'segmentObs')[0].slice(4), ['som planerat', 'ja'], 'stannade och räknas');
+  assertEqual(tableRows(w, 'segmentObs')[0].slice(4), ['som planerat', 'inget spår', 'ja'], 'stannade, spår och räknas');
+});
+
+test('analys: försening längs linjen i tågkortet och var tiden går', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  w.__analys.showTrain('3344');
+  const chart = w.document.querySelector('#trainDetail #delayChart');
+  assert(chart, 'diagrammet visas');
+  const tips = Array.from(chart.querySelectorAll('title')).map(t => t.textContent);
+  assert(tips.length >= 4 && tips[0].includes('avgång'), 'ankomst och avgång per station: ' + tips.join(' | '));
+  assert(w.document.querySelector('#trainDetail #balanceBoxes').textContent.includes('hela körningar'), 'rutor för tåget');
+  assert(w.document.getElementById('trainsBalance').textContent.includes('min gångtid'), 'rutor för alla tåg');
+});
+
+// Spår 1 punkt/s rakt norrut från t0: segments [[sekunder, m/s], ...]
+function testTrack(runId, t0, segments) {
+  const points = [];
+  let t = 0, d = 0;
+  for (const [secs, v] of segments) for (let k = 0; k < secs; k++) { points.push([t * 1000, 58.5 + d / 111195, 13.1, 5, v, null, 0]); t++; d += v; }
+  return { format: 1, runId, trainNumber: '3344', t0, fields: ['t_ms', 'lat', 'lon', 'acc_m', 'speed_ms', 'heading_deg', 'fixAge_ms'], points };
+}
+
+test('analys: GPS-spår visar stopp mellan stationerna och dem räknas inte i Sträckan tar', async () => {
+  const w = await loadAnalysWith(againstRuns());
+  // f1 Lidköping 07:00 → Filsbäck 07:05: kör 2 min, står 1 min, kör 2 min
+  w.__analys.setTracks([testTrack('f1', atMin(420), [[120, 20], [60, 0], [121, 20]]), testTrack('f2', atMin(450), [[330, 15]])]);
+  assert(w.document.getElementById('selectionLine').textContent.includes('2 körningar har GPS-spår'), 'urvalsraden');
+  w.__analys.showTab('segments');
+  const summary = w.document.getElementById('segmentsSummary').textContent;
+  assert(summary.includes('1 av dem stod still mellan stationerna och räknas inte'), 'sammanfattning: ' + summary);
+  const rows = tableRows(w, 'unplannedTable');
+  assertEqual(rows.length, 1, 'ett stopp');
+  assertEqual([rows[0][0], rows[0][3], rows[0][4]], ['Lidköping → Filsbäck', '3344', '1,0'], 'stoppet');
+  w.document.querySelector('#unplannedTable tbody tr').click();
+  assert(w.document.querySelector('#speedChart polyline.stopped'), 'fartprofilen markerar körningen');
+  assertEqual(w.document.querySelectorAll('#speedChart polyline').length, 2, 'två körningar med spår');
+  const obs = tableRows(w, 'segmentObs').find(r => r[0] && r[5] === '1,0');
+  assert(obs && obs[6] === 'nej, stod still', 'räknas inte: ' + JSON.stringify(tableRows(w, 'segmentObs')));
+  w.document.getElementById('chkSkipUnplanned').click();
+  assert(!w.document.getElementById('segmentsSummary').textContent.includes('räknas inte'), 'med körningen');
+});
+
+test('analys: Jämför perioder per tåg och sträcka, med export', async () => {
+  const w = await loadAnalysWith(trainRuns());
+  w.__analys.showTab('compare');
+  w.__analys.setPeriods({ a: { from: '2026-10-13', to: '2026-10-14' }, b: { from: '2026-10-15', to: '2026-10-15' } });
+  const summary = w.document.getElementById('compareSummary').textContent;
+  assert(/^A 2026-10-13 – 2026-10-14: \d+ körningar · B 2026-10-15 – 2026-10-15: \d+ körningar/.test(summary), 'sammanfattning: ' + summary);
+  const trains = tableRows(w, 'cmpTrains');
+  assert(trains.some(r => r[0] === '3344'), 'tåg 3344: ' + JSON.stringify(trains));
+  assertEqual(tableRows(w, 'cmpBalance').map(r => r[0]), ['A', 'B'], 'var tiden går');
+  assert(tableRows(w, 'cmpSegments').length > 0, 'sträckor');
+  const csv = w.__analys.exportCompareCsv();
+  assert(csv.includes('"Period A";"2026-10-13 – 2026-10-14') && csv.includes('"Sträckor"'), 'csv');
+  w.__analys.setPeriods({ a: { from: '2026-01-01', to: '2026-01-02' }, b: { from: '2026-10-15', to: '2026-10-15' } });
+  assert(w.document.getElementById('compareSummary').textContent.includes('Båda behöver körningar'), 'tom period');
 });
 
 test('analys: export och utskrift av Sträckor', async () => {
@@ -828,7 +883,8 @@ test('analys: knappen i tågkortet öppnar tidtabellsförslaget, och Mot tidtabe
   assert(w.document.querySelector('#ttReport .print-header').textContent.includes('Tåg: 3344'), 'Ctrl+P');
   assertEqual(w.document.querySelector('.tab[data-tab="against"]'), null, 'fliken Mot tidtabell är borta');
   assertEqual(Array.from(w.document.querySelectorAll('.tab')).map(t => t.textContent),
-    ['Per tåg', 'Sträckor', 'Tidtabell', 'Diagram', 'Tabell', 'Avvikare', 'Detaljer'], 'flikarnas ordning');
+    ['Per tåg', 'Sträckor', 'Tidtabell', 'Jämför perioder'], 'flikarnas ordning');
+  assertEqual(w.document.querySelector('.mode-tab'), null, 'Gångtider/Uppehållstider är borta');
 });
 
 test('analys: repo och token ligger i ett inloggningsformulär som webbläsaren kan spara', async () => {

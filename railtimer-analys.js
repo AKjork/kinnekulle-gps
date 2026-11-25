@@ -183,8 +183,11 @@
   }
 
   // Gångtid per sträcka mellan intilliggande stationer, med planerad gångtid när tidtabell finns
+  // opts.tracks: Map körnings-id → analyzeTrack-resultat. Då får varje mätning hasTrack och unplannedStop
+  // (minuter stillastående mellan stationerna, 0 när tåget inte stannade).
   function segmentObservations(runs, opts) {
     const tol = opts && opts.tolerance != null ? opts.tolerance : DEFAULT_TOLERANCE;
+    const tracks = (opts && opts.tracks) || null;
     const out = [];
     for (const run of runs || []) {
       const stops = run.stops || [];
@@ -201,13 +204,18 @@
         const pArr = plannedArrival(b);
         const planned = pDep && pArr && pArr >= pDep ? minutes(pDep, pArr) : null;
         const deviation = planned != null ? actual - planned : null;
+        const tInfo = tracks ? tracks.get(info.runId) : null;
+        const legIndex = i + (run.sliceOffset || 0); // index i hela körningen, även när den är avskuren
+        const leg = tInfo ? tInfo.legs.find(l => l.index === legIndex) : null;
         out.push(Object.assign({
-          key: `${a.name} → ${b.name}`, from: a.name, to: b.name,
+          key: `${a.name} → ${b.name}`, from: a.name, to: b.name, index: i, legIndex,
           actual, planned, deviation, category: classify(deviation, tol),
           fromType: stopType(a), toType: stopType(b),
           plannedPattern: patternOf(a, b, plannedType),
           actualPattern: patternOf(a, b, stopType),
-          order: pDep ? clockMinutes(pDep, info.start) : null
+          order: pDep ? clockMinutes(pDep, info.start) : null,
+          hasTrack: !!leg,
+          unplannedStop: leg ? leg.stops.reduce((t, s) => t + s.minutes, 0) : null
         }, info));
       }
     }
@@ -231,8 +239,8 @@
 
   function stats(values) {
     const s = sortedValues(values);
-    if (!s.length) return { n: 0, median: null, p90: null, mean: null };
-    return { n: s.length, median: quantileSorted(s, 0.5), p90: quantileSorted(s, 0.9), mean: s.reduce((a, b) => a + b, 0) / s.length };
+    if (!s.length) return { n: 0, median: null, p90: null, mean: null, p10: null };
+    return { n: s.length, median: quantileSorted(s, 0.5), p90: quantileSorted(s, 0.9), mean: s.reduce((a, b) => a + b, 0) / s.length, p10: quantileSorted(s, 0.1) };
   }
 
   function groupBy(list, key) {
@@ -264,7 +272,7 @@
   // Körningarna avskurna till sträckan from → to (bara den riktningen). cutStart: körningen började före `from`,
   // så första stationen har en mätt ankomst och är en mellanstation (inte körningens start).
   function sliceRuns(runs, from, to) {
-    return directedRuns(runs, from, to).list.map(({ run, i, j }) => Object.assign({}, run, { stops: run.stops.slice(i, j + 1), cutStart: i > 0 }));
+    return directedRuns(runs, from, to).list.map(({ run, i, j }) => Object.assign({}, run, { stops: run.stops.slice(i, j + 1), cutStart: i > 0, sliceOffset: (run.sliceOffset || 0) + i }));
   }
 
   // ── Analys per tåg ──
@@ -287,21 +295,29 @@
   }
 
   /* Vad sträckan tar: mätta gångtider per sträcka och verkligt stoppmönster, från alla körningar i urvalet
-     (även körningar utan tidtabell), plus en rad per sträcka med alla mätningar (mönster '*'). */
-  function segmentNeeds(obs) {
+     (även körningar utan tidtabell), plus en rad per sträcka med alla mätningar (mönster '*').
+     opts.skipUnplanned: mätningar där GPS-spåret visar att tåget stannade mellan stationerna räknas inte
+     (signal, möte på linjen) – de säger inte vad sträckan tar. skipped = antal som inte räknades. */
+  function segmentNeeds(obs, opts) {
+    const skip = !!(opts && opts.skipUnplanned);
     const groups = new Map();
     const add = (o, pattern) => {
       const key = `${o.key}|${pattern}`;
       if (!groups.has(key)) groups.set(key, { key, segment: o.key, from: o.from, to: o.to, pattern, values: [] });
       groups.get(key).values.push(o.actual);
     };
+    const skipped = new Map();
     for (const o of obs || []) {
+      if (skip && o.unplannedStop > 0) {
+        for (const p of [o.actualPattern, '*']) skipped.set(`${o.key}|${p}`, (skipped.get(`${o.key}|${p}`) || 0) + 1);
+        continue;
+      }
       add(o, o.actualPattern);
       add(o, '*');
     }
     return Array.from(groups.values()).map(g => {
       const s = stats(g.values);
-      return { key: g.key, segment: g.segment, from: g.from, to: g.to, pattern: g.pattern, n: s.n, median: s.median, p90: s.p90, mean: s.mean };
+      return { key: g.key, segment: g.segment, from: g.from, to: g.to, pattern: g.pattern, n: s.n, median: s.median, p90: s.p90, mean: s.mean, skipped: skipped.get(g.key) || 0 };
     }).sort((a, b) => a.key.localeCompare(b.key));
   }
 
@@ -1002,6 +1018,280 @@
     };
   }
 
+  // ── Försening längs linjen ──
+
+  /* Var förseningen uppstår och försvinner i en körning med tidtabell från första till sista stationen:
+     slut = start + gångtid + uppehåll (exakt), där
+       start    = avgångsavvikelse vid första stationen,
+       gångtid  = Σ (verklig − planerad gångtid) per sträcka,
+       uppehåll = Σ (verkligt − planerat uppehåll) vid mellanstationerna (passage: planerat 0).
+     null när någon tid saknas (t.ex. avbrott) eller körningen är avskuren (cutStart). */
+  function delayBreakdown(run) {
+    const stops = (run && run.stops) || [];
+    if (stops.length < 2 || run.cutStart) return null;
+    const t = stops.map(s => ({
+      aa: toDate(s.actualArrival), ad: toDate(s.actualDeparture), pa: plannedArrival(s), pd: plannedDeparture(s)
+    }));
+    const first = t[0];
+    const last = t[t.length - 1];
+    if (!first.ad || !first.pd || !last.aa || !last.pa) return null;
+    let running = 0;
+    let dwell = 0;
+    for (let i = 0; i < t.length - 1; i++) {
+      const a = t[i];
+      const b = t[i + 1];
+      if (!a.ad || !a.pd || !b.aa || !b.pa) return null;
+      running += minutes(a.ad, b.aa) - minutes(a.pd, b.pa);
+      if (i + 1 < t.length - 1) {
+        if (!b.ad || !b.pd) return null;
+        dwell += minutes(b.aa, b.ad) - minutes(b.pa, b.pd);
+      }
+    }
+    return { start: minutes(first.pd, first.ad), running, dwell, end: minutes(last.pa, last.aa) };
+  }
+
+  // Medianer av delayBreakdown över körningarna; n = antal hela körningar
+  function delayBalance(runs) {
+    const list = (runs || []).filter(hasTimetable).map(delayBreakdown).filter(Boolean);
+    const pick = k => stats(list.map(b => b[k]));
+    return { n: list.length, start: pick('start'), running: pick('running'), dwell: pick('dwell'), end: pick('end'),
+      sum: list.reduce((acc, b) => ({ running: acc.running + b.running, dwell: acc.dwell + b.dwell }), { running: 0, dwell: 0 }) };
+  }
+
+  /* Avvikelse mot tidtabellen station för station för en tidtabells körningar (trainVariants): per station ankomst-
+     och avgångsavvikelse (median, P10, P90, antal). Rutten är tågets (routeOf). Används till diagrammet i Per tåg. */
+  function delayProfile(runs) {
+    const route = routeOf(runs);
+    const per = new Map(route.map(n => [n, { arr: [], dep: [] }]));
+    for (const run of runs || []) {
+      const stops = run.stops || [];
+      stops.forEach((s, k) => {
+        const p = per.get(s.name);
+        if (!p) return;
+        const aa = toDate(s.actualArrival);
+        const pa = plannedArrival(s);
+        const ad = toDate(s.actualDeparture);
+        const pd = plannedDeparture(s);
+        if ((k > 0 || run.cutStart) && aa && pa) p.arr.push(minutes(pa, aa));
+        if (k < stops.length - 1 && ad && pd) p.dep.push(minutes(pd, ad));
+      });
+    }
+    return {
+      route,
+      points: route.map(name => ({ station: name, arr: stats(per.get(name).arr), dep: stats(per.get(name).dep) })),
+      balance: delayBalance(runs)
+    };
+  }
+
+  // ── GPS-spår ──
+
+  const STILL_SPEED_MS = 2 / 3.6;    // samma tröskel som appen: under 2 km/h står tåget still
+  const MIN_UNPLANNED_S = 10;        // kortare stillastående mellan stationerna räknas inte som stopp
+  const STATION_MARGIN_M = 150;      // utanför stationens radie + så här mycket räknas positionen som linjen
+  const MAX_TRACK_ACC_M = 50;        // sämre noggrannhet än så hoppas över
+  const MERGE_GAP_S = 5;             // två stillaståenden med kort glapp (falsk fart) är samma stopp
+  const MERGE_DIST_M = 30;
+
+  function distanceM(a, b) {
+    const R = 6371000;
+    const rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad;
+    const dLon = (b.lon - a.lon) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+
+  // Spårfilens punkter (format 1: fields + points, t_ms från t0) som { t (ms), lat, lon, acc, speed }
+  function trackPoints(track) {
+    if (!track || !Array.isArray(track.points)) return [];
+    const fields = Array.isArray(track.fields) ? track.fields : ['t_ms', 'lat', 'lon', 'acc_m', 'speed_ms', 'heading_deg', 'fixAge_ms'];
+    const at = name => fields.indexOf(name);
+    const iT = at('t_ms'), iLat = at('lat'), iLon = at('lon'), iAcc = at('acc_m'), iV = at('speed_ms');
+    const t0 = toDate(track.t0);
+    const base = t0 ? t0.getTime() : 0;
+    return track.points.map(p => ({
+      t: base + Number(p[iT]), lat: Number(p[iLat]), lon: Number(p[iLon]),
+      acc: iAcc >= 0 && p[iAcc] != null ? Number(p[iAcc]) : null,
+      speed: iV >= 0 && p[iV] != null ? Number(p[iV]) : null
+    })).filter(p => isFinite(p.t) && isFinite(p.lat) && isFinite(p.lon)).sort((a, b) => a.t - b.t);
+  }
+
+  /* Ett GPS-spår mot sin körning: per sträcka (avgång A → ankomst B) fartprofilen mot sträckan från avgången och
+     stopp mellan stationerna – minst MIN_UNPLANNED_S under 2 km/h, utanför stationernas radie + STATION_MARGIN_M.
+     Utan stationskoordinater (äldre körningar) räknas de första och sista 30 s som station. */
+  function analyzeTrack(run, track) {
+    const pts = trackPoints(track).filter(p => p.acc == null || p.acc <= MAX_TRACK_ACC_M);
+    const stops = (run && run.stops) || [];
+    const legs = [];
+    let cursor = 0;
+    for (let i = 0; i < stops.length - 1; i++) {
+      const a = stops[i];
+      const b = stops[i + 1];
+      const dep = toDate(a.actualDeparture);
+      const arr = toDate(b.actualArrival);
+      if (!dep || !arr || arr <= dep) continue;
+      const t1 = dep.getTime();
+      const t2 = arr.getTime();
+      while (cursor < pts.length && pts[cursor].t < t1) cursor++;
+      const legPts = [];
+      for (let k = cursor; k < pts.length && pts[k].t <= t2; k++) legPts.push(pts[k]);
+      if (legPts.length < 2) continue;
+      const near = (p, s) => {
+        if (s.lat == null || s.lon == null) return null;
+        return distanceM(p, { lat: Number(s.lat), lon: Number(s.lon) }) <= (Number(s.radius) || 200) + STATION_MARGIN_M;
+      };
+      let d = 0;
+      const profile = legPts.map((p, k) => {
+        if (k > 0) d += distanceM(legPts[k - 1], p);
+        const speed = p.speed != null ? p.speed : (k > 0 ? distanceM(legPts[k - 1], p) / Math.max(0.5, (p.t - legPts[k - 1].t) / 1000) : 0);
+        const nA = near(p, a);
+        const nB = near(p, b);
+        const atStation = nA == null && nB == null ? (p.t - t1 < 30000 || t2 - p.t < 30000) : (!!nA || !!nB);
+        return { t: p.t, d, v: speed * 3.6, still: speed < STILL_SPEED_MS, atStation, lat: p.lat, lon: p.lon };
+      });
+      // Stillastående utanför stationerna, med korta glapp av falsk fart ihopslagna
+      const runsStill = [];
+      let cur = null;
+      for (const p of profile) {
+        if (p.still && !p.atStation) {
+          if (!cur) cur = { first: p, last: p };
+          else cur.last = p;
+        } else if (cur) { runsStill.push(cur); cur = null; }
+      }
+      if (cur) runsStill.push(cur);
+      const merged = [];
+      for (const r of runsStill) {
+        const prev = merged[merged.length - 1];
+        if (prev && (r.first.t - prev.last.t) / 1000 <= MERGE_GAP_S && distanceM(prev.last, r.first) <= MERGE_DIST_M) prev.last = r.last;
+        else merged.push(Object.assign({}, r));
+      }
+      const legStops = merged
+        .map(r => ({ start: new Date(r.first.t).toISOString(), minutes: (r.last.t - r.first.t) / 60000, d: r.first.d, lat: r.first.lat, lon: r.first.lon }))
+        .filter(s => s.minutes * 60 >= MIN_UNPLANNED_S);
+      legs.push({ index: i, key: `${a.name} → ${b.name}`, from: a.name, to: b.name, length: d,
+        excluded: !!b.excludeInboundRun,
+        profile: profile.map(p => ({ t: p.t - t1, d: p.d, v: p.v })), stops: legStops });
+    }
+    return { runId: run && run.id != null ? String(run.id) : '', legs };
+  }
+
+  // Körnings-id → analyzeTrack för alla spår som hör till en körning i `runs`
+  function analyzeTracks(runs, tracks) {
+    const byId = new Map((runs || []).map(r => [String(r.id), r]));
+    const out = new Map();
+    for (const track of tracks || []) {
+      const run = track && byId.get(String(track.runId));
+      if (run) out.set(String(run.id), analyzeTrack(run, track));
+    }
+    return out;
+  }
+
+  /* Stopp mellan stationerna i urvalet, ett per tillfälle: sträcka, datum, tåg, varaktighet och läge (m från A).
+     excluded: föraren har redan markerat sträckan som undantagen (excludeInboundRun) i appen. */
+  function unplannedStops(runs, trackInfo) {
+    const out = [];
+    for (const run of runs || []) {
+      const t = trackInfo && trackInfo.get(String(run.id));
+      if (!t) continue;
+      const info = runInfo(run);
+      // Bara sträckor som finns i körningen (en avskuren körning har färre)
+      const pairs = new Set((run.stops || []).slice(0, -1).map((s, k) => `${s.name} → ${run.stops[k + 1].name}`));
+      for (const leg of t.legs) {
+        if (!pairs.has(leg.key)) continue;
+        for (const s of leg.stops) {
+          out.push(Object.assign({ segment: leg.key, from: leg.from, to: leg.to, legLength: leg.length, excluded: leg.excluded }, s,
+            { date: info.date, weekday: info.weekday, train: info.trainNumber, runId: info.runId }));
+        }
+      }
+    }
+    return out.sort((a, b) => b.minutes - a.minutes || String(b.start).localeCompare(String(a.start)));
+  }
+
+  // ── Jämför perioder ──
+
+  function inPeriod(run, p) {
+    const d = localDate(runStart(run));
+    if (!d) return false;
+    return (!p || !p.from || d >= p.from) && (!p || !p.to || d <= p.to);
+  }
+
+  function trainPeriodStats(runs, tol) {
+    const tt = runs.filter(hasTimetable);
+    const ends = [];
+    const starts = [];
+    const planned = [];
+    const actual = [];
+    for (const run of tt) {
+      const s = run.stops || [];
+      const f = s[0];
+      const l = s[s.length - 1];
+      if (!f || !l) continue;
+      const pd = plannedDeparture(f), ad = toDate(f.actualDeparture), pa = plannedArrival(l), aa = toDate(l.actualArrival);
+      if (pd && ad) starts.push(minutes(pd, ad));
+      if (pa && aa) ends.push(minutes(pa, aa));
+      if (pd && pa) planned.push(minutes(pd, pa));
+      if (ad && aa) actual.push(minutes(ad, aa));
+    }
+    const events = stationTimes(tt).filter(t => t.type !== 'start' && t.lost > tol).length;
+    return {
+      runs: tt.length, startDelay: stats(starts), endDelay: stats(ends), planned: stats(planned), actual: stats(actual),
+      eventsPerRun: tt.length ? events / tt.length : null, balance: delayBalance(tt)
+    };
+  }
+
+  /* Period A mot period B ({ from, to } i lokal tid, inklusive) för samma urval. opts: { tolerance, tracks,
+     skipUnplanned }. Sträckor per verkligt stoppmönster: median i A och B och skillnad B − A (när båda har minst
+     MIN_SAMPLES). Tåg per tågnummer (överlever en ny tidtabell): restid planerad och verklig, försening vid start och slut,
+     gånger tappat per körning och var tiden går (delayBalance). */
+  function comparePeriods(runs, a, b, opts) {
+    const tol = opts && opts.tolerance != null ? opts.tolerance : DEFAULT_TOLERANCE;
+    const valid = (runs || []).filter(r => r && !r.aborted);
+    const A = valid.filter(r => inPeriod(r, a));
+    const B = valid.filter(r => inPeriod(r, b));
+    const needsOf = list => needMap(segmentNeeds(segmentObservations(list, { tracks: opts && opts.tracks }),
+      { skipUnplanned: opts && opts.skipUnplanned }).filter(n => n.pattern !== '*'));
+    const nA = needsOf(A);
+    const nB = needsOf(B);
+    const keys = new Set([...nA.keys(), ...nB.keys()]);
+    const segments = Array.from(keys).map(key => {
+      const x = nA.get(key) || null;
+      const y = nB.get(key) || null;
+      const ref = x || y;
+      const ok = x && y && x.n >= MIN_SAMPLES && y.n >= MIN_SAMPLES;
+      return { key, segment: ref.segment, pattern: ref.pattern,
+        a: x ? { n: x.n, median: x.median } : { n: 0, median: null },
+        b: y ? { n: y.n, median: y.median } : { n: 0, median: null },
+        diff: ok ? y.median - x.median : null };
+    }).sort((p, q) => (q.diff == null ? -1 : Math.abs(q.diff)) - (p.diff == null ? -1 : Math.abs(p.diff)) || p.key.localeCompare(q.key));
+    const trainsOf = list => groupBy(list.filter(r => String(r.trainNumber || '').trim()), 'trainNumber');
+    const tA = trainsOf(A);
+    const tB = trainsOf(B);
+    const names = new Set([...tA.keys(), ...tB.keys()]);
+    const trains = Array.from(names).map(train => {
+      const x = trainPeriodStats(tA.get(train) || [], tol);
+      const y = trainPeriodStats(tB.get(train) || [], tol);
+      const diff = k => x[k].median != null && y[k].median != null ? y[k].median - x[k].median : null;
+      return { train: String(train), a: x, b: y,
+        diffEnd: diff('endDelay'), diffPlanned: diff('planned'), diffActual: diff('actual') };
+    }).filter(t => t.a.runs || t.b.runs)
+      .sort((p, q) => (q.a.runs && q.b.runs ? 1 : 0) - (p.a.runs && p.b.runs ? 1 : 0) || compareTrain(p.train, q.train));
+    return {
+      a: Object.assign({}, a, { runs: A.length, period: period(A), balance: delayBalance(A) }),
+      b: Object.assign({}, b, { runs: B.length, period: period(B), balance: delayBalance(B) }),
+      segments, trains
+    };
+  }
+
+  // Förval för Jämför: B = de sista `days` dagarna med mätningar, A = allt före
+  function defaultPeriods(runs, days) {
+    const p = period((runs || []).filter(r => r && !r.aborted));
+    if (!p) return null;
+    const end = new Date(p.to + 'T12:00:00');
+    const bFrom = new Date(end.getTime() - ((days || 30) - 1) * 86400000);
+    const aTo = new Date(bFrom.getTime() - 86400000);
+    return { a: { from: p.from, to: localDate(aTo) }, b: { from: localDate(bFrom), to: p.to } };
+  }
+
   // ── Export ──
 
   // Minuter med decimalkomma, utan "-0,0"
@@ -1039,6 +1329,9 @@
     stopType, plannedType, PATTERN_LABELS, classify, segmentObservations,
     segmentNeeds, stationTimes, trainVariants, summarizeTrains, segmentPlans, proposeTrainTimetable,
     routeBetween, proposeNewTimetable,
+    delayBreakdown, delayBalance, delayProfile,
+    trackPoints, analyzeTrack, analyzeTracks, unplannedStops, distanceM,
+    comparePeriods, defaultPeriods,
     stats, directedRuns, sliceRuns,
     formatMinutes, csvDocument
   };
