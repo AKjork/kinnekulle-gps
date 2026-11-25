@@ -1741,6 +1741,88 @@
     return sign + Math.floor(a / 1000) + '+' + String(a % 1000).padStart(3, '0');
   }
 
+  // ── Halka: förarens markeringar och starter som är svagare än vanligt ──
+
+  const START_V1 = 5;            // km/h: startens acceleration räknas från den här farten …
+  const START_V2 = 40;           // … till den här
+  const START_MAX_MS = 120000;   // längre tid från stillastående till 40 km/h räknas inte (tåget stannade igen e.d.)
+  const START_MAX_GAP_MS = 5000; // glapp i GPS-spåret under starten: räknas inte
+  const ADH_MIN_BASE = 6;        // jämförelse kräver minst så många andra starter på samma ställe
+  const ADH_WEAK = 0.6;          // svagare än vanligt: under 60 % av det normala
+
+  /* Startens acceleration (m/s²) från stillastående vid stationen: farten 5 → 40 km/h. an = stationAnchor.
+     null när tåget inte stod still inom ANCHOR_MAX_M, när det inte nådde 40 km/h inom 2 min, när det stannade
+     igen eller när spåret har glapp. */
+  function startAcceleration(pts, an) {
+    if (!pts || !an) return null;
+    let ks = -1;
+    for (let k = lowerBoundD(pts, an.d - ANCHOR_MAX_M); k < pts.length && pts[k].d <= an.d + ANCHOR_MAX_M; k++) {
+      if (pts[k].action === 'still') ks = k;
+    }
+    if (ks < 0) return null;
+    let i1 = -1;
+    for (let k = ks + 1; k < pts.length; k++) {
+      const p = pts[k];
+      if (p.t - pts[ks].t > START_MAX_MS || p.t - pts[k - 1].t > START_MAX_GAP_MS) return null;
+      if (p.v == null) continue;
+      if (i1 >= 0 && p.v < 1) return null;
+      if (i1 < 0 && p.v >= START_V1) i1 = k;
+      if (i1 >= 0 && p.v >= START_V2) {
+        const dt = (p.t - pts[i1].t) / 1000;
+        return dt > 0 ? (p.v - pts[i1].v) / 3.6 / dt : null;
+      }
+    }
+    return null;
+  }
+
+  /* Halka per körning: förarens markeringar (stop.slideIn = gled vid inbromsningen till stationen, stop.slipOut =
+     slirade vid starten därifrån) och, med GPS-spår, startens acceleration från stillastående. Ger händelser
+     { runId, date, weekday, train, vehicle, kind: 'broms'|'start', station, from, toward, marked, acc }.
+     Riktningen är from → toward (föregående/nästa station i körningen). */
+  function adhesionEvents(runs, motion) {
+    const out = [];
+    for (const run of runs || []) {
+      if (!Array.isArray(run.stops)) continue;
+      const info = runInfo(run);
+      const pts = motion && motion.get(String(run.id));
+      const stops = run.stops;
+      const usable = pts && pts.length >= 10;
+      stops.forEach((s, i) => {
+        const prev = stops[i - 1], next = stops[i + 1];
+        const base = { runId: info.runId, date: info.date, weekday: info.weekday, train: info.trainNumber, vehicle: info.vehicleType, station: s.name };
+        if (s.slideIn && prev) out.push(Object.assign({}, base, { kind: 'broms', from: prev.name, toward: s.name, marked: true, acc: null }));
+        if (!next) return;
+        const acc = usable ? startAcceleration(pts, stationAnchor(s, pts)) : null;
+        if (s.slipOut || acc != null) out.push(Object.assign({}, base, { kind: 'start', from: s.name, toward: next.name, marked: !!s.slipOut, acc }));
+      });
+    }
+    return out;
+  }
+
+  /* Jämför varje start med de andra starterna från samma station mot samma station med samma fordonstyp. Med minst
+     ADH_MIN_BASE andra får starten normal (median), baseN, ratio och weak (under ADH_WEAK av det normala).
+     Halka går inte att skilja från försiktig körning i GPS-spåret: weak är en avvikelse, inte halt. */
+  function adhesionCompare(events) {
+    const groups = new Map();
+    for (const e of events) {
+      if (e.kind !== 'start' || e.acc == null) continue;
+      const key = e.from + '\u0000' + e.toward + '\u0000' + (e.vehicle || '');
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(e);
+    }
+    for (const list of groups.values()) {
+      for (const e of list) {
+        const others = list.filter(x => x !== e).map(x => x.acc);
+        if (others.length < ADH_MIN_BASE) continue;
+        e.normal = stats(others).median;
+        e.baseN = others.length;
+        e.ratio = e.acc / e.normal;
+        e.weak = e.ratio < ADH_WEAK;
+      }
+    }
+    return events;
+  }
+
   // ── Jämför perioder ──
 
   function inPeriod(run, p) {
@@ -1868,6 +1950,7 @@
     MOTION_ACCEL, ZONE_BIN_M, LINE_BIN_M, ZONE_WINDOW_M, ZONE_SHARE, ZONE_MIN_RUNS,
     motionPoints, motionTracks, stationAnchor, motionZones,
     KMTAL_SECTIONS, kmTalAxis, kmTalAt, kmTalStation, formatKmTal,
+    START_V1, START_V2, ADH_MIN_BASE, ADH_WEAK, startAcceleration, adhesionEvents, adhesionCompare,
     comparePeriods, defaultPeriods,
     stats, directedRuns, sliceRuns,
     formatMinutes, csvDocument

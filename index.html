@@ -390,6 +390,11 @@
   }
   .np-val{display:block;font-size:1.05rem;font-weight:600;line-height:1.25;white-space:nowrap}
   /* En rad om läget framåt (från infofliken); tryck öppnar fliken */
+  .np-halt{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;margin-top:.45rem;padding-top:.45rem;border-top:1px solid var(--b)}
+  .np-halt[hidden]{display:none}
+  .np-halt-q{color:var(--ink-dim);font-size:.82rem;margin-right:.1rem}
+  .np-halt button{padding:.45rem .75rem;font-size:.85rem;border-radius:999px;background:transparent;border:1px solid var(--b-light,#3d4149);color:var(--ink)}
+  .np-halt button[aria-pressed="true"]{background:var(--warn,#f59e0b);border-color:var(--warn,#f59e0b);color:#000;font-weight:600}
   .np-info{display:block;width:100%;margin-top:.4rem;padding:.35rem 0 0;border:none;border-top:1px solid var(--b);border-radius:0;background:transparent;color:var(--ink-dim);font-size:.82rem;font-weight:500;line-height:1.3;text-align:left;max-height:calc(2.6em + .35rem);overflow:hidden;font-variant-numeric:tabular-nums}
   .np-info.l1{color:var(--warn)}
   .np-info.l2{color:var(--err)}
@@ -730,6 +735,11 @@
         <div><span class="np-val" id="gpsSpeed">–</span><span class="next-sub" id="gpsAccuracy">väntar på GPS</span><span id="gpsExtra" hidden></span></div>
       </div>
       <button type="button" class="np-info" id="npInfo" hidden></button>
+      <div class="np-halt" id="npHalt" hidden>
+        <span class="np-halt-q">Halt?</span>
+        <button type="button" id="npSlideIn" aria-pressed="false">Gled in hit</button>
+        <button type="button" id="npSlipOut" aria-pressed="false" hidden>Slirade ut</button>
+      </div>
     </div>
     <span id="journeyMsg" class="badge" role="status" aria-live="polite" style="display:none"></span>
     <div id="routeMapContainer">
@@ -824,7 +834,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25p'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25q'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1480,6 +1490,14 @@
     document.getElementById('tabStations').addEventListener('click', () => setInfoTab('stations'));
     document.getElementById('tabInfo').addEventListener('click', () => setInfoTab('info'));
     document.getElementById('npInfo').addEventListener('click', () => setInfoTab('info'));
+    document.getElementById('npSlideIn').addEventListener('click', () => {
+      const idx=currentStationIndex();
+      if(idx!=null) setHalt(idx, 'slideIn', !state.route[idx].slideIn);
+    });
+    document.getElementById('npSlipOut').addEventListener('click', ev => {
+      const idx=parseInt(ev.currentTarget.dataset.idx,10);
+      if(state.route[idx]) setHalt(idx, 'slipOut', !state.route[idx].slipOut);
+    });
     document.getElementById('infoPane').addEventListener('click', handleInfoClick);
     window.addEventListener('online', () => { if(state.running) refreshInfo(); });
     if(els.wakeBtn){
@@ -1683,6 +1701,8 @@
       departurePosition:null,
       shouldStop:true,
       excludeInboundRun:false,
+      slideIn:false,                 // halt: gled vid inbromsningen hit (föraren markerar)
+      slipOut:false,                 // halt: slirade vid starten härifrån
       inZone:false,
       lastSeenDistance:null,
       passThrough:false,
@@ -2542,8 +2562,50 @@
     if(subEl && sub!=null) subEl.textContent=sub;
   }
 
+  /* Halt markeras av föraren när tåget står vid en station, aldrig under inbromsningen: "gled in hit" gäller
+     inbromsningen till stationen, "slirade ut" starten från föregående station där tåget stod still. Samma val
+     finns i stationskortet, så att det kan göras i efterhand under resan. */
+  function setHalt(idx, key, on){
+    const st=state.route[idx];
+    if(!st) return;
+    st[key]=!!on;
+    saveActiveJourney();
+    renderRouteCards();
+    updateHaltButtons();
+  }
+  // Föregående station där tåget stod still och startade (stannade där, eller startstationen)
+  function previousStartIndex(idx){
+    for(let k=idx-1;k>=0;k--){
+      const st=state.route[k];
+      if(st.missedReason || !st.actualDeparture) return null;
+      if(k===0 || st.reachedLowSpeed || st.departSource==='manual') return k;   // stod still där (passager hoppas över)
+    }
+    return null;
+  }
+  function updateHaltButtons(){
+    const box=document.getElementById('npHalt');
+    if(!box) return;
+    const atIdx=currentStationIndex();
+    const show = atIdx!=null && atIdx>0 && !!state.route[atIdx].actualArrival;
+    box.hidden=!show;
+    if(!show) return;
+    const st=state.route[atIdx];
+    const slide=document.getElementById('npSlideIn');
+    slide.setAttribute('aria-pressed', String(!!st.slideIn));
+    slide.textContent = st.slideIn ? '✓ Gled in hit' : 'Gled in hit';
+    const prev=previousStartIndex(atIdx);
+    const slip=document.getElementById('npSlipOut');
+    slip.hidden = prev==null;
+    if(prev!=null){
+      slip.dataset.idx=String(prev);
+      slip.setAttribute('aria-pressed', String(!!state.route[prev].slipOut));
+      slip.textContent = (state.route[prev].slipOut ? '✓ ' : '') + 'Slirade ut från ' + state.route[prev].name;
+    }
+  }
+
   function updateNextStopUI(){
     if(!els.nextPanel) return;
+    updateHaltButtons();
     const cd=document.getElementById('nextCountdown');
     const cdSub=document.getElementById('nextCountdownSub');
     const delayEl=document.getElementById('nextDelay');
@@ -3128,6 +3190,12 @@
           <div class="control-row">
             <label><input type="checkbox" data-action="exclude-run" data-idx="${idx}"> Exkludera gångtiden hit</label>
           </div>
+          <div class="control-row halt-row">
+            <label><input type="checkbox" data-action="slide-in" data-idx="${idx}"> Halt: gled vid inbromsningen hit</label>
+          </div>
+          <div class="control-row halt-row">
+            <label><input type="checkbox" data-action="slip-out" data-idx="${idx}"> Halt: slirade vid starten härifrån</label>
+          </div>
           <textarea class="station-note" data-action="station-note" data-idx="${idx}" placeholder="Anteckning (t.ex. signal, möte...)">${escapeHtml(station.notes||'')}</textarea>
           <div class="card-foot">
             <span class="meta" data-role="geo"></span>
@@ -3176,6 +3244,7 @@
     else if(currentStationIndex()===idx) note = station.actualArrival ? `står här · ${formatDuration((Date.now()-new Date(station.actualArrival))/1000)}` : 'står här';
     else if(state.nextIndex===idx) note = (station.lastSeenDistance!=null ? formatDistance(station.lastSeenDistance)+' kvar' : 'nästa') + (station.shouldStop?'':' · passeras');
     else if(!station.shouldStop) note='passeras';
+    else if(station.slideIn || station.slipOut) note='halt: '+[station.slideIn?'gled in':'', station.slipOut?'slirade ut':''].filter(Boolean).join(', ');
     else if(station.notes) note='📝 '+station.notes;
     const arr = idx>0 || station.actualArrival ? timeCell(station.actualArrival, planArr(station), station.arrivalWindow) : '<span class="st-t plan"><b></b></span>';
     const dep = !isLast || station.actualDeparture ? timeCell(station.actualDeparture, planDep(station), station.departureWindow) : '<span class="st-t plan"><b></b></span>';
@@ -3194,6 +3263,10 @@
     if(stopBox) stopBox.checked=!!station.shouldStop;
     const exclBox=card.querySelector('[data-action="exclude-run"]');
     if(exclBox) exclBox.checked=!!station.excludeInboundRun;
+    const slideBox=card.querySelector('[data-action="slide-in"]');
+    if(slideBox){ slideBox.checked=!!station.slideIn; slideBox.closest('.control-row').hidden = idx===0; }
+    const slipBox=card.querySelector('[data-action="slip-out"]');
+    if(slipBox){ slipBox.checked=!!station.slipOut; slipBox.closest('.control-row').hidden = idx===state.route.length-1; }
   }
 
   function renderRouteCards(){
@@ -3279,6 +3352,10 @@
       const idx=parseInt(target.dataset.idx,10);
       if(!state.route[idx]) return;
       state.route[idx].excludeInboundRun=target.checked;
+    }else if(action==='slide-in' || action==='slip-out'){
+      const idx=parseInt(target.dataset.idx,10);
+      if(!state.route[idx]) return;
+      setHalt(idx, action==='slide-in' ? 'slideIn' : 'slipOut', target.checked);
     }
   }
 
@@ -4357,6 +4434,8 @@
         if(st.arrivalWindow) stop.arrivalWindow=st.arrivalWindow;
         if(st.departureWindow) stop.departureWindow=st.departureWindow;
         if(st.missedReason) stop.missedReason=st.missedReason;
+        if(st.slideIn) stop.slideIn=true;
+        if(st.slipOut) stop.slipOut=true;
         return stop;
       })
     };
@@ -5262,7 +5341,7 @@
         notes: stop.notes || ''
       };
       // Fält från format 2 och 3 bevaras när de finns, och Trafikverkets rapporterade tider (trv)
-      for(const key of ['sig','lat','lon','radius','arrivalWindow','departureWindow','missedReason','operationalArrival','operationalDeparture','trv']){
+      for(const key of ['sig','lat','lon','radius','arrivalWindow','departureWindow','missedReason','operationalArrival','operationalDeparture','trv','slideIn','slipOut']){
         if(stop[key]!==undefined) out[key]=stop[key];
       }
       return out;

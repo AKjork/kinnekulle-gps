@@ -726,6 +726,7 @@ function simulateRun(id, stations, opts) {
 }
 
 const ABC = [{ name: 'A', x: 0, stop: true }, { name: 'B', x: 3000, stop: true }, { name: 'C', x: 6000, stop: true }];
+const assertEqualLen = (list, n, label) => assert.equal(list.length, n, label);
 const within = (v, lo, hi, label) => assert.ok(v >= lo && v <= hi, `${label}: ${v} utanför ${lo}…${hi}`);
 
 test('motionPoints: broms, gas, jämn fart och stillastående; GPS-brus vid stillastående ger ingen sträcka', () => {
@@ -848,6 +849,40 @@ test('km-tal: linjebokens km-tal vid stationerna och däremellan längs linjen',
   assert.equal(AN.formatKmTal(83974, 10), '83+970');
   assert.equal(AN.formatKmTal(950), '0+950');
   assert.equal(AN.formatKmTal(null), '');
+});
+
+// ── Halka (appversion 2026-11-25q) ──
+
+test('halka: startens acceleration, förarens markeringar och starter som är svagare än vanligt', () => {
+  const sims = [1, 2, 3, 4, 5, 6, 7, 8].map(day => simulateRun('h' + day, ABC, { day }));
+  const weak = simulateRun('hw', ABC, { day: 9, acc: 0.2 });
+  weak.run.stops[1].slipOut = true;   // slirade vid starten från B
+  weak.run.stops[2].slideIn = true;   // gled vid inbromsningen in mot C
+  sims.push(weak);
+  const runs = sims.map(s => s.run);
+  const motion = AN.motionTracks(runs, sims.map(s => s.track));
+  const ev = AN.adhesionCompare(AN.adhesionEvents(runs, motion));
+  const starts = ev.filter(e => e.kind === 'start');
+  assertEqualLen(starts, 18, 'två starter per körning (A och B)');
+  for (const e of starts.filter(e => e.runId !== 'hw')) within(e.acc, 0.35, 0.45, 'acceleration 0,4 m/s² ' + e.from);
+  const w = starts.filter(e => e.runId === 'hw');
+  for (const e of w) {
+    within(e.acc, 0.17, 0.23, 'svag start ' + e.from);
+    assert.equal(e.baseN, 8, 'jämförs med de åtta andra');
+    assert.ok(e.weak, 'svagare än vanligt: ' + e.ratio);
+  }
+  assert.ok(starts.filter(e => e.runId !== 'hw').every(e => !e.weak), 'vanliga starter flaggas inte');
+  const slip = w.find(e => e.from === 'B');
+  assert.deepEqual([slip.marked, slip.toward], [true, 'C'], 'markerat: slirade ut från B mot C');
+  const slide = ev.filter(e => e.kind === 'broms');
+  assert.equal(slide.length, 1);
+  assert.deepEqual([slide[0].station, slide[0].from, slide[0].toward, slide[0].marked, slide[0].acc], ['C', 'B', 'C', true, null], 'gled in mot C');
+  // För få att jämföra med: ingen bedömning
+  const few = AN.adhesionCompare(AN.adhesionEvents(runs.slice(0, 4), motion));
+  assert.ok(few.every(e => e.ratio == null && !e.weak), 'under sex andra starter: ingen jämförelse');
+  // Markering utan GPS-spår räknas ändå
+  const noTrack = AN.adhesionEvents([weak.run], new Map());
+  assert.deepEqual(noTrack.map(e => [e.kind, e.station, e.marked, e.acc]), [['start', 'B', true, null], ['broms', 'C', true, null]], 'markeringarna utan spår');
 });
 
 // ── Tågorderns tider (appversion 2026-11-25f) ──

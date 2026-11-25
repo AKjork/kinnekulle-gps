@@ -1061,3 +1061,55 @@ Appversion `2026-11-25p`.
   - *analys: Broms och gas – enkla listan med linjebokens km-tal, och Detaljerad*;
   - *analys: Broms och gas – förvalt Håkantorp – Gårdsjö, och inget km-tal utanför*.
 - Bilder: `--shot=broms-och-gas-enkel` och `--shot=broms-och-gas-enkel-mobil`. Bilderna `--shot=broms-och-gas…` visar Detaljerad.
+
+## Uppdatering (2026-11-25q): halka – förarens markering och starter som är svagare än vanligt
+
+André 2026-11-25:
+- Han frågade om GPS:en kan avläsa automatiskt att det är halt.
+- "Gör det du rekommenderar men datan måste stämma. Det är viktigt att vi inte visar fel på något sätt."
+- "Att trycka på en knapp när vi bromsar i halka är inte det bästa."
+
+Appversion `2026-11-25q`.
+
+### Varför inte automatiskt
+- GPS:en ser hur tåget rör sig, inte vad föraren begär. En svag start eller lång inbromsning går därför inte att skilja från försiktig körning.
+- Dataunderlag (`railtimer-data`, 296 starter med Y31):
+  - Startaccelerationen 5→40 km/h är i median 0,57 m/s².
+  - Samma station och riktning skiljer ±30 % mellan körningarna (P10 0,70 och P90 1,36 av det normala).
+  - Facit saknas: det är okänt vilka dagar det var halt.
+- Därför är **förarens markering** det enda som visas som halt. Den automatiska jämförelsen visas som avvikelse, uttryckligen *inte bekräftat halt*.
+
+### Appen (index.html)
+- **Markering när tåget står still**, aldrig under inbromsningen. Panelen visar vid en station (efter ankomst) *Halt?* med två knappar (`#npHalt`):
+  - **Gled in hit** (`station.slideIn`) gäller inbromsningen till stationen.
+  - **Slirade ut från X** (`slipOut` på `previousStartIndex`) gäller föregående station där tåget stod still och startade. Passager hoppas över.
+  - Tryck igen tar bort markeringen.
+- Samma val finns som kryssrutor i stationskortet, för markering i efterhand under resan (`data-action="slide-in"`/`"slip-out"`). Stationsraden visar "halt: gled in, slirade ut".
+- Körningen sparar `slideIn: true`/`slipOut: true` per station, bara när de är markerade. `normalizeLogEntry` bevarar fälten. Se `docs/railtimer-data-README.md`.
+- Efter att körningen laddats upp kan den inte markeras längre; det görs under resan.
+
+### Analysen (`railtimer-analys.js`)
+- `startAcceleration(pts, anchor)`: farten 5 → 40 km/h från stillastående inom 400 m från stationen.
+  - Räknas inte om tåget inte når 40 km/h inom 2 min, stannar igen eller om spåret har glapp över 5 s.
+- `adhesionEvents(runs, motion)`: förarens markeringar (`kind` `broms`/`start`, `from` → `toward`) och startaccelerationerna. Markeringar räknas även utan GPS-spår.
+- `adhesionCompare(events)`: varje start jämförs med andra starter från samma station mot samma håll med samma fordonstyp. Med minst 6 sådana (`ADH_MIN_BASE`) ger den `normal` (median), `ratio` och `weak` (under 60 %, `ADH_WEAK`).
+  - Det normala räknas på alla körningar oavsett filtret. Visas gör bara körningarna i urvalet.
+  - Spåren 2026-11: 193 av 296 starter kunde jämföras och 8 var svagare än vanligt.
+
+### Broms och gas (Analys.html)
+- **Enkel lista**:
+  - "halt markerat N gånger" i cellen *Bromsar in* (gled in) eller *Gasar ut* (slirade ut) för rätt station och riktning.
+  - Listan **Markerat halt av förarna** med datum, tåg, vad, riktning och var (km-tal för inbromsningen eller gasen).
+  - Utan markeringar står hur man markerar.
+- **Detaljerad**: **Starter som var svagare än vanligt** med acceleration, normalt (antal), andel och om föraren markerat halt.
+  - Texten säger att det inte är bekräftat halt och varför inbromsningar inte jämförs.
+  - En rad visar hur många av de markerade starterna som var svagare än vanligt, så att jämförelsen kan prövas mot förarnas markeringar under hösten.
+- **CSV**: enkla listan får kolumnerna *Halt markerat vid inbromsning/start* och delen *Markerat halt av förarna*. Detaljerad får även *Starter som var svagare än vanligt*.
+
+### Tester
+- `node --test "tests/*.test.js"` (158), nytt: *halka: startens acceleration, förarens markeringar och starter som är svagare än vanligt* (simulerat 0,4 och 0,2 m/s²).
+- `node tests/run-browser-tests.mjs` (103), nya:
+  - *halt: vid stationen markerar föraren gled in och slirade ut; det sparas i körningen*;
+  - *analys: halka – förarens markeringar i listan och starter som var svagare än vanligt*;
+  - *analys: halka – utan markeringar säger listan hur man markerar*.
+- Bild: `--shot=resa-vid-station` visar Halt?-knapparna.

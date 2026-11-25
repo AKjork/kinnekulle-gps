@@ -974,7 +974,7 @@ test('analys: GPS-spår visar stopp mellan stationerna och dem räknas inte i St
 /* Broms och gas: körning rakt norrut med GPS-spår (1 punkt/s). Tåget står 20 s, gasar 0,4 m/s² till 20 m/s och
    bromsar 0,5 m/s² så att det står vid varje station (400 m inbromsning, 500 m gas), står 30 s. */
 const BRAKE_LINE = [{ name: 'Lidköping', x: 0 }, { name: 'Filsbäck', x: 3000 }, { name: 'Källby', x: 6000 }, { name: 'Blomberg', x: 9000 }];
-function brakeRun(id, day, reverse, part, line) {
+function brakeRun(id, day, reverse, part, line, acc) {
   const all = line || BRAKE_LINE;
   let stations = part ? all.filter(st => part.includes(st.name)) : all;
   if (reverse) stations = stations.slice().reverse();
@@ -989,7 +989,7 @@ function brakeRun(id, day, reverse, part, line) {
     if (t < standUntil) { t += dt; if (t >= standUntil && next < stations.length) times[next - 1].dep = standUntil; continue; }
     if (next >= stations.length) break;
     const remaining = Math.abs(stations[next].x - x);
-    if (stopping || remaining <= v * v / 1 + 0.05) { stopping = true; v = Math.max(0, v - 0.5 * dt); } else v = Math.min(20, v + 0.4 * dt);
+    if (stopping || remaining <= v * v / 1 + 0.05) { stopping = true; v = Math.max(0, v - 0.5 * dt); } else v = Math.min(20, v + (acc || 0.4) * dt);
     x += sign * v * dt;
     t += dt;
     if (stopping && v === 0) {
@@ -1101,8 +1101,8 @@ test('analys: Broms och gas – enkla listan med linjebokens km-tal, och Detalje
   assert(report.classList.contains('mode-simple') && getComputedStyle(sel('motionDetailView')).display === 'none', 'enkla listan är förvald');
   assertEqual(sel('motionSimple').querySelector('h3').textContent, 'Behandla rälsen här · Lidköping – Blomberg', 'rubriken');
   // En tabell per riktning, vald riktning först
-  assertEqual(Array.from(sel('motionSimple').querySelectorAll('h4')).map(h => h.textContent), ['Lidköping → Blomberg', 'Blomberg → Lidköping'], 'båda riktningarna');
-  const tables = Array.from(sel('motionSimple').querySelectorAll('table.mz-simple'));
+  assertEqual(Array.from(sel('motionSimple').querySelectorAll('h4')).map(h => h.textContent), ['Lidköping → Blomberg', 'Blomberg → Lidköping', 'Markerat halt av förarna'], 'båda riktningarna och förarnas markeringar');
+  const tables = Array.from(sel('motionSimple').querySelectorAll('table.mz-simple[data-dir]'));
   const cells = t => Array.from(t.querySelectorAll('tbody tr')).map(tr => Array.from(tr.cells).map(td => td.textContent.trim()));
   const up = cells(tables[0]), down = cells(tables[1]);
   assertEqual(up.map(r => r[0].split('km')[0]), ['Lidköping', 'Filsbäck', 'Källby', 'Blomberg'], 'mot Blomberg');
@@ -1114,7 +1114,7 @@ test('analys: Broms och gas – enkla listan med linjebokens km-tal, och Detalje
   assert(/^km 88\+0\d0 – 88\+[78]\d0(450|500|550) m$/.test(down[2][2]), 'gasar ut mot Lidköping: ' + down[2][2]);
   // Export och utskrift av enkla listan
   const csv = w.__analys.exportMotionCsv();
-  assert(/"Lidköping → Blomberg";"Filsbäck";"88\+000";"3";"88\+[67]\d0";"8[78]\+\d\d0";"(400|450)";"";"(88\+0\d0|87\+9\d0)";"87\+3\d0";"(450|500|550)";"";"58,5\d+";"13,10000"/.test(csv), 'csv: ' + csv.split('\n').find(l => l.includes('Filsbäck')));
+  assert(/"Lidköping → Blomberg";"Filsbäck";"88\+000";"3";"88\+[67]\d0";"8[78]\+\d\d0";"(400|450)";"";"(88\+0\d0|87\+9\d0)";"87\+3\d0";"(450|500|550)";"";"0";"0";"58,5\d+";"13,10000"/.test(csv), 'csv: ' + csv.split('\n').find(l => l.includes('Filsbäck')));
   assert(csv.includes('"Blomberg → Lidköping";"Filsbäck"'), 'csv: andra riktningen');
   assert(/^behandla-ralsen_\d{4}-\d{2}-\d{2}\.csv$/.test(w.__analys.getLastDownload().filename), 'filnamn');
   w.dispatchEvent(new w.Event('beforeprint'));
@@ -1136,6 +1136,49 @@ test('analys: Broms och gas – enkla listan med linjebokens km-tal, och Detalje
   assert(sel('motionDetail').querySelector('.balance').textContent.includes('börjar km 84+'), 'rutan: ' + sel('motionDetail').querySelector('.balance').textContent);
   // Rimlighet: medelretardation till stopp (simuleringen bromsar med 0,5 m/s²)
   assert(/från (400|450) m före stoppet · börjar km 84\+\d+ · från \d+ km\/h · ca 0,[45]\d m\/s²/.test(sel('motionDetail').querySelector('.balance').textContent) && !sel('motionDetail').textContent.includes('kontrollera'), 'rimligt: ' + sel('motionDetail').querySelector('.balance').textContent);
+});
+
+test('analys: halka – förarens markeringar i listan och starter som var svagare än vanligt', async () => {
+  const sims = [1, 2, 3, 4, 5, 6, 7, 8].map(i => brakeRun('n' + i, i)).concat([brakeRun('w', 20, false, null, null, 0.2)]);
+  const weak = sims[sims.length - 1].run;
+  weak.stops[1].slipOut = true;   // slirade vid starten från Filsbäck
+  weak.stops[2].slideIn = true;   // gled vid inbromsningen in mot Källby
+  const w = await loadAnalysWith(sims.map(s => s.run));
+  w.__analys.showTab('motion');
+  w.__analys.setTracks(sims.map(s => s.track));
+  const sel = id => w.document.getElementById(id);
+  const up = Array.from(sel('motionSimple').querySelectorAll('table[data-dir="1"] tbody tr')).map(tr => Array.from(tr.cells).map(td => td.textContent.trim()));
+  assert(up[1][2].endsWith('halt markerat 1 gång'), 'Filsbäck, gasar ut: ' + up[1][2]);
+  assert(up[2][1].endsWith('halt markerat 1 gång'), 'Källby, bromsar in: ' + up[2][1]);
+  assert(!up[1][1].includes('halt') && !up[2][2].includes('halt'), 'bara där det markerats');
+  const marks = Array.from(sel('motionSimple').querySelectorAll('table.halt-marks tbody tr')).map(tr => Array.from(tr.cells).map(td => td.textContent.trim()));
+  assertEqual(marks.length, 2, 'två markeringar');
+  assert(marks.some(m => m[2] === 'Slirade vid starten från FilsbäckFilsbäck → Källby' && /^km 8[78]\+\d\d0 – 87\+\d\d0$/.test(m[3])), 'slirade: ' + JSON.stringify(marks));
+  assert(marks.some(m => m[2] === 'Gled vid inbromsningen in mot KällbyFilsbäck → Källby' && /^km 84\+\d\d0 – 8[34]\+\d\d0$/.test(m[3])), 'gled: ' + JSON.stringify(marks));
+  // Detaljerad: starterna som var svagare än vanligt
+  w.__analys.setMotionMode('detail');
+  const weakRows = tableRows(w, 'motionWeak');
+  assertEqual(weakRows.map(r => r[2]).sort(), ['Filsbäck → Källby', 'Källby → Blomberg', 'Lidköping → Filsbäck'], 'svaga starter: den svaga körningens tre starter');
+  assert(weakRows.length === 3 && weakRows.every(r => /^0,(1|2)\d m\/s²$/.test(r[3]) && /^0,(3|4)\d m\/s² \(8\)$/.test(r[4])), 'värdena: ' + JSON.stringify(weakRows));
+  assertEqual(weakRows.find(r => r[2] === 'Filsbäck → Källby')[6], 'ja', 'markerat halt');
+  const note = sel('motionHalt').textContent;
+  assert(note.includes('Inte bekräftat halt') && note.includes('Av 1 starter som föraren markerat halt var 1 svagare än vanligt'), 'förklaring och jämförelse');
+  // Export
+  const csv = w.__analys.exportMotionCsv();
+  assert(csv.includes('"Markerat halt av förarna"') && csv.includes('"Slirade vid starten från Filsbäck";"Filsbäck → Källby"') && csv.includes('"Starter som var svagare än vanligt'), 'csv');
+  w.__analys.setMotionMode('simple');
+  const simpleCsv = w.__analys.exportMotionCsv();
+  assert(simpleCsv.includes('"Gled vid inbromsningen in mot Källby"') && !simpleCsv.includes('svagare än vanligt'), 'enkla listans csv har bara markeringarna');
+});
+
+test('analys: halka – utan markeringar säger listan hur man markerar', async () => {
+  const sims = brakeRuns();
+  const w = await loadAnalysWith(sims.map(s => s.run));
+  w.__analys.showTab('motion');
+  w.__analys.setTracks(sims.map(s => s.track));
+  assert(w.document.getElementById('motionSimple').textContent.includes('Inga markeringar på sträckan ännu'), 'tom lista');
+  w.__analys.setMotionMode('detail');
+  assert(w.document.getElementById('motionHalt').textContent.includes('Inga starter på sträckan har tillräckligt många att jämföra med'), 'för få att jämföra');
 });
 
 test('analys: Broms och gas – förvalt Håkantorp – Gårdsjö, och inget km-tal utanför', async () => {
@@ -1840,6 +1883,36 @@ test('resvy: vid station visar panelen uppehåll och tid till avgång, bara den 
   const cards = d.querySelectorAll('#cards .card');
   assert(cards[2].classList.contains('at-station'), 'Källby markerad');
   assertEqual(d.querySelectorAll('#cards .card.active').length, 0, 'ingen annan markerad');
+});
+
+test('halt: vid stationen markerar föraren gled in och slirade ut; det sparas i körningen', async () => {
+  const fixes = buildJourney();
+  const at = fixes.find(f => f.dwellAt === 2).t + 20000;
+  const r = await runJourney(fixes, { trainNumber: '3344', drop: f => f.t > at, route: scheduleFor(fixes) });
+  const d = r.w.document;
+  const box = d.getElementById('npHalt');
+  assert(!box.hidden, 'halt-knapparna visas när tåget står vid stationen');
+  const slide = d.getElementById('npSlideIn'), slip = d.getElementById('npSlipOut');
+  assertEqual(slide.getAttribute('aria-pressed'), 'false', 'inte markerat');
+  slide.click();
+  assert(r.rt.state.route[2].slideIn && slide.getAttribute('aria-pressed') === 'true', 'gled in hit: Källby');
+  assert(!slip.hidden && /^Slirade ut från /.test(slip.textContent), 'slirade ut från föregående start: ' + slip.textContent);
+  const prev = Number(slip.dataset.idx);
+  assert(prev < 2 && (prev === 0 || r.rt.state.route[prev].reachedLowSpeed), 'föregående station där tåget stod still');
+  slip.click();
+  assert(r.rt.state.route[prev].slipOut, 'slirade ut markerat');
+  // Samma val i stationskortet, och raden säger det
+  assert(d.querySelector('#cards .card[data-idx="2"] [data-action="slide-in"]').checked, 'kortet');
+  assert(d.querySelector(`#cards .card[data-idx="${prev}"]`).textContent.includes('halt: slirade ut'), 'raden för föregående station');
+  // Avmarkera i kortet
+  const cb = d.querySelector(`#cards .card[data-idx="${prev}"] [data-action="slip-out"]`);
+  cb.checked = false; cb.dispatchEvent(new r.w.Event('change', { bubbles: true }));
+  assert(!r.rt.state.route[prev].slipOut, 'avmarkerat i kortet');
+  cb.checked = true; cb.dispatchEvent(new r.w.Event('change', { bubbles: true }));
+  r.rt.stopJourney(false, 'Avslutad manuellt');
+  const log = r.rt.loadLogs().pop();
+  assert(log.stops[2].slideIn === true && log.stops[prev].slipOut === true, 'sparat i körningen');
+  assert(log.stops.filter(st => st.slideIn || st.slipOut).length === 2, 'bara de markerade');
 });
 
 /* Simulerat Trafikverket för infofliken, byggt på resans tidtabell (scheduleFor):

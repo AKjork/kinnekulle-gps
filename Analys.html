@@ -259,6 +259,7 @@
   .mz-simple .nb{white-space:nowrap}
   #motionSimple h4{margin:1.1rem 0 .5rem;font-size:1rem;color:var(--ink)}
   .mz-simple th .key{margin-right:.35rem}
+  .mz-simple .halt-mark,#motionHalt .halt-mark{color:var(--warn)}
   .mz-simple small{display:block;color:var(--mut);font-size:.8rem;font-weight:400;white-space:nowrap}
   @media (max-width:600px){ .mz-simple td,.mz-simple th{padding:.45rem .35rem} .mz-simple td{font-size:.85rem} .mz-simple td.num,.mz-simple small{white-space:normal} .mz-simple th{font-size:.7rem} }
   #motionReport.mode-simple #motionDetailView{display:none}
@@ -674,6 +675,7 @@
         <div id="motionList" class="mz-list"></div>
         <h3 id="motionTableTitle">Lista för halkbekämpningen</h3>
         <div id="motionTable"></div>
+        <div id="motionHalt"></div>
         <p class="meta no-print">Räknat ur GPS-spåren (en punkt i sekunden). Tåget <strong>bromsar</strong> när farten minskar med minst 0,15 m/s² och <strong>gasar</strong> när den ökar med minst 0,15 m/s²; däremellan är farten jämn (rullning och lutning). Vid varje station räknas bara körningar som stannade där. <strong>Inbromsning</strong> och <strong>gas</strong> anges i meter före och efter <strong>stoppet</strong>, där tågen stannar (median), eftersom stationens koordinat kan ligga 100 m eller mer från stoppet. Fartprofilen och stapeln räknar från stationens koordinat, i steg om 50 m. <strong>Rimlighet:</strong> medelretardationen från farten där inbromsningen börjar till stopp (v²/2s) ska ligga kring 0,2–0,7 m/s²; utanför 0,15–1,0 står det <em>kontrollera</em>. En <strong>zon</strong> är där minst hälften av körningarna bromsar eller gasar. <strong>Inbromsning</strong> och <strong>gas</strong> räknar ihop zoner i steg, till exempel inför en bangård, så länge tåget inte gör tvärtom däremellan. <strong>Km-tal</strong> enligt Trafikverkets linjebok (23+450 = km 23 och 450 m): vid stationerna exakt, däremellan ungefärligt. Välj sträcka med <strong>Från</strong> och <strong>Till</strong> (alla körningar som går där räknas, även de som bara går en del av sträckan); ⇄ byter riktning. Station 1 och 2 i filtret väljer också sträckan. Klicka på en station för fartprofil, karta och koordinater.</p>
         </div>
       </div>
@@ -2393,7 +2395,10 @@
     const runs = allLogs.filter(log => AN.runMatches(log, filter));
     const z = AN.motionZones(runs, motionMap);
     const tracked = runs.filter(r => motionMap.has(String(r.id)));
-    return Object.assign(z, { filter, selected: runs.length, period: AN.period(tracked) });
+    // Halka: det normala räknas på alla körningar, oavsett filtret; visas gör de i urvalet
+    const ids = new Set(runs.map(r => String(r.id)));
+    const events = AN.adhesionCompare(AN.adhesionEvents(allLogs, motionMap)).filter(e => ids.has(e.runId));
+    return Object.assign(z, { filter, selected: runs.length, period: AN.period(tracked), events });
   }
 
   function motionLineOf(z, name){ return name ? z.lines.find(L => L.stations.some(s => s.name === name)) : null; }
@@ -2498,6 +2503,7 @@
     document.getElementById('motionList').innerHTML = stationListHtml(z, r);
     document.getElementById('motionTableTitle').textContent = 'Inbromsning och gas per station, ' + route;
     document.getElementById('motionSimple').innerHTML = simpleHtml(z, r);
+    document.getElementById('motionHalt').innerHTML = weakStartsHtml(z, r, haltOnRoute(z, r)) + haltMarksHtml(z, r, haltOnRoute(z, r));
     applyMotionMode();
     document.getElementById('motionTable').innerHTML = motionTableHtml(z, r);
     renderMotionDetail();
@@ -2677,29 +2683,85 @@
   }
   function roundLen(km){ return Math.round(km * 1000 / 50) * 50; }
   function zoneOwn(g, x){ return x ? [g.km + g.dir * x.from / 1000, g.km + g.dir * x.to / 1000] : null; }
-  function zoneCell(L, g, x){
+  function markText(n){ return n ? `<small class="halt-mark">halt markerat ${n} ${n === 1 ? 'gång' : 'gånger'}</small>` : ''; }
+  function zoneCell(L, g, x, marks){
     const own = zoneOwn(g, x);
-    if(!own) return '<td class="num">–</td>';
+    if(!own) return `<td class="num">–${markText(marks)}</td>`;
     const t = zoneTal(L, own[0], own[1]);
-    if(!t) return `<td class="num">–<small>${fmtM(x.length)}, utan km-tal</small></td>`;
+    if(!t) return `<td class="num">–<small>${fmtM(x.length)}, utan km-tal</small>${markText(marks)}</td>`;
     return `<td class="num treat"><span class="nb">km ${t.from} –</span> <span class="nb">${t.to}</span>` +
-      `<small>${fmtM(t.len)}${t.clipped ? ` · och utanför ${esc(t.section)}` : ''}</small></td>`;
+      `<small>${fmtM(t.len)}${t.clipped ? ` · och utanför ${esc(t.section)}` : ''}</small>${markText(marks)}</td>`;
   }
-  function simpleTable(z, r, dir){
+
+  /* Halka på vald sträcka: förarens markeringar och starterna med jämförelse. Riktningen ur linjens km.
+     Ger [{ e, dir, g }] där g är stationens grupp i motionZones (null utan GPS-spår). */
+  function haltOnRoute(z, r){
+    const lo = r.lo - 1e-9, hi = r.hi + 1e-9;
+    const km = name => { const s = r.L.stations.find(x => x.name === name); return s ? s.km : null; };
+    const out = [];
+    for(const e of z.events || []){
+      const a = km(e.from), b = km(e.toward), k = km(e.station);
+      if(a == null || b == null || k == null || a === b || k < lo || k > hi) continue;
+      const dir = b > a ? 1 : -1;
+      out.push({ e, dir, g: z.stations.find(g => g.key === e.station + '|' + dir && g.line === r.L.index) || null });
+    }
+    return out;
+  }
+  function haltCount(halts, name, dir, kind){ return halts.filter(x => x.e.marked && x.e.kind === kind && x.dir === dir && x.e.station === name).length; }
+  function haltWhat(e){ return e.kind === 'broms' ? 'Gled vid inbromsningen in mot ' + e.station : 'Slirade vid starten från ' + e.station; }
+  // Var: inbromsningen in mot stationen (broms) eller gasen därifrån (start), i km-tal
+  function haltTal(L, x){
+    const zone = x.g && (x.e.kind === 'broms' ? x.g.approach : x.g.departure);
+    const own = x.g && zoneOwn(x.g, zone);
+    const t = own && zoneTal(L, own[0], own[1]);
+    return t ? 'km ' + t.from + ' – ' + t.to : '';
+  }
+  function haltMarksHtml(z, r, halts){
+    const marks = halts.filter(x => x.e.marked).sort((a, b) => String(b.e.date).localeCompare(String(a.e.date)));
+    let html = '<h4>Markerat halt av förarna</h4>';
+    if(!marks.length){
+      return html + '<p class="meta">Inga markeringar på sträckan ännu. Föraren markerar i appen när tåget står vid en station: <strong>Halt?</strong> → <strong>Gled in hit</strong> eller <strong>Slirade ut från …</strong>.</p>';
+    }
+    html += '<div class="table-wrap"><table class="mz-simple halt-marks"><thead><tr><th>Datum</th><th>Tåg</th><th>Vad</th><th class="num">Var</th></tr></thead><tbody>';
+    html += marks.map(x => `<tr><td>${esc(x.e.date)} <small>${WEEKDAYS[x.e.weekday] || ''}</small></td><td>${esc(x.e.train || '–')}</td>` +
+      `<td>${esc(haltWhat(x.e))}<small>${esc(x.e.from + ' → ' + x.e.toward)}</small></td><td class="num">${esc(haltTal(r.L, x) || '–')}</td></tr>`).join('');
+    return html + '</tbody></table></div>';
+  }
+  function pct0(v){ return Math.round(v * 100) + ' %'; }
+  function accText(v){ return v.toFixed(2).replace('.', ',') + ' m/s²'; }
+  function weakStartsHtml(z, r, halts){
+    const cmp = halts.filter(x => x.e.kind === 'start' && x.e.ratio != null);
+    const weak = cmp.filter(x => x.e.weak).sort((a, b) => a.e.ratio - b.e.ratio);
+    const marked = cmp.filter(x => x.e.marked);
+    let html = '<h3>Starter som var svagare än vanligt</h3>' +
+      `<p class="meta">Inte bekräftat halt. Startens acceleration (${AN.START_V1}→${AN.START_V2} km/h från stillastående) jämförs med andra starter från samma station mot samma håll med samma fordonstyp, minst ${AN.ADH_MIN_BASE}. ` +
+      `Svagare än vanligt = under ${pct0(AN.ADH_WEAK)} av det normala (medianen). Det kan bero på halka, men också på försiktig körning, last eller annat: GPS:en ser hur tåget rör sig, inte vad föraren begär. Inbromsningar jämförs inte, eftersom halka där inte går att skilja från hur föraren bromsar.</p>`;
+    if(!cmp.length) return html + '<p class="meta">Inga starter på sträckan har tillräckligt många att jämföra med.</p>';
+    html += '<div class="table-wrap"><table id="motionWeak"><thead><tr><th>Datum</th><th>Tåg</th><th>Start</th><th class="num">Acceleration</th><th class="num">Normalt</th><th class="num">Andel</th><th>Markerat halt</th></tr></thead><tbody>';
+    html += weak.length ? weak.map(x => `<tr><td>${esc(x.e.date)} ${WEEKDAYS[x.e.weekday] || ''}</td><td>${esc(x.e.train || '–')}</td><td>${esc(x.e.from + ' → ' + x.e.toward)}</td>` +
+      `<td class="num">${accText(x.e.acc)}</td><td class="num">${accText(x.e.normal)} <small>(${x.e.baseN})</small></td><td class="num">${pct0(x.e.ratio)}</td><td>${x.e.marked ? 'ja' : '–'}</td></tr>`).join('')
+      : '<tr><td colspan="7" class="empty">Inga starter var svagare än vanligt</td></tr>';
+    html += '</tbody></table></div>';
+    html += `<p class="meta">${cmp.length} starter kunde jämföras och ${weak.length} var svagare än vanligt.` +
+      (marked.length ? ` Av ${marked.length} starter som föraren markerat halt var ${marked.filter(x => x.e.weak).length} svagare än vanligt.` : ' Ingen av dem är markerad halt av föraren än, så det går inte att säga hur ofta en svag start betyder halka.') + '</p>';
+    return html;
+  }
+  function simpleTable(z, r, dir, halts){
     const L = r.L;
     const rows = simpleRows(z, r, dir).map(g => {
       const st = stationTal(L, g.name, g.km);
       return `<tr data-motion-key="${esc(g.key)}"><td class="st">${esc(g.name)}<small>${st ? 'km ' + st + ' · ' : ''}${g.n} uppehåll${g.n < AN.ZONE_MIN_RUNS ? ' · få' : ''}</small></td>` +
-        zoneCell(L, g, g.approach) + zoneCell(L, g, g.departure) + '</tr>';
+        zoneCell(L, g, g.approach, haltCount(halts, g.name, dir, 'broms')) + zoneCell(L, g, g.departure, haltCount(halts, g.name, dir, 'start')) + '</tr>';
     });
     return `<h4>${esc(routeText(r, dir))}</h4>` +
       `<div class="table-wrap"><table class="mz-simple" data-dir="${dir}"><thead><tr><th>Station</th><th class="num"><span class="key brake"></span>Bromsar in</th><th class="num"><span class="key gas"></span>Gasar ut</th></tr></thead><tbody>` +
       (rows.length ? rows.join('') : '<tr><td colspan="3" class="empty">Inga uppehåll i den här riktningen</td></tr>') + '</tbody></table></div>';
   }
   function simpleHtml(z, r){
+    const halts = haltOnRoute(z, r);
     return `<h3>Behandla rälsen här · ${esc(r.from.name)} – ${esc(r.to.name)}</h3>` +
       `<p class="meta">Var tågen bromsar in mot uppehållen och gasar ut från dem, i båda riktningarna. Km-tal i färdriktningen enligt Trafikverkets linjebok: vid stationerna exakt, däremellan ungefärligt.</p>` +
-      simpleTable(z, r, r.dir) + simpleTable(z, r, -r.dir) +
+      simpleTable(z, r, r.dir, halts) + simpleTable(z, r, -r.dir, halts) + haltMarksHtml(z, r, halts) +
       `<p class="meta">Bygger på ${z.runCount} körningar med GPS-spår (${esc(periodText(z.period))}). Fartprofil, karta och koordinater: <strong>Detaljerad</strong> eller klicka på en station.</p>`;
   }
 
@@ -2935,12 +2997,34 @@
     ];
   }
 
+  // Halka till CSV: förarens markeringar och (detaljerat) starterna som var svagare än vanligt
+  function haltCsvSections(z, r, withWeak){
+    const halts = haltOnRoute(z, r);
+    const marks = halts.filter(x => x.e.marked).sort((a, b) => String(b.e.date).localeCompare(String(a.e.date)));
+    const out = [{
+      title: 'Markerat halt av förarna',
+      header: ['Datum', 'Veckodag', 'Tåg', 'Vad', 'Riktning', 'Km-tal'],
+      rows: marks.map(x => [x.e.date, WEEKDAYS[x.e.weekday] || '', x.e.train, haltWhat(x.e), x.e.from + ' → ' + x.e.toward, haltTal(r.L, x)])
+    }];
+    if(withWeak){
+      const weak = halts.filter(x => x.e.kind === 'start' && x.e.weak).sort((a, b) => a.e.ratio - b.e.ratio);
+      out.push({
+        title: `Starter som var svagare än vanligt (inte bekräftat halt): under ${Math.round(AN.ADH_WEAK * 100)} % av det normala`,
+        header: ['Datum', 'Veckodag', 'Tåg', 'Start från', 'Mot', 'Acceleration (m/s²)', 'Normalt (m/s²)', 'Antal att jämföra med', 'Andel (%)', 'Markerat halt'],
+        rows: weak.map(x => [x.e.date, WEEKDAYS[x.e.weekday] || '', x.e.train, x.e.from, x.e.toward, Math.round(x.e.acc * 100) / 100,
+          Math.round(x.e.normal * 100) / 100, x.e.baseN, Math.round(x.e.ratio * 100), x.e.marked ? 'ja' : 'nej'])
+      });
+    }
+    return out;
+  }
+
   // Enkla listan: en rad per station och riktning, vald riktning först
   function exportSimpleCsv(z){
     const r = motionRange(z);
     const L = r.L;
     const coord = p => p && p.lat != null && isFinite(p.lat) ? [p.lat.toFixed(5).replace('.', ','), p.lon.toFixed(5).replace('.', ',')] : ['', ''];
     const rows = [];
+    const halts = haltOnRoute(z, r);
     for(const dir of [r.dir, -r.dir]){
       for(const g of simpleRows(z, r, dir)){
         const cols = x => {
@@ -2949,15 +3033,17 @@
           return t ? [t.from, t.to, t.len, t.clipped ? 'och utanför ' + t.section : ''] : ['', '', x ? Math.round(x.length) : '', x ? 'utan km-tal' : ''];
         };
         rows.push([routeText(r, dir), g.name, stationTal(L, g.name, g.km), g.n, ...cols(g.approach), ...cols(g.departure),
+          haltCount(halts, g.name, dir, 'broms'), haltCount(halts, g.name, dir, 'start'),
           ...coord(g.approach && g.approach.start), ...coord(g.departure && g.departure.end)]);
       }
     }
     const text = AN.csvDocument(MOTION_TITLE, motionMeta(z), [{
       title: 'Behandla rälsen: var tågen bromsar in och gasar ut, per riktning (km-tal i färdriktningen)',
       header: ['Riktning', 'Station', 'Km-tal', 'Uppehåll', 'Bromsar från km', 'Bromsar till km', 'Bromssträcka (m)', 'Anmärkning broms',
-        'Gasar från km', 'Gasar till km', 'Gassträcka (m)', 'Anmärkning gas', 'Börjar bromsa lat', 'Börjar bromsa lon', 'Slutar gasa lat', 'Slutar gasa lon'],
+        'Gasar från km', 'Gasar till km', 'Gassträcka (m)', 'Anmärkning gas', 'Halt markerat vid inbromsning', 'Halt markerat vid start',
+        'Börjar bromsa lat', 'Börjar bromsa lon', 'Slutar gasa lat', 'Slutar gasa lon'],
       rows
-    }]);
+    }, ...haltCsvSections(z, r, false)]);
     downloadText('behandla-ralsen_' + AN.localDate(new Date()) + '.csv', text);
     return text;
   }
@@ -3001,7 +3087,7 @@
       header: ['Riktning', 'Station', 'Zon', 'Från (m)', 'Till (m)', 'Längd (m)', 'Andel körningar (%)', 'Fart start (km/h)', 'Fart slut (km/h)',
         'Km-tal start', 'Km-tal slut', 'Start lat', 'Start lon', 'Slut lat', 'Slut lon'],
       rows: zones
-    }]);
+    }, ...haltCsvSections(z, r, true)]);
     downloadText('broms-och-gas_' + AN.localDate(new Date()) + '.csv', text);
     return text;
   }
