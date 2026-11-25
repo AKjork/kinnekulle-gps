@@ -296,6 +296,8 @@
     display:none;
   }
   .header-menu-dropdown.open{display:block}
+  /* Menyn är längre än skärmen: den rullas för sig (under resan rullar sidan inte) */
+  .header-menu-dropdown{max-height:calc(100vh - 4.5rem);max-height:calc(100dvh - 4.5rem);overflow-y:auto;overscroll-behavior:contain}
   .header-menu-dropdown button{
     display:block;
     width:100%;
@@ -315,8 +317,9 @@
   .header-menu-dropdown button:first-child{border-radius:6px 6px 0 0}
   .header-menu-dropdown button:last-child{border-radius:0 0 6px 6px}
   .header-menu-dropdown hr{border:none;border-top:1px solid var(--b);margin:0}
-  /* Versionen längst ner i menyn; tryck söker ny version */
-  .header-menu-dropdown .menu-version{border-top:1px solid var(--b);color:var(--mut);font-size:.8rem;font-variant-numeric:tabular-nums}
+  /* Versionen och Uppdatera app överst i menyn, så att de syns utan att rulla; tryck på versionen söker ny version */
+  .header-menu-dropdown .menu-version{color:var(--mut);font-size:.8rem;font-variant-numeric:tabular-nums}
+  .header-menu-dropdown .menu-update{color:var(--pri);font-weight:700}
   .menu-version small{display:block;font-size:.7rem;color:var(--mut);opacity:.8}
 
   .station-search-container{position:relative;flex:1}
@@ -659,6 +662,9 @@
     <div class="header-menu">
       <button id="btnMoreMenu" class="ghost header-menu-btn" aria-label="Meny">⋮</button>
       <div id="moreMenuDropdown" class="header-menu-dropdown">
+        <button id="btnUpdate" class="menu-update" style="display:none">Uppdatera app</button>
+        <button id="btnVersion" class="menu-version" type="button">Version <span id="menuVersion">–</span><small>Tryck för att söka ny version</small></button>
+        <hr>
         <div class="menu-section">Inställningar</div>
         <button id="btnWakeLock" class="menu-toggle" aria-pressed="false">Håll skärmen vaken <span class="toggle-state">Av</span></button>
         <button id="btnSound" class="menu-toggle" aria-pressed="false">Ljud vid ankomst/avgång <span class="toggle-state">Av</span></button>
@@ -680,8 +686,6 @@
         <button id="btnClear" class="danger">Töm alla loggar</button>
         <hr>
         <button id="btnInstall" style="display:none">Installera app</button>
-        <button id="btnUpdate" style="display:none">Uppdatera app</button>
-        <button id="btnVersion" class="menu-version" type="button">Version <span id="menuVersion">–</span><small>Tryck för att söka ny version</small></button>
       </div>
     </div>
   </div>
@@ -950,7 +954,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25x'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25y'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -7289,7 +7293,7 @@
 
   function showUpdatePrompt(version){
     if(!els.updateBtn) return;
-    els.updateBtn.style.display='inline-block';
+    els.updateBtn.style.display='block';
     els.updateBtn.disabled=false;
     els.updateBtn.textContent = version ? `Uppdatera app till ${version}` : 'Uppdatera app';
     if(versionPromptShown===version) return;

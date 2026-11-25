@@ -1293,7 +1293,7 @@ Appversion `2026-11-25u`.
 - Förut räknades 4–5 min som knappt och under 4 min som missat.
 
 ### Versionen i menyn
-- Längst ner i ⋮-menyn: *Version 2026-11-25u – Tryck för att söka ny version* (`btnVersion`, `checkVersionByHand`).
+- Längst ner i ⋮-menyn: *Version 2026-11-25u – Tryck för att söka ny version* (`btnVersion`, `checkVersionByHand`). *Överst sedan 2026-11-25y.*
   - Ett tryck söker direkt och säger *Du har senaste versionen*, *Ny version … – ⋮ → Uppdatera app*, *Ingen täckning …* eller *Kunde inte söka ny version just nu* (`versionCheckResult`).
   - Trycket laddar aldrig om av sig självt.
 - Knappen *Uppdatera app* säger vilken version den uppdaterar till (*Uppdatera app till 2026-11-25v*).
@@ -1422,4 +1422,17 @@ André 2026-11-25: "Man kanske också ska kunna välja om man vill mäta en tidt
 - `node --test "tests/*.test.js"` (207).
 - `node tests/run-browser-tests.mjs` (124), nya: *bara info: valet sparas, fordon och anteckningar behövs inte, Info öppnas och inget sparas som mätning* och *bara info: GPS:en följer tåget hela vägen, Halt? syns inte, och vid slutstationen tas spåret bort*.
 - Bild: `--shot=startformular-info`.
+
+## Uppdatering (2026-11-25y): versionen och Uppdatera app överst i en meny som rullas
+
+André 2026-11-25, med en bild av ⋮-menyn: "Detta är allt jag ser". Menyn slutade vid *Installera app*. Versionen (2026-11-25u) och *Uppdatera app* låg under den, nedanför skärmen. Appversion `2026-11-25y`.
+
+- **Menyn rullades inte.** Den fortsatte nedanför skärmen. Under en resa rullar sidan inte (`body.journey-mode`), så där gick det inte att nå de sista valen alls.
+- **Nu** är menyn högst skärmens höjd minus rubriken (`max-height: calc(100dvh - 4.5rem)`), och den rullas för sig (`overflow-y: auto`, `overscroll-behavior: contain`).
+- **Överst i menyn:** *Uppdatera app till …* (`btnUpdate`, grön och fet, bara när en ny version finns) och *Version … – Tryck för att söka ny version* (`btnVersion`). Därefter Inställningar som förut. *Installera app* ligger kvar längst ner.
+- `showUpdatePrompt` visar knappen som block, så att den fyller menyns bredd.
+
+### Tester
+- `node --test "tests/*.test.js"` (207).
+- `node tests/run-browser-tests.mjs uppdatering`: på en lägre skärm (560 px) ryms menyn på skärmen och rullas, och versionen och *Uppdatera app* är de två första valen och syns utan att rulla.
 

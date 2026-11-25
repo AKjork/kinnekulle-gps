@@ -2143,10 +2143,23 @@ test('uppdatering: ny version laddas direkt vid start utan resa, men under resan
   w.__railtimer.setVersionForTest(version(w.__railtimer.appVersion));
   assertEqual(await w.__railtimer.checkForNewVersion(true), null, 'samma version: inget händer');
   assertEqual(reloads, 1, 'ingen omladdning');
-  // Versionen längst ner i menyn; tryck söker och säger vad som hände
+  // Versionen och Uppdatera app överst i menyn; menyn ryms på skärmen och rullas för sig
   assertEqual(w.document.getElementById('menuVersion').textContent, w.__railtimer.appVersion, 'versionen i menyn');
   const menuBtns = Array.from(w.document.querySelectorAll('#moreMenuDropdown > button'));
-  assertEqual(menuBtns[menuBtns.length - 1].id, 'btnVersion', 'längst ner');
+  assertEqual(menuBtns.slice(0, 2).map(b => b.id).join(), 'btnUpdate,btnVersion', 'överst');
+  const menu = w.document.getElementById('moreMenuDropdown');
+  w.frameElement.style.height = '560px'; // en mindre telefon: menyn är längre än skärmen
+  await new Promise(res => setTimeout(res, 50));
+  w.document.getElementById('btnMoreMenu').click();
+  const box = menu.getBoundingClientRect();
+  assert(box.bottom <= w.innerHeight, `menyn ryms på skärmen: ${Math.round(box.bottom)} av ${w.innerHeight}`);
+  assert(menu.scrollHeight > menu.clientHeight && w.getComputedStyle(menu).overflowY === 'auto', `menyn rullas: ${menu.scrollHeight} > ${menu.clientHeight}`);
+  const ver = w.document.getElementById('btnVersion').getBoundingClientRect();
+  const upd = w.document.getElementById('btnUpdate').getBoundingClientRect();
+  assert(ver.bottom <= box.bottom && upd.bottom <= box.bottom && upd.width > box.width * 0.85, `versionen och Uppdatera app syns utan att rulla, i hela bredden: ${Math.round(ver.bottom)} ${Math.round(upd.bottom)} ${Math.round(upd.width)}/${Math.round(box.width)}`);
+  w.document.body.click();
+  w.frameElement.style.height = '';
+  await new Promise(res => setTimeout(res, 50));
   w.document.getElementById('btnVersion').click();
   await new Promise(res => setTimeout(res, 30));
   assertEqual(w.document.getElementById('headerStatus').textContent, `Du har senaste versionen (${w.__railtimer.appVersion})`);
