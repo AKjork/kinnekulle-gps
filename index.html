@@ -777,7 +777,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25i';
+  const APP_VERSION = '2026-11-25j';
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -3054,6 +3054,14 @@
       refreshReportFor(id);
       return null;
     }
+    // Trafikverket sparar bara de senaste dygnen (2026-11-25: data för en körning 1 dygn gammal, inte 6).
+    // Ett tomt svar för en äldre körning betyder att datan är borta, inte att tåget saknas.
+    const finished=TRV.toMs(run.finishedAt) ?? TRV.toMs(run.startedAt) ?? Date.now();
+    if(!anns.length && Date.now()-finished>24*3600*1000){
+      trvStatus.set(String(id), 'gone');
+      refreshReportFor(id);
+      return null;
+    }
     const times=TRV.trafikverketTimes(run, anns, Date.now());
     updateStoredLog(id, entry=>TRV.applyTrafikverket(entry, times));
     trvStatus.delete(String(id));
@@ -3102,6 +3110,8 @@
     const bits=[];
     const one=(arrow, trvTime, appTime)=>{
       if(!trvTime) return;
+      // Vissa stationer rapporteras bara i hela minuter: då jämförs inga sekunder
+      if(TRV.wholeMinute(trvTime)){ bits.push(`${arrow} ${formatClock(trvTime)} <small>hel minut</small>`); return; }
       const d=appTime?Math.round((new Date(appTime)-new Date(trvTime))/1000):null;
       bits.push(`${arrow} ${formatTime(trvTime)}${d!=null?` <small>appen ${formatSignedSeconds(d)}</small>`:''}`);
     };
@@ -3121,17 +3131,20 @@
       const status=trvStatus.get(String(logEntry.id));
       if(status==='pending') return '<div class="meta">Hämtar Trafikverkets tider …</div>';
       if(status==='failed') return '<div class="meta">Trafikverkets tider kunde inte hämtas nu – nytt försök senare.</div>';
+      if(status==='gone') return '<div class="meta">Trafikverket har inte kvar tiderna för den här resan (bara de senaste dygnen).</div>';
       return '';
     }
     if(!t.found) return '<div class="meta">Trafikverket har inga tider för tåget.</div>';
-    const rows=TRV.compareRun(logEntry);
+    const rows=TRV.compareRun(logEntry).filter(r=>!r.wholeMinute);
     const arr=TRV.stats(rows.filter(r=>r.kind==='arrival').map(r=>r.diffS));
     const dep=TRV.stats(rows.filter(r=>r.kind==='departure').map(r=>r.diffS));
     const parts=[`Trafikverket: ${t.found} ${t.found===1?'station':'stationer'}`];
     if(arr.n) parts.push(`ankomst appen ${formatSignedSeconds(arr.median)}`);
     if(dep.n) parts.push(`avgång appen ${formatSignedSeconds(dep.median)} (median)`);
     if(t.complete===false) parts.push('alla tider är inte rapporterade än');
-    return `<div class="meta" id="trvSummary">${parts.join(' · ')}</div>`;
+    // Trafikverkets tider är inte stopp och start (2026-11-25, tider med sekunder: ankomst 27–63 s före stoppet, avgång 2–31 s efter starten)
+    const note=rows.length ? '<div class="meta">Trafikverket registrerar ankomsten innan tåget stannar och avgången efter att det börjat rulla.</div>' : '';
+    return `<div class="meta" id="trvSummary">${parts.join(' · ')}</div>${note}`;
   }
 
   // Efter en avslutad resa: ladda upp och berätta hur det gick

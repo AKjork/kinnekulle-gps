@@ -15,7 +15,7 @@
   const TIMEOUT_MS = 10000;
   const WINDOW_MS = 3 * 3600 * 1000;      // körningens tidsfönster ± 3 h (sena tåg, tåg över midnatt)
   const RECHECK_AFTER_MS = 15 * 60 * 1000; // ofullständiga tider hämtas om tills 15 min efter resan
-  const MAX_AGE_MS = 7 * 24 * 3600 * 1000; // äldre körningar hämtas inte automatiskt
+  const MAX_AGE_MS = 3 * 24 * 3600 * 1000; // äldre körningar hämtas inte (Trafikverket sparar bara några dygn)
 
   // Fälten som behövs för en körning. Tågorderns tider (LocationDateTimeOTN) sparar appen redan när
   // tidtabellen hämtas (operationalArrival/operationalDeparture), så de tas inte med här.
@@ -185,6 +185,13 @@
     return best;
   }
 
+  // Trafikverket rapporterar vissa stationer bara i hela minuter (2026-11-25: Lidköping, Mariestad, Forshem),
+  // även i TimeAtLocationWithSeconds. En tid på :00 räknas därför som minut, inte sekund.
+  function wholeMinute(t) {
+    const m = /T\d\d:\d\d:(\d\d)/.exec(String(t || ''));
+    return !!m && m[1] === '00';
+  }
+
   function reported(a) {
     return a ? (a.TimeAtLocationWithSeconds || a.TimeAtLocation || null) : null;
   }
@@ -265,7 +272,7 @@
         if (app == null || trv == null) continue;
         rows.push({
           index: i, name: st.name, sig: st.sig, kind, source: st[srcKey] || '', shouldStop: st.shouldStop !== false,
-          first: i === 0, last: i === run.stops.length - 1,
+          first: i === 0, last: i === run.stops.length - 1, wholeMinute: wholeMinute(st.trv[kind]),
           app: new Date(app).toISOString(), trv: st.trv[kind], diffS: Math.round((app - trv) / 1000)
         });
       }
@@ -293,8 +300,10 @@
     };
   }
 
-  // Sammanfattning per aktivitet och per station (sig + aktivitet + stopp/passage)
-  function summarizeComparison(rows) {
+  // Sammanfattning per aktivitet och per station (sig + aktivitet + stopp/passage).
+  // Tider i hela minuter räknas inte; de anges som minuteRows.
+  function summarizeComparison(allRows) {
+    const rows = allRows.filter(r => !r.wholeMinute);
     const byKind = {};
     const byStation = new Map();
     for (const r of rows) {
@@ -309,7 +318,9 @@
       arrival: stats(byKind.arrival || []),
       departure: stats(byKind.departure || []),
       stations,
-      largest: rows.slice().sort((a, b) => Math.abs(b.diffS) - Math.abs(a.diffS)).slice(0, 15)
+      largest: rows.slice().sort((a, b) => Math.abs(b.diffS) - Math.abs(a.diffS)).slice(0, 15),
+      minuteRows: allRows.length - rows.length,
+      minuteStations: Array.from(new Set(allRows.filter(r => r.wholeMinute).map(r => r.name || r.sig)))
     };
   }
 
@@ -362,6 +373,19 @@
       if (best && !picked.has(String(best.r.id))) picked.set(String(best.r.id), { run: best.r, reason: `${days} dagar` });
     }
     return Array.from(picked.values());
+  }
+
+  // Alla stationssignaturer i en post, på vilken nivå som helst (Signature, LocationSignature)
+  function signaturesIn(value, out) {
+    const found = out || [];
+    if (Array.isArray(value)) value.forEach(v => signaturesIn(v, found));
+    else if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        if ((k === 'Signature' || k === 'LocationSignature') && typeof v === 'string') found.push(v);
+        else signaturesIn(v, found);
+      }
+    }
+    return found;
   }
 
   function safe(promiseFn) {
@@ -461,22 +485,51 @@
     out.sections.stations = stSection;
     await sleep(pause);
 
-    // 4. Störningar (TrainMessage) och stationsmeddelanden som rör tågets stationer
+    // 4. Störningar och stationsmeddelanden som rör tågets stationer.
+    // TrainMessage finns inte längre (svar 2026-11-25: "ObjectType 'TrainMessage' does not exists");
+    // ersättaren är OperativeEvent i namespace ols.open. EventState 1 = pågår.
     progress('Störningar och meddelanden');
-    const msgs = await safe(() => query({ objecttype: 'TrainMessage', schemaversion: '1.7', limit: 2000 }, req));
+    const nowLocal = swedishLocal(now);
+    const msgs = await safe(() => query({
+      namespace: 'ols.open', objecttype: 'OperativeEvent', schemaversion: '1.0', limit: 2000,
+      filter: { op: 'EQ', name: 'EventState', value: '1' }
+    }, req));
     if (msgs.ok) {
-      const touches = m => (m.TrafficImpact || []).some(ti => (ti.AffectedLocation || []).some(al => routeSigs.includes(al.LocationSignature))
-        || (ti.FromLocation || []).some(s => routeSigs.includes(s)) || (ti.ToLocation || []).some(s => routeSigs.includes(s)));
-      const onRoute = msgs.value.filter(touches);
+      const onRoute = msgs.value.filter(m => signaturesIn(m).some(sig => routeSigs.includes(sig)));
       out.sections.messages = { count: msgs.value.length, fields: fieldSummary(msgs.value), onRoute: onRoute.slice(0, 20), onRouteCount: onRoute.length };
     } else out.sections.messages = { error: msgs.error };
-    const stMsgs = await safe(() => query({ objecttype: 'TrainStationMessage', schemaversion: '1', limit: 2000 }, req));
+    // Stationsmeddelanden: bara de som gäller nu, för tågets stationer (utan filter kom 2 000 gamla meddelanden)
+    const stFilter = routeSigs.length
+      ? { op: 'AND', items: [{ op: 'IN', name: 'LocationCode', value: routeSigs.join(',') }, { op: 'GT', name: 'EndDateTime', value: nowLocal }] }
+      : { op: 'GT', name: 'EndDateTime', value: nowLocal };
+    const stMsgs = await safe(() => query({ objecttype: 'TrainStationMessage', schemaversion: '1', limit: 500, filter: stFilter }, req));
     if (stMsgs.ok) {
-      const onRoute = stMsgs.value.filter(m => routeSigs.some(sig => JSON.stringify(m).includes(`"${sig}"`)));
-      out.sections.stationMessages = { count: stMsgs.value.length, fields: fieldSummary(stMsgs.value), onRoute: onRoute.slice(0, 20), onRouteCount: onRoute.length };
+      const onRoute = stMsgs.value.filter(m => routeSigs.includes(m.LocationCode));
+      out.sections.stationMessages = { count: stMsgs.value.length, fields: fieldSummary(stMsgs.value), onRoute: onRoute.slice(0, 40), onRouteCount: onRoute.length };
     } else out.sections.stationMessages = { error: stMsgs.error };
     const codes = await safe(() => query({ objecttype: 'ReasonCode', schemaversion: '1', limit: 5000 }, req));
     out.sections.reasonCodes = codes.ok ? { count: codes.value.length, fields: fieldSummary(codes.value), records: codes.value.slice(0, 5) } : { error: codes.error };
+    await sleep(pause);
+
+    // Namespace: Trafikverket skriver att TrainAnnouncement kräver namespace från 2/9 2026, men frågorna
+    // utan namespace svarade 2026-11-25. Här provas varianterna, så att appen kan byta i förväg.
+    progress('Namespace');
+    const nsTrain = { op: 'EQ', name: 'OperationalTrainNumber', value: train };
+    const nsDay = { op: 'AND', items: [nsTrain, { op: 'GTE', name: 'AdvertisedTimeAtLocation', value: `${date}T00:00:00` }, { op: 'LTE', name: 'AdvertisedTimeAtLocation', value: `${date}T23:59:59` }] };
+    const variants = [
+      { label: 'TrainAnnouncement 1.9 utan namespace (appen i dag)', q: { objecttype: 'TrainAnnouncement', schemaversion: '1.9', limit: 1000, filter: nsDay } },
+      { label: 'TrainAnnouncement 1.9 rail.trafficinfo', q: { namespace: 'rail.trafficinfo', objecttype: 'TrainAnnouncement', schemaversion: '1.9', limit: 1000, filter: nsDay } },
+      { label: 'TrainAnnouncement 2.0 rail.trafficinfo', q: { namespace: 'rail.trafficinfo', objecttype: 'TrainAnnouncement', schemaversion: '2.0', limit: 1000, filter: nsDay } },
+      { label: 'TrainStation 1.4 rail.trafficinfo', q: { namespace: 'rail.trafficinfo', objecttype: 'TrainStation', schemaversion: '1.4', limit: 5, filter: { op: 'EQ', name: 'Advertised', value: 'true' } } }
+    ];
+    out.sections.namespaces = [];
+    for (const v of variants) {
+      const r = await safe(() => query(v.q, req));
+      const item = { label: v.label, namespace: v.q.namespace || null, objecttype: v.q.objecttype, schemaversion: v.q.schemaversion };
+      if (r.ok) Object.assign(item, { ok: true, count: r.value.length, fields: fieldSummary(r.value).map(f => f.path) });
+      else Object.assign(item, { ok: false, error: r.error });
+      out.sections.namespaces.push(item);
+    }
     await sleep(pause);
 
     // 5. Appens körningar mot Trafikverkets rapporterade tider, och hur långt bakåt det finns data
@@ -509,7 +562,7 @@
     API_URL, DEFAULT_KEY, RUN_FIELDS, TrvError,
     xmlEscape, filterXml, buildQuery, buildRequest, request, query,
     toMs, swedishLocal, swedishDay, runWindow, runQuery, fetchRunAnnouncements,
-    matchAnnouncement, trafikverketTimes, applyTrafikverket, needsTrafikverket,
+    matchAnnouncement, trafikverketTimes, applyTrafikverket, needsTrafikverket, wholeMinute, signaturesIn,
     compareRun, stats, summarizeComparison, fieldSummary, pickRuns, wgs84, runCheck
   };
 });

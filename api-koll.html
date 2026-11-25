@@ -99,11 +99,11 @@
   }
   function clock(t){
     const ms = TRV.toMs(t);
-    return ms == null ? '' : new Date(ms).toLocaleTimeString('sv-SE', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    return ms == null ? '' : new Date(ms).toLocaleTimeString('sv-SE', {timeZone:'Europe/Stockholm', hour:'2-digit', minute:'2-digit', second:'2-digit'});
   }
   function hm(t){
     const ms = TRV.toMs(t);
-    return ms == null ? '' : new Date(ms).toLocaleTimeString('sv-SE', {hour:'2-digit', minute:'2-digit'});
+    return ms == null ? '' : new Date(ms).toLocaleTimeString('sv-SE', {timeZone:'Europe/Stockholm', hour:'2-digit', minute:'2-digit'});
   }
   function day(t){ return TRV.swedishDay(t) || ''; }
   function plural(n, one, many){ return `${n} ${n === 1 ? one : many}`; }
@@ -158,6 +158,7 @@
       ${runs.length ? `<div class="tiles">${tile(s.arrival, 'ankomst')}${tile(s.departure, 'avgång')}<div class="tile"><b>${withData.length} av ${runs.length}</b><span>körningar där Trafikverket hade data</span></div></div>` : '<p class="sub">Det finns inga körningar med tågnummer och stationssignaturer på den här telefonen.</p>'}
       ${back ? `<p class="sub" id="retention">${escapeHtml(back)}.</p>` : ''}
       ${errors.length ? `<p class="err-text">${errors.length} körningar gick inte att hämta: ${escapeHtml(errors[0].error)}</p>` : ''}
+      ${s.minuteRows ? `<p class="sub" id="minuteNote">${plural(s.minuteRows, 'tid', 'tider')} i hela minuter räknas inte (${escapeHtml(s.minuteStations.join(', '))}): där rapporterar Trafikverket utan sekunder.</p>` : ''}
       ${stationRows ? `<div class="scroll"><table><thead><tr><th>Station</th><th>Typ</th><th class="num">Antal</th><th class="num">Median</th><th class="num">P10 – P90</th></tr></thead><tbody>${stationRows}</tbody></table></div>` : ''}
       ${largest ? `<details><summary>Största skillnaderna</summary><div class="scroll"><table><thead><tr><th>Datum</th><th>Tåg</th><th>Station</th><th></th><th>Appen</th><th>TrV</th><th class="num">Skillnad</th><th>Källa</th></tr></thead><tbody>${largest}</tbody></table></div></details>` : ''}
       <details><summary>Körningarna</summary><div class="scroll"><table><thead><tr><th>Datum</th><th>Tåg</th><th>Urval</th><th class="num">Ålder</th><th class="num">Annonseringar</th><th class="num">Jämförda tider</th></tr></thead><tbody>${
@@ -229,17 +230,49 @@
     return `<section class="card" id="secStations"><h2>Stationer (TrainStation)</h2>${html}</section>`;
   }
 
-  function renderMessages(m, sm, rc){
-    const list = (m.onRoute || []).map(x => `<li><b>${escapeHtml(x.Header || (x.ReasonCode && x.ReasonCode[0] && x.ReasonCode[0].Description) || 'Meddelande')}</b> ${escapeHtml(x.ExternalDescription || '')} <span class="mut">${escapeHtml(day(x.StartDateTime))} ${hm(x.StartDateTime)}${x.PrognosticatedEndDateTimeTrafficImpact ? ` – prognos ${escapeHtml(day(x.PrognosticatedEndDateTimeTrafficImpact))} ${hm(x.PrognosticatedEndDateTimeTrafficImpact)}` : ''}</span></li>`).join('');
+  // OperativeEvent: rubrik och text från det senaste publika meddelandet, annars händelsetypen
+  function eventText(x){
+    const msgs = (x.TrafficImpact || []).map(t => t.PublicMessage).filter(Boolean)
+      .sort((a, b) => String(b.ModifiedDateTime || '').localeCompare(String(a.ModifiedDateTime || '')));
+    const pm = msgs[0] || {};
+    const forecast = (x.TrafficImpact || []).map(t => t.EndDateTime).filter(Boolean).sort().pop() || x.EndDateTime;
+    return { header: pm.Header || (x.EventType && x.EventType.Description) || 'Händelse', text: pm.Description || '', start: x.StartDateTime, end: forecast };
+  }
+
+  function renderMessages(m, sm, rc, names){
+    const list = (m.onRoute || []).map(x => {
+      const e = eventText(x);
+      return `<li><b>${escapeHtml(e.header)}</b> ${escapeHtml(e.text)} <span class="mut">${escapeHtml(day(e.start))} ${hm(e.start)}${e.end ? ` – ${escapeHtml(day(e.end))} ${hm(e.end)}` : ''}</span></li>`;
+    }).join('');
+    // Samma text visas ofta både på skärm och i utrop: visa den en gång per station
+    const seen = new Set();
+    const stList = (sm.onRoute || []).filter(x => {
+      const key = `${x.LocationCode}|${String(x.FreeText || '').replace(/\s+/g, ' ').trim()}`;
+      if(seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).map(x => `<li><b>${escapeHtml(names.get(x.LocationCode) || x.LocationCode)}</b> ${escapeHtml(String(x.FreeText || '').replace(/\\PAU=\d+\\/g, ' '))} <span class="mut">${escapeHtml(x.MediaType || '')} · till ${escapeHtml(day(x.EndDateTime))} ${hm(x.EndDateTime)}</span></li>`).join('');
     const part = (title, x, extra) => x.error ? `<h3 class="sub">${title}</h3>${errorBlock(x.error)}` : `<p>${title}: <b>${x.count}</b>${extra || ''}</p>`;
     return `<section class="card" id="secMessages"><h2>Störningar och meddelanden</h2>
-      ${part('Störningar och banarbeten (TrainMessage)', m, m.error ? '' : `, varav <b>${m.onRouteCount}</b> rör tågets stationer`)}
+      ${part('Pågående störningar och banarbeten (OperativeEvent)', m, m.error ? '' : `, varav <b>${m.onRouteCount}</b> rör tågets stationer`)}
       ${list ? `<ul class="plain">${list}</ul>` : ''}
-      ${m.fields ? fieldsDetails('Alla fält i TrainMessage', m.fields, m.count) : ''}
-      ${part('Stationsmeddelanden (TrainStationMessage)', sm, sm.error ? '' : `, varav <b>${sm.onRouteCount}</b> för tågets stationer`)}
+      ${m.fields ? fieldsDetails('Alla fält i OperativeEvent', m.fields, m.count) : ''}
+      ${part('Stationsmeddelanden som gäller nu för tågets stationer (TrainStationMessage)', sm)}
+      ${stList ? `<ul class="plain">${stList}</ul>` : ''}
       ${sm.fields ? fieldsDetails('Alla fält i TrainStationMessage', sm.fields, sm.count) : ''}
       ${part('Orsakskoder (ReasonCode)', rc)}
       ${rc.fields ? fieldsDetails('Alla fält i ReasonCode', rc.fields, rc.count) : ''}
+    </section>`;
+  }
+
+  // Vilka frågor Trafikverket godtar med och utan namespace
+  function renderNamespaces(list){
+    if(!list || !list.length) return '';
+    return `<section class="card" id="secNamespaces"><h2>Namespace</h2>
+      <p class="sub">Trafikverket skriver att TrainAnnouncement kräver namespace från 2/9 2026. Så här svarade API:t nu.</p>
+      <div class="scroll"><table><thead><tr><th>Fråga</th><th>Svar</th></tr></thead><tbody>${
+        list.map(v => `<tr><td>${escapeHtml(v.label)}</td><td class="wrap">${v.ok ? `ok, ${v.count} poster` : `<span class="tag">fel</span> ${escapeHtml(v.error)}`}</td></tr>`).join('')
+      }</tbody></table></div>
     </section>`;
   }
 
@@ -251,7 +284,8 @@
       + renderAnnouncements(s.announcements, res.trainNumber, res.date, names)
       + renderPositions(s.positions, res.trainNumber, myTrains)
       + renderStations(s.stations)
-      + renderMessages(s.messages, s.stationMessages, s.reasonCodes);
+      + renderMessages(s.messages, s.stationMessages, s.reasonCodes, names)
+      + renderNamespaces(s.namespaces);
   }
 
   // ── Körning, sparande ──

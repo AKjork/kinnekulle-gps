@@ -160,7 +160,7 @@ test('needsTrafikverket: utan tider, ofullständigt strax efter resan, men inte 
   r.trv = { fetchedAt: '2026-11-24T20:20:00Z', complete: true };
   assert.equal(TRV.needsTrafikverket(r, now), false);
   assert.equal(TRV.needsTrafikverket(Object.assign(run(), { trainNumber: '' }), now), false);
-  assert.equal(TRV.needsTrafikverket(run(), now + 8 * 864e5), false);
+  assert.equal(TRV.needsTrafikverket(run(), now + 4 * 864e5), false, 'Trafikverket sparar bara några dygn');
 });
 
 test('fieldSummary: fält i nästlade listor, antal poster och upp till tre exempel', () => {
@@ -186,19 +186,25 @@ test('pickRuns: de senaste plus en körning per ålder, bara körningar med tåg
 
 test('runCheck: varje del för sig, även när en del ger fel, och jämförelse mot körningarna', async () => {
   const seen = [];
+  const bodies = [];
   const fakeFetch = async (url, init) => {
     const type = /objecttype="([^"]+)"/.exec(init.body)[1];
     seen.push(type);
+    bodies.push(init.body);
     const result = {
       TrainAnnouncement: () => (/AdvertisedTimeAtLocation" value="2026-11-24T00:00:00"/.test(init.body) ? ANNS : ANNS.slice(0, 4)),
       TrainPosition: () => (/<EQ name="Train.OperationalTrainNumber"/.test(init.body) ? [{ Train: { OperationalTrainNumber: '24360' }, Speed: 80, TimeStamp: '2026-11-24T20:00:00.000+01:00', Position: { WGS84: 'POINT (13.0 58.1)' } }]
         : [{ Train: { OperationalTrainNumber: '24360' }, TimeStamp: '2026-11-24T20:59:00.000+01:00', Speed: 50 }, { Train: { OperationalTrainNumber: '9' }, TimeStamp: '2026-11-24T10:00:00.000+01:00' }]),
       TrainStation: () => (/<IN /.test(init.body) ? [{ LocationSignature: 'Ved', PlatformLine: ['1', '2'] }]
         : [{ LocationSignature: 'Ved', Advertised: true }, { LocationSignature: 'Hrc', Advertised: true }, { LocationSignature: 'Xx', Advertised: false, Geometry: { WGS84: 'POINT (1 2)' } }]),
-      TrainMessage: () => [{ Header: 'Banarbete', TrafficImpact: [{ AffectedLocation: [{ LocationSignature: 'Vaa' }] }] }, { Header: 'Annat', TrafficImpact: [] }],
+      OperativeEvent: () => [
+        { EventType: { Description: 'Banarbete' }, EventSections: [{ FromLocation: { Signature: 'Vaa' }, ToLocation: { Signature: 'Grn' } }], TrafficImpact: [{ PublicMessage: { Header: 'Banarbete Vara' } }] },
+        { EventType: { Description: 'Annat' }, EventSections: [{ FromLocation: { Signature: 'Cst' } }] }
+      ],
+      TrainStationMessage: () => [{ LocationCode: 'Ved', FreeText: 'Spårändring', EndDateTime: '2026-11-24T23:00:00.000+01:00' }],
       ReasonCode: () => [{ Code: 'ANA002', Level1Description: 'Inställt' }]
     }[type];
-    if (!result) return { ok: false, status: 400, json: async () => ({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Request', MESSAGE: `Okänd ${type}` } }] } }) };
+    if (!result || /schemaversion="2.0"/.test(init.body)) return { ok: false, status: 400, json: async () => ({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Request', MESSAGE: `Okänd ${type}` } }] } }) };
     return okResponse({ RESPONSE: { RESULT: [{ [type]: result() }] } });
   };
   const progress = [];
@@ -214,7 +220,15 @@ test('runCheck: varje del för sig, även när en del ger fel, och jämförelse 
   assert.deepEqual(s.stations.all, { count: 3, advertised: 2, notAdvertised: 1, notAdvertisedWithPosition: 1, routeNotAdvertised: [] });
   assert.equal(s.stations.route.fields[1].path, 'PlatformLine');
   assert.equal(s.messages.onRouteCount, 1);
-  assert.equal(s.stationMessages.error, 'Request: Okänd TrainStationMessage');
+  assert.equal(s.messages.onRoute[0].TrafficImpact[0].PublicMessage.Header, 'Banarbete Vara');
+  assert.ok(bodies.some(b => /namespace="ols.open" objecttype="OperativeEvent" schemaversion="1.0"/.test(b) && /<EQ name="EventState" value="1" \/>/.test(b)), 'OperativeEvent, bara pågående');
+  assert.ok(bodies.some(b => /TrainStationMessage/.test(b) && /<IN name="LocationCode" value="Hrc,Ved,Vaa,Mst" \/>/.test(b) && /<GT name="EndDateTime" value="2026-11-24T21:05:00" \/>/.test(b)), 'stationsmeddelanden som gäller nu för tågets stationer');
+  assert.equal(s.stationMessages.onRouteCount, 1);
+  assert.deepEqual(s.namespaces.map(v => [v.label, v.ok]), [
+    ['TrainAnnouncement 1.9 utan namespace (appen i dag)', true], ['TrainAnnouncement 1.9 rail.trafficinfo', true],
+    ['TrainAnnouncement 2.0 rail.trafficinfo', false], ['TrainStation 1.4 rail.trafficinfo', true]
+  ]);
+  assert.equal(s.namespaces[2].error, 'Request: Okänd TrainAnnouncement');
   assert.equal(s.reasonCodes.count, 1);
   assert.equal(s.comparison.runs.length, 1);
   assert.equal(s.comparison.runs[0].announcements, 4);
@@ -230,6 +244,26 @@ test('runCheck: utan kontakt avbryts kontrollen efter första frågan', async ()
   assert.equal(calls, 1);
   assert.equal(out.aborted, 'Ingen kontakt med Trafikverket');
   assert.deepEqual(out.sections, {});
+});
+
+test('hela minuter: tider på :00 jämförs inte i sekunder och anges för sig', () => {
+  assert.equal(TRV.wholeMinute('2026-11-24T19:47:00.000+01:00'), true);
+  assert.equal(TRV.wholeMinute('2026-11-24T19:47:20.000+01:00'), false);
+  assert.equal(TRV.wholeMinute(null), false);
+  const r = run();
+  const anns = ANNS.slice(0, 4).map(a => a.LocationSignature === 'Ved' && a.ActivityType === 'Ankomst' ? Object.assign({}, a, { TimeAtLocationWithSeconds: '2026-11-24T19:47:00.000+01:00' }) : a);
+  TRV.applyTrafikverket(r, TRV.trafikverketTimes(r, anns, 0));
+  const rows = TRV.compareRun(r);
+  assert.deepEqual(rows.filter(x => x.wholeMinute).map(x => `${x.sig} ${x.kind}`), ['Ved arrival']);
+  const sum = TRV.summarizeComparison(rows);
+  assert.equal(sum.arrival.n, 1, 'bara Vara räknas');
+  assert.equal(sum.minuteRows, 1);
+  assert.deepEqual(sum.minuteStations, ['Vedum']);
+});
+
+test('signaturesIn: signaturer på alla nivåer i en OperativeEvent', () => {
+  const ev = { EventSections: [{ FromLocation: { Signature: 'Vaa' }, ViaLocation: { Signature: 'Ved' } }], TrafficImpact: [{ SelectedSections: [{ SectionLocations: [{ Signature: 'Hrc' }] }] }], LocationSignature: 'Gdö' };
+  assert.deepEqual(TRV.signaturesIn(ev).sort(), ['Gdö', 'Hrc', 'Vaa', 'Ved']);
 });
 
 test('wgs84: läser punkt från Trafikverkets format', () => {

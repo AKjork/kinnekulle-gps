@@ -782,7 +782,7 @@ Utvecklingsmiljön når inte `api.trafikinfo.trafikverket.se` (proxyn spärrar a
 - **Efter resan** (`afterJourneyTrafikverket`): Trafikverkets tider hämtas och sparas i körningen som `run.trv` (`fetchedAt, found, complete, operator, product`) och `stop.trv` (`arrival, departure, track, canceled, deviations`). Sedan laddas körningen upp.
   - Saknas slutstationens rapport görs ett nytt försök efter 60 s (`trvRetryDelayMs`), men aldrig under en ny resa.
   - Misslyckas hämtningen laddas körningen upp ändå.
-- **Före uppladdning** (`fillTrafikverketBeforeUpload`): hämtar tider för högst 3 körningar som inte laddats upp än och saknar dem (`needsTrafikverket`). Körningen ska vara högst 7 dagar gammal. En ofullständig hämtning görs om tills den gjorts mer än 15 min efter resan.
+- **Före uppladdning** (`fillTrafikverketBeforeUpload`): hämtar tider för högst 3 körningar som inte laddats upp än och saknar dem (`needsTrafikverket`). Körningen ska vara högst 7 dagar gammal (3 sedan 2026-11-25j). En ofullständig hämtning görs om tills den gjorts mer än 15 min efter resan.
 - `updateStoredLog` ändrar en körning i lagringen med `setItemWithRoom`, och i `unsavedLogs` om den bara finns i minnet. `normalizeLogEntry` bevarar `trv`.
 - Logiken för ankomst och avgång är oförändrad, och regressionsfacit passerar.
 - **Rapporten**: raden *Trafikverket ↓ tid appen ±s · ↑ tid appen ±s · spår · inställt* under varje station, och en sammanfattning med medianskillnaden (`#trvSummary`) eller *Hämtar …*/*kunde inte hämtas nu*.
@@ -796,7 +796,7 @@ Tågnummer (förifyllt från senaste körningen) och datum. Sidan visar:
 - **Tågets annonseringar**: plan, faktisk tid med sekunder, avvikelse, spår, operativ tid, prognos, inställt och avvikelser. Ej annonserade platser visas nedtonade.
 - **TrainPosition**: tågets senaste position, hur många tåg som rapporterar och hur många av förarens tågnummer som finns med.
 - **TrainStation**: annonserade och ej annonserade platser, och alla fält för tågets stationer.
-- **TrainMessage** som rör tågets stationer, **TrainStationMessage** och **ReasonCode**.
+- **TrainMessage** som rör tågets stationer, **TrainStationMessage** och **ReasonCode**. (TrainMessage finns inte längre, se 2026-11-25j.)
 - Fältlistor per objekttyp: hur många poster som har varje fält, med exempel.
 - **Spara i railtimer-data** skriver resultatet till `api-koll/api-koll_<datum>_<tid>_<tåg>.json` med appens uppladdningsinställningar. **Ladda ner JSON** fungerar utan dem.
 - Schemaversioner: TrainAnnouncement 1.9, TrainStation 1.4, TrainPosition 1.1 (namespace `järnväg.trafikinfo`), TrainMessage 1.7, TrainStationMessage 1 och ReasonCode 1. Fel i en version visas i sin del.
@@ -826,3 +826,46 @@ André 2026-11-25: det är jobbigt att lägga in token igen varje gång webbläs
 - Appen och analysverktyget delar `railtimer_github_v1` (samma ursprung), så en länk till någon av sidorna loggar in båda i samma webbläsare. En app som lagts till på hemskärmen har egen lagring på iPhone; där klistrar man in länken i fältet Token.
 - Den gamla texten om att låta webbläsaren spara token som lösenord är borttagen ur analysverktyget. Formuläret har kvar `autocomplete` username/current-password.
 - Tester: `node --test "tests/*.test.js"` (126), *inloggningslänk: …* i `tests/railtimer-github.test.js`. `node tests/run-browser-tests.mjs` (85), *uppladdning: inloggningslänken …* och *analys: inloggningslänken …*.
+
+## Uppdatering (2026-11-25j): svaret från Trafikverket – OperativeEvent, hela minuter och hur länge data finns
+
+André 2026-11-25 körde kontrollsidan för 23349 och sparade svaret i `railtimer-data/api-koll/api-koll_2026-11-25_130558_23349.json`. Appversion `2026-11-25j`.
+
+### Vad svaret visade
+- **TrainAnnouncement 1.9 utan namespace fungerar.** Tåget hade 57 annonseringar, 50 annonserade och 7 ej annonserade.
+  - `LocationDateTimeOTN` finns i alla 50 annonserade, så tågorderns tider (2026-11-25f) fungerar.
+  - `TimeAtLocationWithSeconds` finns för 25 av 57.
+  - Nya fält: `OperationalTransportIdentifiers` och `PlannedEstimatedTimeAtLocationIsValid`.
+- **Var Trafikverket rapporterar** (23349 Hallsberg pbg–Herrljunga C):
+  - Med sekunder: Hallsberg–Gårdsjö, Håkantorp, Vara, Vedum och Herrljunga C.
+  - Bara hela minuter, även i `TimeAtLocationWithSeconds`: Mariestad, Forshem och Lidköping. Även Håkantorps avgång vissa dagar.
+  - Ingen rapport alls för de övriga stationerna mellan Gårdsjö och Håkantorp.
+- **Trafikverkets tider är inte stopp och start.** Tider med sekunder, 10 ankomster och 9 avgångar i körningarna 2026-11-24–25:
+  - Ankomst: appen 27–63 s efter Trafikverket, median 43 s.
+  - Avgång: appen 2–31 s före Trafikverket, median 17 s.
+  - Det stämmer med att Trafikverket registrerar när tåget når och lämnar stationens område, inte stoppet och starten. Trafikverket kan alltså inte ersätta appens tider, men fångar grova fel. 23334 2026-11-24 har en avgång 614 s före Trafikverkets: den falska avgången vid start som rättades 2026-11-25.
+- **Hur länge data finns:** körningar 0–1 dygn gamla hade data, 6 dygn och äldre inget. Det bekräftar att tiderna måste hämtas strax efter resan.
+- **TrainMessage finns inte längre:** svaret var "ObjectType 'TrainMessage' does not exists". Ersättaren är **OperativeEvent** 1.0 i namespace `ols.open`.
+- **TrainStationMessage** utan filter gav 2 000 meddelanden, även gamla från 2025.
+- **TrainPosition 1.1** fungerar. 4 335 tåg hade position och 267 rapporterade de senaste 10 min. 26 av förarens 84 tågnummer fanns med, bland dem 23349.
+- **TrainStation**: 1 754 platser, 720 annonserade och 1 034 ej annonserade, alla med position.
+- **ReasonCode**: 789 orsakskoder.
+- Trafikverkets datautbytesportal skriver att TrainAnnouncement kräver namespace från 2/9 2026 (`rail.trafficinfo`). Frågan utan namespace svarade ändå 2026-11-25.
+
+### Ändrat
+- **Kontrollsidan**:
+  - **OperativeEvent** (`namespace="ols.open"`, `EventState=1`) i stället för TrainMessage. En händelse rör tåget när någon `Signature`/`LocationSignature` på någon nivå är en av tågets stationer (`signaturesIn`). Rubrik och text kommer från det senast ändrade `TrafficImpact.PublicMessage`, annars `EventType.Description`.
+  - **TrainStationMessage** bara för tågets stationer och bara de som gäller nu (`IN LocationCode`, `GT EndDateTime`). Samma text på skärm och i utrop visas en gång. `\PAU=…\` tas bort.
+  - **Namespace**: TrainAnnouncement 1.9 utan namespace, 1.9 och 2.0 med `rail.trafficinfo`, och TrainStation 1.4 med `rail.trafficinfo`. Tabellen visar vad API:t godtar, så att appen kan byta i förväg.
+  - Tider i hela minuter räknas inte i jämförelsen. Det står vilka stationer det gäller (`#minuteNote`).
+  - Klockslagen visas i svensk tid, som datumen.
+- **Appen**:
+  - `wholeMinute`: en Trafikverket-tid på :00 visas som "hel minut" utan "appen ±s" och räknas inte i rapportens median.
+  - Rapporten förklarar att Trafikverket registrerar ankomsten innan tåget stannar och avgången efter att det börjat rulla.
+  - Tiderna hämtas för körningar som är högst 3 dygn gamla (förut 7).
+  - Får en körning äldre än ett dygn tomt svar sparas inget. Rapporten säger då att Trafikverket inte har kvar tiderna (`trvStatus` `gone`). Förut hade körningen fått "inga tider för tåget".
+
+### Tester
+- `node --test "tests/*.test.js"` (128): OperativeEvent, stationsmeddelanden, namespace, hela minuter och `signaturesIn`.
+- `node tests/run-browser-tests.mjs trafikverket` (10), nya: hela minuter i rapporten och äldre körning utan svar.
+- Alla webbläsartester: 87.

@@ -1867,6 +1867,37 @@ test('trafikverket: tider som saknas hämtas före nästa uppladdning', async ()
   assertEqual(JSON.parse(fake.files.get(r.w.RailTimerGitHub.runPath(log)).text).trv.found, 6, 'och uppladdat');
 });
 
+test('trafikverket: tider i hela minuter visas utan sekundjämförelse och räknas inte i medianen', async () => {
+  const fixes = buildJourney();
+  const trv = fakeTrafikverket(fixes);
+  const fetchMinute = async (url, init) => {
+    const res = await trv.fetch(url, init);
+    const body = await res.json();
+    for (const a of body.RESPONSE.RESULT[0].TrainAnnouncement) {
+      if (a.LocationSignature === 'Kll') a.TimeAtLocationWithSeconds = new Date(Math.floor(Date.parse(a.TimeAtLocationWithSeconds) / 60000) * 60000).toISOString();
+    }
+    return { ok: true, status: 200, json: async () => body };
+  };
+  const r = await runJourney(fixes, { beforeStart: async w => w.__railtimer.setTrvFetchForTest(fetchMinute, 20) });
+  await r.rt.whenUploadIdle();
+  const lines = r.w.document.querySelectorAll('#reportHTML .rl-trv');
+  assert(/^Trafikverket ↓ \d\d:\d\d hel minut · ↑ \d\d:\d\d hel minut · spår 1$/.test(lines[2].textContent), 'Källby: ' + lines[2].textContent);
+  assert(/appen/.test(lines[1].textContent), 'Filsbäck jämförs som vanligt');
+  assert(/registrerar ankomsten innan tåget stannar/.test(r.w.document.getElementById('reportHTML').textContent), 'förklaringen');
+});
+
+test('trafikverket: en äldre körning utan svar får inget tomt resultat, rapporten säger att tiderna är borta', async () => {
+  const fixes = buildJourney();
+  const r = await runJourney(fixes, { beforeStart: async w => { configureUpload(w, browserFakeGitHub(w, { offline: true })); w.__railtimer.setTrvFetchForTest(fakeTrafikverket(fixes, { offline: true }).fetch, 20); } });
+  await r.rt.whenUploadIdle();
+  installClock(r.w, fixes[fixes.length - 1].t + 2 * 864e5); // två dygn senare
+  r.rt.setFetchForTest(browserFakeGitHub(r.w).fetch);
+  r.rt.setTrvFetchForTest(async () => ({ ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: [] }] } }) }));
+  await r.rt.scheduleUpload();
+  assertEqual(r.rt.loadLogs().pop().trv, undefined, 'inget tomt resultat sparat');
+  assert(/inte kvar tiderna/.test(r.w.document.getElementById('reportHTML').textContent), 'rapporten: ' + r.w.document.getElementById('trvSummary'));
+});
+
 test('trafikverket: utan testsvar hämtas inga tider och rapporten är som förut', async () => {
   const r = await runJourney(buildJourney());
   await r.rt.whenUploadIdle();
@@ -1909,8 +1940,11 @@ function fakeTrafikverketApi() {
       TrainAnnouncement: anns,
       TrainPosition: /<EQ name="Train.OperationalTrainNumber"/.test(init.body) ? [] : [{ Train: { OperationalTrainNumber: '24360' }, TimeStamp: new Date().toISOString(), Speed: 70 }],
       TrainStation: /<IN /.test(init.body) ? [{ LocationSignature: 'Ved', AdvertisedLocationName: 'Vedum', PlatformLine: ['1'] }] : [{ LocationSignature: 'Ved', Advertised: true }, { LocationSignature: 'Grh', Advertised: false, Geometry: { WGS84: 'POINT (13 58.2)' } }],
-      TrainMessage: [{ Header: 'Banarbete Vara', StartDateTime: `${day}T08:00:00.000+01:00`, TrafficImpact: [{ AffectedLocation: [{ LocationSignature: 'Vaa' }] }] }],
-      TrainStationMessage: [],
+      OperativeEvent: [{ EventType: { Description: 'Banarbete' }, StartDateTime: `${day}T08:00:00.000+01:00`, EventSections: [{ FromLocation: { Signature: 'Vaa' } }], TrafficImpact: [{ EndDateTime: `${day}T16:00:00.000+01:00`, PublicMessage: { Header: 'Banarbete Vara', Description: 'Enkelspårsdrift', ModifiedDateTime: `${day}T08:00:00.000+01:00` } }] }],
+      TrainStationMessage: [
+        { LocationCode: 'Ved', MediaType: 'Monitor', FreeText: 'Spårändring för tåg 3349.', EndDateTime: `${day}T23:00:00.000+01:00` },
+        { LocationCode: 'Ved', MediaType: 'Utrop', FreeText: 'Spårändring för  tåg 3349. ', EndDateTime: `${day}T23:00:00.000+01:00` }
+      ],
       ReasonCode: [{ Code: 'ANA002', Level1Description: 'Inställt' }]
     }[type];
     return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ [type]: data }] } }) };
@@ -1948,7 +1982,12 @@ test('trafikverket-data: kontrollsidan visar tågets tider, fälten, positioner,
   assert(/rapporterade senaste 10 min/.test(d.getElementById('secPositions').textContent), 'positioner');
   assert(/1 av 1/.test(d.getElementById('secPositions').textContent), 'dina tåg med position');
   assert(/1 med position/.test(d.getElementById('secStations').textContent), 'ej annonserade platser');
-  assert(/Banarbete Vara/.test(d.getElementById('secMessages').textContent), 'störning på sträckan');
+  const msgText = d.getElementById('secMessages').textContent;
+  assert(/Banarbete Vara Enkelspårsdrift/.test(msgText) && /OperativeEvent/.test(msgText), 'störning på sträckan: ' + msgText);
+  const stationList = d.querySelectorAll('#secMessages ul.plain')[1];
+  assertEqual(stationList.querySelectorAll('li').length, 1, 'samma stationsmeddelande på skärm och i utrop visas en gång');
+  assert(/^Vedum Spårändring för tåg 3349\. Monitor · till 2026-11-24 23:00$/.test(stationList.textContent.trim()), 'stationsmeddelandet: ' + stationList.textContent);
+  assertEqual(d.querySelectorAll('#secNamespaces tbody tr').length, 4, 'namespace-varianterna');
   assert(api.types.includes('ReasonCode') && api.types.includes('TrainStationMessage'), 'alla objekttyper frågades');
 
   const fake = browserFakeGitHub(w);
