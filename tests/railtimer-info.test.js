@@ -547,3 +547,25 @@ test('markerade anslutningar till oss: kan vi vänta på ett sent tåg i startst
   assert.equal(m.incoming[0].status, 'missas');
   assert.deepEqual(m.actions.map(a => [a.type, a.sig, a.c.otn, a.waitMin, a.theirTrack]), [['wait', 'Lkp', '3333', 4, '2']]);
 });
+
+test('meddelanden: texter och nycklar, och samma sak meddelas en gång per nivå', () => {
+  const clock = t => new Date(Math.round(t / 60000) * 60000).toTimeString().slice(0, 5);
+  const m = {
+    meetings: [{ level: 2, otn: '24360', ident: '24360', sig: 'Vr', theirDelayMin: 6, waitMin: 6 }],
+    connections: [{ level: 1, otn: '3049', status: 'knappt', transferMin: 3, adv: at('11:49'), to: ['G'] }],
+    incoming: [], stops: [], deviations: [{ sig: 'Hr', text: 'Spårändrat' }], messages: []
+  };
+  const list = I.alerts(m, { name: s => ({ Vr: 'Vara', G: 'Göteborg C', Hr: 'Herrljunga C' })[s] || s, clock });
+  assert.deepEqual(list.map(a => a.text), [
+    'Möte Vara: 24360 är 6 min sent – vi väntar ca 6 min',
+    'Anslutning 11:49 Göteborg C: knappt (3 min)',
+    'Herrljunga C: Spårändrat'
+  ]);
+  assert.equal(list[1].say, 'Anslutningen mot Göteborg C 11:49 blir knapp.');
+  const notified = new Map([['d|Hr|Spårändrat', 1]]);
+  assert.deepEqual(I.newAlerts(list, notified).map(a => a.key), ['m|24360|Vr', 'c|3049']);
+  assert.deepEqual(I.newAlerts(list, notified), [], 'redan meddelat');
+  m.connections[0].level = 2;
+  m.connections[0].status = 'missas';
+  assert.deepEqual(I.newAlerts(I.alerts(m, { clock }), notified).map(a => a.text), ['Anslutning 11:49 G: missas'], 'värre: meddelas igen');
+});

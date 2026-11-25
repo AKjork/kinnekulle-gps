@@ -38,7 +38,7 @@
 
   /* Trafikverkets Deviation-texter som inte säger något om tågets gång, bara till resenärerna:
      preliminär tid (den beräknade tiden finns redan) och biljettinformation. Sågs i riktiga svar
-     2026-11-25 (bevakningen på 13355 och kontrollsidan för 23349) och meddelas inte som avvikelser. */
+     2026-11-25 (provet mot Trafikverket för 13355 och kontrollsidan för 23349) och meddelas inte som avvikelser. */
   const NOT_DEVIATION = /^\s*(prel\.?\s*tid|preliminär tid|movingo gäller ej)\.?\s*$/i;
 
   // ── Hjälpfunktioner ──
@@ -1043,7 +1043,7 @@
   /* ── Meddelanden ──
      Det som ska meddelas när det blir värre: möte med väntan, anslutning som blir knapp eller missas, tåg som
      inte hinner till oss, avvikelse och störning. Varje sak har en nyckel och en nivå; den som meddelar
-     (appen i notifyInfo, bevakningen i bakgrunden i bevakning/bevaka.js) meddelar en nyckel en gång per nivå.
+     (appen i notifyInfo) meddelar en nyckel en gång per nivå.
      text: kort, för toast och notis. say: för uppläsning (inga tågnummer, "minuter" utskrivet).
      opts: { name: sig → namn, clock: tid → "hh:mm" (avrundat till hel minut) }. */
   /* Förslaget när en markerad anslutning blir knapp eller missas (compute: actions), kort:

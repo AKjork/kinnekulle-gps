@@ -24,8 +24,6 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 | `railtimer-vt.js` | Västtrafiks API (Planera Resa v4): token, hållplatser vid en station, avgångar och ankomster – bussanslutningar i Info |
 | `vasttrafik-koll.html` | Västtrafik-data: provar Västtrafiks API från telefonen (token, hållplatser, bussar) |
 | `docs/vasttrafik-worker.js` | Egen liten server för Västtrafik (Cloudflare Worker), om Västtrafik inte tillåter token från webbläsaren |
-| `railtimer-push.js` | Notiser i bakgrunden, appens del: prenumeration, VAPID-nyckel, begäran till bevakningen och när den startas och stoppas |
-| `bevakning/bevaka.js`, `bevakning/webpush.js` | Bevakningen i bakgrunden (körs i GitHub Actions i railtimer-data) och webbpush utan beroenden |
 | `api-koll.html` | Trafikverket-data: visar vad API:t svarar och appens tider mot Trafikverkets |
 | `kinnekulle-gps.webmanifest` | PWA manifest |
 
@@ -1319,6 +1317,8 @@ André 2026-11-25 under resan: "Jag hör inte att något läses upp alls?"
 
 ## Uppdatering (2026-11-25v): notiser i bakgrunden
 
+> **Borttaget (2026-11-25z):** notiserna i bakgrunden finns inte längre, se 2026-11-25z. Kvar är `INFO.alerts`/`INFO.newAlerts` och att *Prel. tid* och *Movingo gäller ej.* inte är avvikelser.
+
 André 2026-11-25: han får inte installera appar på jobbmobilen (Android), bara utvalda. Han saknar att kunna stänga appen och ändå få en notis, till exempel vid risk för missad anslutning. Privat har han iPhone. Appversion `2026-11-25v`.
 
 ### Hur det fungerar
@@ -1436,3 +1436,24 @@ André 2026-11-25, med en bild av ⋮-menyn: "Detta är allt jag ser". Menyn slu
 - `node --test "tests/*.test.js"` (207).
 - `node tests/run-browser-tests.mjs uppdatering`: på en lägre skärm (560 px) ryms menyn på skärmen och rullas, och versionen och *Uppdatera app* är de två första valen och syns utan att rulla.
 
+## Uppdatering (2026-11-25z): notiserna i bakgrunden borttagna
+
+André 2026-11-25: "Då släpper vi notiserna för nu. Det löser sig om jag får installera appen på jobbmobilen i framtiden." Appversion `2026-11-25z`.
+
+### Varför
+- GitHubs villkor för Actions: Actions ska inte användas som del av en serverlös tjänst, och på GitHubs egna datorer bara för att bygga, testa, driftsätta eller publicera projektet. Bevakningen från 2026-11-25v var just en serverlös tjänst. Missbruk kan ge stoppade körningar, begränsad Actions, avstängda repon och i vissa fall avstängt konto, och både appen och mätdatan ligger på kontot.
+- Dessutom: en körning får vara högst 6 timmar, och tiden räknas medan bevakningen väntar (avrundat uppåt per körning, 2 000 min/månad gratis för privata repon).
+
+### Borttaget
+- Appen: ⋮ → Notiser i bakgrunden, prenumerationen, start och stopp av bevakningen när appen lämnas eller syns (`railtimer-push.js`), raden om notiser i Infofliken och testkrokarna.
+- Service workern: `push`, `notificationclick`, begäran till GitHub och cachen `railtimer-push`. `activate` tar åter bort alla andra cachar.
+- Servern: `bevakning/bevaka.js`, `bevakning/webpush.js` och `.github/workflows/bevakning.yml` i `railtimer-data`. Provgrenarnas workflow (`actions-prov` i railtimer-data) är också borttaget. Grenarna `actions-prov` och `bevakning-test` finns kvar; de kan inte tas bort härifrån och gör ingenting.
+- Testerna `tests/bevakning.test.js`, `tests/railtimer-push.test.js`, `tests/sw-push.test.js` och `notiser:` i `tests/replay.html`, och bilderna `--shot=notiser…`.
+
+### Kvar
+- `INFO.alerts` och `INFO.newAlerts` (`railtimer-info.js`): reglerna och texterna för appens meddelanden. Testet *meddelanden: …* ligger nu i `tests/railtimer-info.test.js`.
+- *Prel. tid* och *Movingo gäller ej.* är inga avvikelser (`NOT_DEVIATION`).
+- Koden finns i commit 8dd11a2 om notiserna behövs igen. En installerad app kan ge notiser utan server; i en webbapp krävs en server som får användas så, till exempel Cloudflare Workers.
+
+### Tester
+- `node --test "tests/*.test.js"` och `node tests/run-browser-tests.mjs`.

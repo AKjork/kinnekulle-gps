@@ -10,7 +10,6 @@ Privat repo med mätningar från [RailTimer](https://akjork.github.io/kinnekulle
 | `gps-spar/ÅÅÅÅ/<datum>_<tåg>_<id>.json` | GPS-spåret för körningen (format 1) |
 | `import/<ÅÅÅÅ-MM-DDTHHMMSS>_befintliga-<n>.json` | Mätningar som fanns på telefonen före den första uppladdningen (lista, högst 200 per fil). Samma körning kan finnas i två importfiler om ett försök avbröts – id:t avgör. |
 | `.railtimer/anslutning.json` | Senaste anslutningstest från appen |
-| `.github/workflows/bevakning.yml` | Notiser i bakgrunden (se nedan) |
 
 ## Körning, format 2
 
@@ -36,13 +35,3 @@ Körningar utan `format` är äldre (format 1).
 ## platsminnen.json (från appversion 2026-11-25t)
 
 Förarnas platsminnen, en kort anteckning per station som appen visar och läser upp när tåget närmar sig: `{ format: 1, updatedAt, notes: { 'sig:Vaa': { text, at, name } } }`. Nyckeln är stationens signatur (`sig:`), annars namnet (`namn:`). `text: ''` betyder borttaget. Appen slår ihop med telefonens minnen när den synkar, och det nyaste (`at`) gäller per station.
-
-## Notiser i bakgrunden
-
-`.github/workflows/bevakning.yml` körs när appen skickar `repository_dispatch` med uppladdningens token:
-
-- `bevaka`: appen har lämnats under en resa med tågnummer. Bevakningen hämtar Trafikverkets data varje minut, räknar som appens infoflik och skickar en webbpush till telefonen när något blir värre. Den slutar när tåget är framme, när appen skickar `bevaka-stopp` eller efter högst 6 timmar.
-- `bevaka-stopp`: appen har visats i 3 minuter igen, eller resan är slut. Stoppar telefonens bevakning (en bevakning per telefon).
-- `bevaka-test`: en testnotis.
-
-Koden ligger i kinnekulle-gps (`bevakning/bevaka.js` och `bevakning/webpush.js`). Begäran innehåller telefonens prenumeration och dess VAPID-nyckel, så inga hemligheter behöver läggas in här. Körningarna räknas mot GitHubs gratisminuter för privata repon (2 000 minuter i månaden), men bara medan appen är stängd under en resa.

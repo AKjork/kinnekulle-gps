@@ -17,7 +17,6 @@ const ASSETS = [
   './railtimer-trv.js',
   './api-koll.html',
   './railtimer-info.js',
-  './railtimer-push.js',
   './railtimer-vt.js',
   './vasttrafik-koll.html',
   './kinnekulle-gps.webmanifest',
@@ -44,8 +43,7 @@ self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
       Promise.all(
-        // Bara appens gamla kopior; notisernas läge (PUSH_CACHE) får vara kvar
-        keys.map(key => (key === CACHE_NAME || !key.startsWith('kinnekulle-gps-cache-') ? null : caches.delete(key)))
+        keys.map(key => (key === CACHE_NAME ? null : caches.delete(key)))
       )
     ).then(() => self.clients.claim())
   );
@@ -89,114 +87,8 @@ self.addEventListener('fetch', event => {
   );
 });
 
-/* ── Notiser i bakgrunden (2026-11-25v) ──
-   Bevakningen i railtimer-data skickar webbpush. Här visas notisen, och det senaste läget sparas i
-   PUSH_CACHE (vilka saker som meddelats per resa, senaste notisen och senaste begäran), så att appen
-   inte meddelar samma sak igen när den öppnas. Begäran till GitHub (repository_dispatch) skickas härifrån
-   när appen lämnas, eftersom service workern lever kvar en stund efter att sidan gått till bakgrunden. */
-const PUSH_CACHE = 'railtimer-push';
-const PUSH_STATE_URL = './push-state';
-
-function readPushState() {
-  return caches.open(PUSH_CACHE)
-    .then(cache => cache.match(PUSH_STATE_URL))
-    .then(resp => (resp ? resp.json() : {}))
-    .catch(() => ({}));
-}
-function writePushState(update) {
-  return readPushState().then(st => {
-    const next = Object.assign({}, st, update(st));
-    return caches.open(PUSH_CACHE)
-      .then(cache => cache.put(PUSH_STATE_URL, new Response(JSON.stringify(next), { headers: { 'Content-Type': 'application/json' } })))
-      .then(() => next);
-  }).catch(() => null);
-}
-function tellClients(msg) {
-  return self.clients.matchAll({ type: 'window', includeUncontrolled: true })
-    .then(list => { list.forEach(c => { try { c.postMessage(msg); } catch (e) { /* stängd */ } }); return list; })
-    .catch(() => []);
-}
-
-self.addEventListener('push', event => {
-  let data = {};
-  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data ? event.data.text() : '' }; }
-  const kind = data.kind || 'alert';
-  event.waitUntil((async () => {
-    await writePushState(st => {
-      const sameJourney = st.journeyId === data.journeyId;
-      return {
-        journeyId: data.journeyId || st.journeyId || null,
-        keys: data.keys ? data.keys : (sameJourney ? st.keys : []),
-        last: { kind, title: data.title || '', body: data.body || '', at: Date.now() }
-      };
-    });
-    const wins = await tellClients({ type: 'RT_PUSH', data });
-    const visible = wins.some(w => w.visibilityState === 'visible');
-    // Notisen visas alltid (krävs av webbläsarna). Syns appen redan är den tyst – appen meddelar själv.
-    await self.registration.showNotification(data.title || 'RailTimer', {
-      body: data.body || '',
-      tag: kind === 'test' ? 'railtimer-test' : (kind === 'start' ? 'railtimer-start' : undefined),
-      icon: './icons/icon-192.png',
-      badge: './icons/icon-192.png',
-      silent: !!(visible || data.silent),
-      vibrate: data.level >= 2 ? [200, 100, 200, 100, 200] : [150, 80, 150],
-      requireInteraction: data.level >= 2 && !visible,
-      lang: 'sv',
-      data: { url: './index.html' }
-    });
-  })());
-});
-
-self.addEventListener('notificationclick', event => {
-  event.notification.close();
-  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-    const win = list.find(c => c.url && new URL(c.url).pathname.startsWith(new URL('./', self.location.href).pathname));
-    if (win && win.focus) return win.focus();
-    return self.clients.openWindow ? self.clients.openWindow('./index.html') : null;
-  }));
-});
-
-// Webbläsaren kan ha bytt prenumeration sedan appen sparade den: skicka den som gäller nu
-async function freshSubscription(req) {
-  try {
-    const pm = self.registration && self.registration.pushManager;
-    const sub = pm ? await pm.getSubscription() : null;
-    if (!sub) return req;
-    const body = JSON.parse(req.init.body);
-    if (!body.client_payload || !body.client_payload.push) return req;
-    body.client_payload.push.sub = JSON.parse(JSON.stringify(sub));
-    return { url: req.url, init: Object.assign({}, req.init, { body: JSON.stringify(body) }) };
-  } catch (e) {
-    return req;
-  }
-}
-
-// Begäran till GitHub med nya försök vid nätfel och serverfel (som sendWithRetry i railtimer-push.js)
-async function dispatchWithRetry(req, delays) {
-  let last = { ok: false, status: 0, error: '' };
-  for (let k = 0; k < delays.length; k++) {
-    if (delays[k]) await new Promise(r => setTimeout(r, delays[k]));
-    try {
-      const res = await fetch(req.url, req.init);
-      if (res.status >= 200 && res.status < 300) return { ok: true, status: res.status, error: '' };
-      last = { ok: false, status: res.status, error: `HTTP ${res.status}` };
-      if (res.status < 500 && res.status !== 429) break;
-    } catch (e) {
-      last = { ok: false, status: 0, error: 'nätverksfel' };
-    }
-  }
-  return last;
-}
-
 self.addEventListener('message', event => {
-  const data = event.data || {};
-  if (data.type === 'SKIP_WAITING') {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
-  }
-  if (data.type === 'RT_DISPATCH' && data.req && /^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+\/dispatches$/.test(data.req.url)) {
-    event.waitUntil(freshSubscription(data.req).then(req => dispatchWithRetry(req, data.delays || [0, 5000, 15000, 30000])).then(result => {
-      const rec = { event: data.event || '', journeyId: data.journeyId || null, at: Date.now(), ok: result.ok, status: result.status, error: result.error };
-      return writePushState(() => ({ dispatch: rec })).then(() => tellClients({ type: 'RT_DISPATCH_RESULT', id: data.id, result: rec }));
-    }));
   }
 });
