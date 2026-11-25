@@ -768,7 +768,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25f';
+  const APP_VERSION = '2026-11-25g';
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const DEFAULT_RADIUS = 200;
@@ -4192,7 +4192,7 @@
     try{
       const from=localIso(new Date(at.getTime()-12*3600000));
       const to=localIso(new Date(at.getTime()+12*3600000));
-      const xmlRequest = `<REQUEST>
+      const xmlRequest = withOtn => `<REQUEST>
         <LOGIN authenticationkey="${TRAFIKVERKET_API_KEY}" />
         <QUERY objecttype="TrainAnnouncement" schemaversion="1.9" limit="500">
           <FILTER>
@@ -4206,23 +4206,35 @@
           <INCLUDE>AdvertisedTimeAtLocation</INCLUDE>
           <INCLUDE>ActivityType</INCLUDE>
           <INCLUDE>OperationalTrainNumber</INCLUDE>
-          <INCLUDE>DepartureDateOTN</INCLUDE>
-          <INCLUDE>LocationDateTimeOTN</INCLUDE>
+          <INCLUDE>DepartureDateOTN</INCLUDE>${withOtn ? `
+          <INCLUDE>LocationDateTimeOTN</INCLUDE>` : ''}
           <INCLUDE>Advertised</INCLUDE>
         </QUERY>
       </REQUEST>`;
-
-      const response = await fetchWithTimeout(TRAFIKVERKET_API_URL, {
+      const ask = withOtn => fetchWithTimeout(TRAFIKVERKET_API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/xml' },
-        body: xmlRequest
+        body: xmlRequest(withOtn)
       }, TIMETABLE_FETCH_TIMEOUT_MS);
+      const apiError = d => d?.RESPONSE?.RESULT?.[0]?.ERROR || null;
+
+      // Tågorderns tid (LocationDateTimeOTN) är ny i frågan sedan 2026-11-25f och inte provad mot det riktiga API:et.
+      // Godtar Trafikverket den inte (felsvar), frågas igen utan den: resan får då de annonserade tiderna, inte bara
+      // start- och slutstation. Vid tidsgräns eller nätfel frågas inte igen.
+      let response = await ask(true);
+      let data = response.ok ? await response.json() : null;
+      if(!response.ok || apiError(data)){
+        console.warn('Trafikverket godtog inte frågan med LocationDateTimeOTN; frågar utan den', response.status, apiError(data));
+        response = await ask(false);
+        data = response.ok ? await response.json() : null;
+      }
 
       if(!response.ok) {
         return { success: false, error: `API-fel: HTTP ${response.status}` };
       }
-
-      const data = await response.json();
+      if(apiError(data)) {
+        return { success: false, error: `API-fel: ${apiError(data).MESSAGE || 'okänt fel'}` };
+      }
       const announcements = nearestTrainRun(data?.RESPONSE?.RESULT?.[0]?.TrainAnnouncement || [], at);
 
       if(!announcements.length) {

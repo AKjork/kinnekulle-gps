@@ -744,3 +744,16 @@ André 2026-11-25: "Det är extremt viktigt att vi presenterar rätt data." Uppt
 ### Tester
 - `node --test "tests/*.test.js"` (109), nya: `tågorderns tider: …` med 23349 2026-11-25 (verkliga tider och tågorderns).
 - `node tests/run-browser-tests.mjs` (73), nya: `tidtabell: tågorderns tider …`, `tidtabell: planerad tid är tågorderns …`, `tidtabell: resvyn räknar mot tågordern …`, `analys: körningar med bara annonserade tider …`. Testdatan i analysproven har tågorderns tider (`sArr`/`sDep`), och `format 3` ersätter `format 2`.
+
+## Uppdatering (2026-11-25g): skydd om Trafikverket inte godtar tågorderns tid
+
+André 2026-11-25, före resan: "Kontrollera så allt ser rätt ut." Appversion `2026-11-25g`.
+
+- `LocationDateTimeOTN` (2026-11-25f) är inte provat mot det riktiga API:et. Godtar Trafikverket inte fältet skulle hela tidtabellsfrågan misslyckas, och resan skulle bara få start- och slutstation.
+- **Skydd** (`fetchTimetable`): ger frågan med fältet ett felsvar (inte HTTP 2xx, eller `ERROR` i `RESPONSE.RESULT`), frågas igen utan fältet. Resan får då de annonserade tiderna och kortet visar "Annonserad tid: … (tågorderns tider saknas)". Vid tidsgräns eller nätfel frågas inte igen, så väntan blir som förut högst 10 s. Ett `ERROR` i ett svar med HTTP 200 gav förut meddelandet "Tåg … hittades inte"; nu står Trafikverkets felmeddelande.
+- **Hela vägen provat i testerna:** startformuläret med tågnummer, Trafikverkets svar med tågorderns tider, rutten med alla mellanstationer, panelen ("ankomst plan" enligt tågordern), stationskorten (även annonserad avgång som skiljer sig) och den sparade körningen (format 3, båda tiderna). Uppladdningen skickar hela den sparade körningen (`JSON.stringify(task.log)`), så fälten kommer med till `railtimer-data`.
+- GitHub Pages byggde 2026-11-25f utan fel (`pages build and deployment`, 3e10cb0).
+
+### Tester
+- `node --test "tests/*.test.js"` (109).
+- `node tests/run-browser-tests.mjs` (75), nya: `tidtabell: godtar Trafikverket inte LocationDateTimeOTN …` (HTTP 400 och `ERROR` med HTTP 200) och `tidtabell: hela vägen – startformuläret, …`.

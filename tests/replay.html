@@ -1353,6 +1353,71 @@ test('tidtabell: tågorderns tider (LocationDateTimeOTN) hämtas och sparas bred
   assertEqual([r.timetable.Vaa.departure.toISOString(), r.timetable.Vaa.operationalDeparture.toISOString()], [t(11, 53), t(11, 54)], 'Vara avgång: annonserad och tågorder');
 });
 
+test('tidtabell: godtar Trafikverket inte LocationDateTimeOTN frågar appen igen utan den och får ändå tidtabellen', async () => {
+  for (const kind of ['http400', 'error200']) {
+    const w = await loadApp();
+    const bodies = [];
+    w.fetch = async (url, init) => {
+      bodies.push(init.body);
+      if (init.body.includes('LocationDateTimeOTN')) {
+        const err = { RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Request', MESSAGE: 'Invalid query' } }] } };
+        return { ok: kind === 'error200', status: kind === 'error200' ? 200 : 400, json: async () => err };
+      }
+      return announcements([['Lkp', 'Avgang', [2026, 10, 25, 11, 22], '2026-11-25'], ['Hlk', 'Ankomst', [2026, 10, 25, 11, 40], '2026-11-25']]);
+    };
+    const r = await w.__railtimer.fetchTimetable('99' + bodies.length + kind.length, new Date(2026, 10, 25, 11, 20));
+    assert(r.success, kind + ': ' + r.error);
+    assertEqual(bodies.length, 2, kind + ': två frågor');
+    assert(!bodies[1].includes('LocationDateTimeOTN'), kind + ': andra frågan utan fältet');
+    assertEqual([r.timetable.Lkp.departure.toISOString(), r.timetable.Lkp.operationalDeparture], [new Date(2026, 10, 25, 11, 22).toISOString(), null], kind + ': annonserade tider, inga tågordertider');
+  }
+});
+
+test('tidtabell: hela vägen – startformuläret, tågorderns tider i resvyn och i den sparade körningen', async () => {
+  // Trafikverkets svar för ett tåg som går nu: annonserad ankomst = avgång vid mellanstationerna, tågorderns ankomst
+  // en minut tidigare; i Blomberg är den annonserade avgången en minut före tågorderns (som Vara för 23349)
+  const base = Math.floor(Date.now() / 60000) * 60000 + 5 * 60000;
+  const t = m => new Date(base + m * 60000).toISOString();
+  const otnDate = new Date(base).toISOString().slice(0, 10);
+  const ann = (sig, act, adv, otn) => ({ LocationSignature: sig, ActivityType: act, AdvertisedTimeAtLocation: t(adv), LocationDateTimeOTN: t(otn), DepartureDateOTN: otnDate, Advertised: true });
+  const list = [ann('Lkp', 'Avgang', 0, 0),
+    ann('Fiä', 'Ankomst', 6, 5), ann('Fiä', 'Avgang', 6, 6),
+    ann('Kll', 'Ankomst', 11, 10), ann('Kll', 'Avgang', 11, 11),
+    ann('Bmb', 'Ankomst', 15, 15), ann('Bmb', 'Avgang', 15, 16),
+    ann('Rbk', 'Ankomst', 24, 23), ann('Rbk', 'Avgang', 24, 24),
+    ann('Hlk', 'Ankomst', 30, 30)];
+  let asked = '';
+  const { w, rt } = await appWithStations(1, async (url, init) => {
+    if (init && String(init.body || '').includes('TrainAnnouncement')) {
+      asked = init.body;
+      return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: list }] } }) };
+    }
+    throw new TypeError('Failed to fetch');
+  });
+  pickStation(w, 'startStation', 'Lidköping');
+  pickStation(w, 'endStation', 'Hällekis');
+  w.document.getElementById('trainNumber').value = '23349';
+  w.document.getElementById('vehicleType').value = 'Y31';
+  await rt.startJourney();
+  assert(asked.includes('<INCLUDE>LocationDateTimeOTN</INCLUDE>'), 'frågan hämtar tågorderns tid');
+  assertEqual(rt.state.route.map(s => s.name), STATIONS.map(s => s[0]), 'rutten med alla mellanstationer');
+  const fil = rt.state.route[1];
+  assertEqual([new Date(fil.operationalArrival).toISOString(), new Date(fil.scheduledArrival).toISOString()], [t(5), t(6)], 'Filsbäck: tågorderns och annonserad ankomst');
+  const hhmm = m => new Date(base + m * 60000).toTimeString().slice(0, 5);
+  assertEqual(w.document.getElementById('nextStop').textContent, 'Filsbäck', 'nästa station');
+  assertEqual([w.document.getElementById('nextValue2').textContent, w.document.getElementById('nextSub2').textContent], [hhmm(5), 'ankomst plan'], 'panelen visar tågorderns ankomst');
+  const sched = i => w.document.querySelectorAll('#cards .card')[i].querySelector('[data-role="sched"]').textContent;
+  assertEqual(sched(1), `Tågorder: ankomst ${hhmm(5)}, avgång ${hhmm(6)}`, 'Filsbäcks kort');
+  assertEqual(sched(3), `Tågorder: ankomst ${hhmm(15)}, avgång ${hhmm(16)} · annonserad avgång ${hhmm(15)}`, 'Blombergs kort');
+  rt.stopJourney(true, 'test');
+  await realSleep(100);
+  const logs = rt.loadLogs();
+  const saved = logs[logs.length - 1];
+  assertEqual([saved.format, saved.appVersion], [3, '2026-11-25g'], 'format och version');
+  assertEqual(saved.stops.map(s => s.operationalArrival ? new Date(s.operationalArrival).toISOString() : null), [null, t(5), t(10), t(15), t(23), t(30)], 'tågorderns ankomster sparas');
+  assertEqual(saved.stops.map(s => s.scheduledArrival ? new Date(s.scheduledArrival).toISOString() : null), [null, t(6), t(11), t(15), t(24), t(30)], 'annonserade ankomster sparas oförändrade');
+});
+
 test('tidtabell: utan LocationDateTimeOTN i svaret blir tågorderns tider tomma', async () => {
   const w = await loadApp();
   w.fetch = async () => announcements([['Lkp', 'Avgang', [2026, 10, 25, 11, 22], '2026-11-25'], ['Hlk', 'Ankomst', [2026, 10, 25, 11, 40], '2026-11-25']]);
