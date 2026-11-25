@@ -41,7 +41,8 @@ function setup(rows, opts) {
   return I.compute({
     line, trains, ourKey: our.key, known, now: o.now != null ? o.now : at('10:55'),
     knownDouble: o.knownDouble, history: o.history, routeNames: ROUTE,
-    messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos
+    messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos,
+    buses: o.buses, names: o.names, connMode: o.connMode, connAlerts: o.connAlerts, marked: o.marked
   });
 }
 // Ungefärliga lägen längs linjen (norr → söder)
@@ -402,4 +403,147 @@ test('utrop: försening med orsak, beräknad ankomst och anslutningar – på sv
   assert.ok(at2.en.endsWith('You will have about 2 minutes to change to the train to Skövde C at 11:48, departing from track 3.'), at2.en);
   // I tid och inga anslutningar som påverkas: inget utrop
   assert.equal(I.announcement(setup(MEET()), { clock }), null);
+});
+
+// ── Bussar (Västtrafik) ──
+// En buss som railtimer-vt.js ger den: [linje, planerad tid, extra]
+function bus(line, hhmm, extra) {
+  return Object.assign({ id: `${line}|${hhmm}`, journey: line, line, lineName: line, mode: 'bus', direction: '', origin: '',
+    planned: at(hhmm), est: null, canceled: false, partCanceled: false, platform: 'A', stop: 'Hållplatsen' }, extra || {});
+}
+const LATE = () => MEET({ Vr: { a: { EstimatedTimeAtLocation: T('11:26') } } }); // vi kommer till Herrljunga 11:46 (+6)
+
+test('bussar: orten i ett namn', () => {
+  assert.equal(I.townKey('Lidköping Resecentrum'), 'lidköping');
+  assert.equal(I.townKey('Herrljunga C'), 'herrljunga');
+  assert.equal(I.townKey('Skara via Götene'), 'skara');
+  assert.equal(I.townKey('Göteborg Nils Ericson Terminalen'), 'göteborg');
+  assert.equal(I.townKey(''), '');
+  assert.deepEqual(Array.from(I.lineTownsExcept([{ sig: 'Lkp' }, { sig: 'Vr' }, { sig: 'Hr' }], ROUTE, 'Hr')).sort(), ['lidköping', 'vara']);
+});
+
+test('bussar i slutstationen: samma fönster och regler som tågen, och bussar mot orter längs linjen räknas inte', () => {
+  const deps = [
+    bus('1', '11:45', { direction: 'Vårgårda Resecentrum' }),                          // före vår ankomst: missas
+    bus('2', '11:49', { direction: 'Ulricehamn busstation', platform: 'B' }),        // 3 min: knappt
+    bus('3', '11:55', { direction: 'Borås Resecentrum', est: at('12:02') }),          // sen: ok
+    bus('4', '11:50', { direction: 'Vara Resecentrum' }),                             // längs vår linje
+    bus('5', '11:43', { direction: 'Borås' }),                                        // 3 min efter planerad ankomst: ingen anslutning
+    bus('6', '12:25', { direction: 'Borås' }),                                        // mer än 40 min
+    bus('7', '11:52', { direction: 'Herrljunga Hagen' }),                              // inom Herrljunga: räknas
+    bus('8', '11:58', { direction: 'Tämta', canceled: true })
+  ];
+  const buses = new Map([['Hr', { departures: deps, arrivals: [] }]]);
+  // Tåg (förval): bussarna visas inte och påverkar inget, men räknas som dolda
+  const tag = setup(LATE(), { buses });
+  assert.equal(tag.connections.length, 0);
+  assert.deepEqual(tag.connectionsHidden, { tåg: 0, buss: 5 });
+  assert.equal(tag.missed, 0);
+  assert.equal(tag.connMode, 'tag');
+  // Buss
+  const m = setup(LATE(), { buses, connMode: 'buss' });
+  assert.deepEqual(m.connections.map(c => [c.ident, c.transferMin, c.status]),
+    [['1', -1, 'missas'], ['2', 3, 'knappt'], ['7', 6, 'ok'], ['3', 16, 'ok'], ['8', 12, 'inställt']]);
+  const b3 = m.connections.find(c => c.ident === '3');
+  assert.equal(b3.kind, 'buss');
+  assert.equal(b3.delayMin, 7);
+  assert.equal(b3.source, 'västtrafik');
+  assert.equal(b3.toText, 'Borås Resecentrum');
+  assert.equal(m.connections.find(c => c.ident === '2').track, 'B');
+  assert.equal(m.missed, 1);
+  assert.equal(m.tight, 2, 'knappt och inställt');
+  // Utropet säger buss och läge
+  const clock = t => new Date(Math.round(t / 60000) * 60000).toTimeString().slice(0, 5);
+  const a = I.announcement(m, { name: s => ROUTE.get(s) || s, clock });
+  assert.ok(a.sv.includes('Buss 1 mot Vårgårda Resecentrum 11:45 hinns tyvärr inte.'), a.sv);
+  assert.ok(a.sv.includes('Till buss 2 mot Ulricehamn busstation 11:49 har ni cirka 3 minuter att byta, den går från läge B.'), a.sv);
+  assert.ok(a.sv.includes('Buss 7 mot Herrljunga Hagen 11:52 hinner ni, den går från läge A.'), a.sv);
+  assert.ok(a.en.includes('Bus 1 to Vårgårda Resecentrum at 11:45 will unfortunately be missed.'), a.en);
+  assert.ok(a.en.includes('to change to bus 2 to Ulricehamn busstation at 11:49, departing from stop B.'), a.en);
+  // Avgången: Västtrafik har ingen faktisk tid, så en buss vars tid har passerat räknas som avgången
+  const gone = setup(LATE(), { buses, connMode: 'buss', now: at('11:45') + 60000 });
+  assert.equal(gone.connections.find(c => c.ident === '1').status, 'avgått');
+});
+
+test('bussar: Båda visar tåg och bussar i tidsordning, och utan varningsval gäller varningarna alla som hämtats', () => {
+  const to = sig => ({ ToLocation: [{ LocationName: sig, Priority: 1, Order: 0 }] });
+  const rows = LATE().concat([ann('3049', 'Hr', 'd', '11:49', to('Bs'))]);
+  const buses = new Map([['Hr', { departures: [bus('1', '11:45', { direction: 'Vårgårda' }), bus('3', '11:55', { direction: 'Borås' })], arrivals: [] }]]);
+  const both = setup(rows, { buses, connMode: 'bada' });
+  assert.deepEqual(both.connections.map(c => [c.kind, c.ident || c.otn]), [['buss', '1'], ['tåg', '3049'], ['buss', '3']]);
+  assert.deepEqual(both.connectionsHidden, { tåg: 0, buss: 0 });
+  // Bara tåg i listan, men varningarna gäller alla: den missade bussen räknas
+  const list = setup(rows, { buses, connMode: 'tag', connAlerts: false });
+  assert.deepEqual(list.connections.map(c => c.otn), ['3049']);
+  assert.equal(list.connAlerts, false);
+  assert.equal(list.missed, 1, 'bussen som missas');
+  assert.equal(list.tight, 1, 'tåget som blir knappt');
+  assert.deepEqual(list.alert.connections.map(c => c.kind), ['buss', 'tåg', 'buss']);
+  // Med varningsvalet (förval) gäller varningarna bara tågen
+  const follow = setup(rows, { buses, connMode: 'tag' });
+  assert.equal(follow.missed, 0);
+  assert.equal(follow.tight, 1);
+  // Okänt val blir Tåg
+  assert.equal(setup(rows, { buses, connMode: 'annat' }).connMode, 'tag');
+});
+
+test('bussar längs vägen och till oss i startstationen – bara före avgång', () => {
+  const buses = new Map([
+    ['Vr', {
+      departures: [bus('500', '11:26', { direction: 'Skara Resecentrum' }), bus('501', '11:50', { direction: 'Skara' }), bus('502', '11:30', { direction: 'Herrljunga station' })],
+      arrivals: [bus('600', '11:14', { origin: 'Skara Resecentrum' }), bus('601', '11:16', { origin: 'Lidköping Resecentrum' })]
+    }],
+    ['Lkp', { departures: [], arrivals: [bus('100', '10:50', { origin: 'Götene Resecentrum', est: at('10:58') }), bus('101', '10:40', { origin: 'Götene' })] }]
+  ]);
+  const m = setup([], { buses, connMode: 'buss', now: at('10:50') });
+  assert.equal(m.stops.length, 1);
+  const st = m.stops[0];
+  assert.equal(st.sig, 'Vr');
+  assert.deepEqual(st.connections.map(c => [c.ident, c.status]), [['500', 'ok']], 'efter fönstret och mot Herrljunga räknas inte');
+  assert.deepEqual(st.incoming.map(c => [c.ident, c.status, c.fromText]), [['600', 'ok', 'Skara Resecentrum']], 'från Lidköping längs vår linje räknas inte');
+  assert.deepEqual(m.incoming.map(c => [c.ident, c.transferMin, c.status]), [['101', 20, 'ok'], ['100', 2, 'knappt']]);
+  assert.deepEqual(m.incomingHidden, { tåg: 0, buss: 0 });
+  // Tåg: samma bussar räknas som dolda, och stationen längs vägen visas inte
+  const tag = setup([], { buses, now: at('10:50') });
+  assert.equal(tag.stops.length, 0);
+  assert.deepEqual(tag.stopsHidden, { tåg: 0, buss: 2 });
+  assert.deepEqual(tag.incomingHidden, { tåg: 0, buss: 2 });
+  assert.equal(tag.attention, 0);
+  // Efter avgång från Lidköping: inga bussar till oss där
+  const after = setup([], { buses, connMode: 'buss', now: at('11:01'), known: { Lkp: { dep: at('11:00') } } });
+  assert.equal(after.incoming, null);
+});
+
+test('markerade anslutningar: knapp eller missad ger förslaget att ringa trafikledningen – bara när det räcker att vänta högst 15 min', () => {
+  const deps = departures([['3047', '11:45'], ['3049', '11:49'], ['417', '11:55']]);
+  const marked = new Set(['ut|Hr|tåg|3047', 'ut|Hr|tåg|3049', 'ut|Hr|tåg|417']);
+  const m = setup(LATE().concat(deps), { marked });
+  assert.deepEqual(m.connections.map(c => [c.otn, c.marked, c.key]),
+    [['3047', true, 'ut|Hr|tåg|3047'], ['3049', true, 'ut|Hr|tåg|3049'], ['417', true, 'ut|Hr|tåg|417']]);
+  assert.deepEqual(m.actions.map(a => [a.type, a.c.otn, a.waitMin, a.theirTrack]), [['hold', '3047', 5, '3'], ['hold', '3049', 1, '3']]);
+  assert.equal(m.markedList.length, 3);
+  // Utan markering: inget förslag
+  const none = setup(LATE().concat(deps));
+  assert.equal(none.actions.length, 0);
+  assert.equal(none.connections[0].marked, false);
+  // 20 min sena: 3047 skulle behöva vänta 19 min, då föreslås inget
+  const veryLate = setup(MEET({ Vr: { a: { EstimatedTimeAtLocation: T('11:40') } } }).concat(departures([['3047', '11:45']])), { marked });
+  assert.equal(veryLate.connections[0].status, 'missas');
+  assert.equal(veryLate.actions.length, 0);
+  // Avgånget tåg: inget förslag
+  const gone = setup(LATE().concat(departures([['3047', '11:45', { TimeAtLocationWithSeconds: T('11:45') }]])), { marked, now: at('11:45') });
+  assert.equal(gone.connections[0].status, 'avgått');
+  assert.equal(gone.actions.length, 0);
+  // Markeringen gäller även när valet döljer tågen, och för bussar (linje och klockslag)
+  const buses = new Map([['Hr', { departures: [bus('1', '11:45', { direction: 'Vårgårda' })], arrivals: [] }]]);
+  const b = setup(LATE().concat(deps), { buses, connMode: 'buss', marked: new Set(['ut|Hr|tåg|3047', 'ut|Hr|buss|1|1145']) });
+  assert.deepEqual(b.actions.map(a => [a.c.kind, a.c.ident, a.waitMin]), [['tåg', '3047', 5], ['buss', '1', 5]]);
+  assert.deepEqual(b.connections.map(c => c.kind), ['buss']);
+});
+
+test('markerade anslutningar till oss: kan vi vänta på ett sent tåg i startstationen', () => {
+  const arrivals = [ann('3333', 'Lkp', 'a', '10:52', { EstimatedTimeAtLocation: T('11:00'), TrackAtLocation: '2', FromLocation: [{ LocationName: 'Gtp', Order: 0 }] })];
+  const m = setup(arrivals, { now: at('10:50'), marked: new Set(['in|Lkp|tåg|3333']) });
+  assert.equal(m.incoming[0].status, 'missas');
+  assert.deepEqual(m.actions.map(a => [a.type, a.sig, a.c.otn, a.waitMin, a.theirTrack]), [['wait', 'Lkp', '3333', 4, '2']]);
 });

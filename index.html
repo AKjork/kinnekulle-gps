@@ -216,6 +216,29 @@
   .utrop{margin:0;padding:.5rem .7rem;font-size:.9rem;line-height:1.4;color:var(--ink);border-left:3px solid var(--pri)}
   .utrop-ctl button{padding:.15rem .5rem;font-size:.75rem;margin-left:.3rem}
   .utrop-ctl button[aria-pressed="true"]{border-color:var(--pri);color:var(--pri)}
+  /* Anslutningar: Tåg | Buss | Båda, och om varningar och utrop följer valet */
+  .conn-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .5rem;padding:.5rem .7rem .35rem;border-top:1px solid var(--b)}
+  .cc-label{font-size:.68rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-right:.1rem}
+  .seg{display:inline-flex;border:1px solid var(--b);border-radius:8px;overflow:hidden}
+  .seg button{border:0;border-radius:0;margin:0;padding:.3rem .8rem;min-height:2.1rem;font-size:.88rem;background:transparent;color:var(--ink-dim)}
+  .seg button+button{border-left:1px solid var(--b)}
+  .seg button[aria-pressed="true"]{background:rgba(34,197,94,.16);color:var(--pri);font-weight:600}
+  .seg button:disabled{opacity:.4}
+  .cc-alerts{padding:.25rem .6rem;min-height:2.1rem;font-size:.75rem;margin:0}
+  .cc-alerts[aria-pressed="true"]{border-color:var(--pri);color:var(--pri)}
+  .info-hint{margin:0;padding:.05rem .7rem .4rem;font-size:.75rem;color:var(--mut)}
+  .info-hint.err{color:var(--warn)}
+  .info-hint a, .info-hint button.linkish{color:var(--pri)}
+  .linkish{background:none;border:0;padding:0;margin:0;min-height:0;font:inherit;text-decoration:underline;cursor:pointer}
+  .sec-note{text-transform:none;letter-spacing:0;font-weight:500;color:var(--ink-dim)}
+  /* ☆ markerad anslutning (resenärer ska byta) och förslaget att ringa trafikledningen */
+  .conn-row{cursor:pointer}
+  .conn-row .star{display:inline-block;width:1.15em;color:var(--mut);font-weight:400}
+  .conn-row.marked .star{color:var(--warn)}
+  .info-row.action .ir-t{font-size:1.1rem;text-align:center}
+  .info-row.action b{white-space:normal}
+  #vtTestResult.ok{color:var(--pri)}
+  #vtTestResult.err{color:var(--err)}
   .cards{display:flex;flex-direction:column}
   .card{
     border-bottom:1px solid var(--b);
@@ -643,6 +666,7 @@
         <button id="btnAnalysis">Analysverktyg</button>
         <button id="btnUploadSettings">Uppladdning</button>
         <button id="btnPushSettings">Notiser i bakgrunden</button>
+        <button id="btnVtSettings">Västtrafik (bussar)</button>
         <button id="btnTrvCheck">Trafikverket-data</button>
         <button id="btnExportCSV">Exportera CSV (Excel)</button>
         <button id="btnExport">Exportera JSON</button>
@@ -871,6 +895,35 @@
     </div>
   </section>
 
+  <section id="vtSettings" style="display:none">
+    <h2>Västtrafik (bussar)</h2>
+    <p class="hint">Bussanslutningar i Info kommer från Västtrafik. Skapa en applikation i <a id="vtPortalLink" target="_blank" rel="noopener">Västtrafiks utvecklarportal</a> och prenumerera på API:t <b>Planera Resa v4</b>. Där får du en nyckel och en hemlighet. De sparas bara på den här enheten.</p>
+    <form id="vtForm" autocomplete="off" onsubmit="return false">
+      <div class="form-group">
+        <label for="vtKey">Nyckel</label>
+        <input id="vtKey" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="från Applikationer i portalen">
+      </div>
+      <div class="form-group">
+        <label for="vtSecret">Hemlighet</label>
+        <input id="vtSecret" type="password" autocomplete="off" placeholder="">
+      </div>
+      <div class="form-group">
+        <label for="vtServer">Egen server (behövs bara om testet säger det)</label>
+        <input id="vtServer" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://railtimer-vt.….workers.dev">
+      </div>
+    </form>
+    <p class="hint">Västtrafik tillåter kanske inte att appen hämtar token direkt från telefonen. Säger testet det behövs en liten egen server som har nyckeln och hemligheten. Den finns färdig i appens repo (<code>docs/vasttrafik-worker.js</code>) och kan köras gratis hos Cloudflare.</p>
+    <div class="settings-actions">
+      <button id="btnVtSave" class="primary">Spara och testa</button>
+      <button id="btnVtCheck" class="ghost">Provsidan</button>
+    </div>
+    <p id="vtTestResult" class="meta" role="status" aria-live="polite"></p>
+    <div class="settings-actions">
+      <button id="btnVtRemove" class="danger">Ta bort</button>
+      <button id="btnCloseVt" class="ghost">Stäng</button>
+    </div>
+  </section>
+
 </main>
 
 <footer>
@@ -883,11 +936,12 @@
 <script src="railtimer-trv.js"></script>
 <script src="railtimer-info.js"></script>
 <script src="railtimer-push.js"></script>
+<script src="railtimer-vt.js"></script>
 <script>
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25v'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25w'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1067,6 +1121,7 @@
       removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog,
       setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; },
       refreshInfo, updateInfo, setInfoTab, infoModel: () => infoState.model,
+      refreshBuses, connSettings, saveConnSettings, markedConnections, toggleConnMark, infoLogEntry, showVtSettings, saveAndTestVt, busTargets, vtState: () => ({ buses: infoState.buses, error: infoState.vtError, at: infoState.vtFetchedAt }),
       applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
       checkVersionByHand, versionCheckResult: () => versionCheckResult,
       setVersionForTest: (fetchFn, reloadFn) => { versionFetchForTest = fetchFn; if(reloadFn) reloadPage = reloadFn; },
@@ -1635,6 +1690,9 @@
       if(state.route[idx]) setHalt(idx, 'slipOut', !state.route[idx].slipOut);
     });
     document.getElementById('infoPane').addEventListener('click', handleInfoClick);
+    document.getElementById('infoPane').addEventListener('keydown', ev => {
+      if((ev.key==='Enter' || ev.key===' ') && ev.target.matches && ev.target.matches('.conn-row')){ ev.preventDefault(); handleInfoClick(ev); }
+    });
     window.addEventListener('online', () => { if(state.running) refreshInfo(); });
     if(els.wakeBtn){
       els.wakeBtn.addEventListener('click', toggleWakeLock);
@@ -1700,6 +1758,17 @@
     document.getElementById('btnUploadSettings').addEventListener('click', () => {
       closeAllMenus();
       showUploadSettings();
+    });
+    document.getElementById('btnVtSettings').addEventListener('click', () => {
+      closeAllMenus();
+      showVtSettings();
+    });
+    document.getElementById('btnVtSave').addEventListener('click', saveAndTestVt);
+    document.getElementById('btnVtRemove').addEventListener('click', removeVtSettings);
+    document.getElementById('btnCloseVt').addEventListener('click', closeOverlay);
+    document.getElementById('btnVtCheck').addEventListener('click', () => {
+      if(state.running){ setVtResult('Provsidan öppnas när resan är klar.', false); return; }
+      location.href='vasttrafik-koll.html';
     });
     document.getElementById('btnGhSave').addEventListener('click', saveAndTestGithub);
     document.getElementById('btnGhUploadNow').addEventListener('click', uploadNow);
@@ -3010,6 +3079,17 @@
   const INFO_LINE_BEFORE_MS = 60*60000; // tåg på linjen från en timme bakåt …
   const INFO_LINE_AFTER_MS = 45*60000;  // … till 45 min efter vår planerade ankomst (anslutningarna)
   const INFO_STALE_MS = 3*60000;        // äldre data än så sägs vara gammal
+  // Bussar från Västtrafik (railtimer-vt.js) och valet Tåg | Buss | Båda
+  const VT = window.RailTimerVt || null;
+  const STORAGE_KEY_VT = 'railtimer_vt_v1';             // { key, secret, server, deviceId } – bara på den här enheten
+  const STORAGE_KEY_VT_TOKEN = 'railtimer_vt_token_v1'; // { token, expiresAt }
+  const STORAGE_KEY_VT_STOPS = 'railtimer_vt_stops_v1'; // { sig: { at, areas: [{ gid, name, dist }] } }
+  const STORAGE_KEY_CONN = 'railtimer_conn_v1';         // { mode: 'tag'|'buss'|'bada', alerts: true }
+  const STORAGE_KEY_CONN_MARKS = 'railtimer_conn_marks_v1'; // { vårt tågnummer: { nyckel (connKey): tid } }
+  const VT_REFRESH_MS = 2*60000;            // bussarna hämtas högst varannan minut
+  const VT_STOPS_MAX_AGE_MS = 30*24*3600000; // hållplatserna vid en station frågas igen efter 30 dagar
+  const VT_AHEAD_MS = 60*60000;             // bussar längs vägen bara vid stationer vi når inom en timme
+  const VT_FALLBACK_STATION = { name:'Herrljunga C', lat:58.0796, lon:13.0258 }; // för testet i inställningarna
   const infoState = {
     timer:null, busy:false, our:null, ourKey:null, line:null, trains:null, fetchedAt:null, error:null,
     messages:[], messagesAt:0, model:null, lastHtml:'', notified:new Map(), history:null, tab:'stations',
@@ -3151,7 +3231,8 @@
     stopInfo();
     Object.assign(infoState, { our:null, ourKey:null, line:null, trains:null, fetchedAt:null, error:null, messages:[], messagesAt:0,
       model:null, lastHtml:'', notified:new Map(), meetLog:new Map(), eventLog:new Map(), safeFields:false,
-      positions:new Map(), positionsOff:false, utropLang:infoState.utropLang||'sv' });
+      positions:new Map(), positionsOff:false, utropLang:infoState.utropLang||'sv',
+      buses:new Map(), vtAt:0, vtFetchedAt:null, vtError:null, vtBusy:false });
     infoState.history = INFO ? INFO.historyMedians(allRuns()) : null; // även körningar hämtade från GitHub
     setInfoTab('stations');
     renderInfo();
@@ -3215,6 +3296,7 @@
     }
     updateInfo();
     await refreshPositions();
+    await refreshBuses();
     if(infoState.line && now-infoState.messagesAt>=INFO_MESSAGES_MS) refreshTrainMessages(now);
   }
 
@@ -3249,6 +3331,213 @@
     }
   }
 
+  /* ── Bussar från Västtrafik (railtimer-vt.js) ──
+     Valet Tåg | Buss | Båda (connSettings) avgör vad Info visar. Bussar hämtas bara när Buss eller Båda är valt
+     och Västtrafik är inställt (⋮ → Västtrafik): hållplatsområdena inom 350 m från stationen (sparas per station
+     i 30 dagar), sedan avgångarna efter vår ankomst och ankomsterna före vår avgång – i slutstationen, vid
+     stationerna längs vägen som vi når inom en timme och i startstationen före avgång. Högst varannan minut.
+     Bara bussar: Västtågen kommer från Trafikverket. */
+  function readJsonKey(key, fallback){
+    try{ const v=JSON.parse(localStorage.getItem(key)||'null'); return v==null ? fallback : v; }catch(e){ return fallback; }
+  }
+  function writeJsonKey(key, value){
+    try{ localStorage.setItem(key, JSON.stringify(value)); return true; }catch(e){ console.warn('Kunde inte spara', key, e); return false; }
+  }
+  function loadVtSettings(){
+    const s=readJsonKey(STORAGE_KEY_VT, null);
+    return s && typeof s==='object' ? { key:String(s.key||''), secret:String(s.secret||''), server:String(s.server||''), deviceId:String(s.deviceId||'') } : null;
+  }
+  function vtConfigured(){ return !!(VT && VT.configured(loadVtSettings())); }
+  // Sparat val; utan Västtrafik visas bara tåg
+  function connSettings(){
+    const s=readJsonKey(STORAGE_KEY_CONN, {}) || {};
+    const mode=INFO && INFO.CONN_MODES.includes(s.mode) ? s.mode : 'tag';
+    return { mode: vtConfigured() ? mode : 'tag', savedMode: mode, alerts: s.alerts!==false };
+  }
+  function saveConnSettings(change){
+    const cur=readJsonKey(STORAGE_KEY_CONN, {}) || {};
+    writeJsonKey(STORAGE_KEY_CONN, Object.assign({ mode:'tag', alerts:true }, cur, change));
+  }
+  const vtTokenStore = {
+    get: () => readJsonKey(STORAGE_KEY_VT_TOKEN, null),
+    set: t => { if(t) writeJsonKey(STORAGE_KEY_VT_TOKEN, t); else localStorage.removeItem(STORAGE_KEY_VT_TOKEN); }
+  };
+  function vtClient(settings){
+    return VT.createClient({
+      fetch:(url, init)=>window.fetch(url, init), settings:settings||loadVtSettings()||{}, tokenStore:vtTokenStore,
+      online:()=>TEST_MODE || navigator.onLine!==false
+    });
+  }
+  /* ☆ Anslutningar som resenärer ska byta till, markerade i Info. Sparas per vårt tågnummer, så att de gäller
+     även nästa gång samma tåg körs; ett nytt tryck tar bort markeringen. */
+  function markedConnections(){
+    const all=readJsonKey(STORAGE_KEY_CONN_MARKS, {}) || {};
+    return new Set(Object.keys(all[String(state.trainNumber||'')] || {}));
+  }
+  function toggleConnMark(key){
+    if(!key || !state.trainNumber) return false;
+    const all=readJsonKey(STORAGE_KEY_CONN_MARKS, {}) || {};
+    const train=String(state.trainNumber);
+    const mine=all[train] || {};
+    const on=!mine[key];
+    if(on) mine[key]=new Date().toISOString(); else delete mine[key];
+    if(Object.keys(mine).length) all[train]=mine; else delete all[train];
+    writeJsonKey(STORAGE_KEY_CONN_MARKS, all);
+    return on;
+  }
+  function lineNames(){
+    const out=new Map();
+    for(const l of infoState.line||[]) out.set(l.sig, sigName(l.sig));
+    return out;
+  }
+  // Hållplatsområdena vid en station, sparade per station
+  async function vtStopAreas(client, sig){
+    const cache=readJsonKey(STORAGE_KEY_VT_STOPS, {}) || {};
+    const c=cache[sig];
+    if(c && Array.isArray(c.areas) && Date.now()-c.at<VT_STOPS_MAX_AGE_MS) return c.areas;
+    const pos=coordOf(sig);
+    if(!pos) return [];
+    const areas=await client.stopAreasNear(pos.lat, pos.lon, VT.DEFAULTS.stopRadiusM);
+    cache[sig]={ at:Date.now(), areas };
+    writeJsonKey(STORAGE_KEY_VT_STOPS, cache);
+    return areas;
+  }
+  // Vilka tavlor som behövs: { sig, kind: 'departures'|'arrivals', start, span }
+  function busTargets(now){
+    const line=infoState.line||[];
+    const n=line.length;
+    if(n<2 || !INFO) return [];
+    const D=INFO.DEFAULTS, M=60000;
+    const m=infoState.model;
+    const departedSig=sig=>state.route.some(st=>st.sig===sig && st.actualDeparture);
+    const out=[];
+    const L0=line[0], dep0=L0.advDep!=null ? L0.advDep : L0.plannedDep;
+    if(dep0!=null && !departedSig(L0.sig) && !(m && m.incoming===null)) out.push({ sig:L0.sig, kind:'arrivals', start:dep0-(D.incomingWindowMin+1)*M, span:D.incomingWindowMin+1 });
+    for(let i=Math.max(m ? m.frontier : 0, 1); i<n-1; i++){
+      const L=line[i];
+      if(!L.stop || departedSig(L.sig)) continue;
+      const arr=L.advArr!=null ? L.advArr : L.plannedArr, dep=L.advDep!=null ? L.advDep : L.plannedDep;
+      const pred=m && m.preds && m.preds[i] && m.preds[i].arr!=null ? m.preds[i].arr : arr;
+      if(pred!=null && pred-now>VT_AHEAD_MS) continue;
+      if(arr!=null) out.push({ sig:L.sig, kind:'departures', start:arr, span:D.midConnectionWindowMin+1 });
+      if(dep!=null) out.push({ sig:L.sig, kind:'arrivals', start:dep-(D.midConnectionWindowMin+1)*M, span:D.midConnectionWindowMin+1 });
+    }
+    const E=line[n-1], arrE=E.advArr!=null ? E.advArr : E.plannedArr;
+    if(arrE!=null) out.push({ sig:E.sig, kind:'departures', start:arrE, span:D.connectionWindowMin+1 });
+    return out;
+  }
+  async function refreshBuses(force){
+    if(!VT || !INFO || !infoState.line || !state.running) return;
+    if(connSettings().mode==='tag' || !vtConfigured()){
+      if(infoState.buses && infoState.buses.size) infoState.buses=new Map();
+      infoState.vtError=null;
+      return;
+    }
+    const now=Date.now();
+    // Pågår en hämtning när valet eller inställningarna ändras görs en ny direkt efteråt
+    if(infoState.vtBusy){ if(force) infoState.vtAgain=true; return; }
+    if(!force && now-infoState.vtAt<VT_REFRESH_MS) return;
+    if(!TEST_MODE && navigator.onLine===false){ infoState.vtError='ingen täckning'; return; }
+    infoState.vtBusy=true;
+    infoState.vtAt=now;
+    const client=vtClient();
+    const result=new Map();
+    let error=null, ok=0;
+    const fatal=e=>['blocked','auth','setup','network','timeout'].includes(e && e.kind);
+    try{
+      for(const t of busTargets(now)){
+        let areas;
+        try{ areas=await vtStopAreas(client, t.sig); }
+        catch(e){ error=e; if(fatal(e)) break; continue; }
+        if(!areas.length) continue;
+        const entry=result.get(t.sig) || { departures:[], arrivals:[] };
+        for(const a of areas){
+          try{ entry[t.kind].push(...VT.busesOnly(await client.board(t.kind, a.gid, t.start, t.span))); ok++; }
+          catch(e){ error=e; if(fatal(e)) break; }
+        }
+        entry[t.kind]=VT.uniqueCalls(entry[t.kind]);
+        result.set(t.sig, entry);
+        if(error && fatal(error)) break;
+      }
+    }finally{
+      infoState.vtBusy=false;
+    }
+    // Gick ingenting står de senaste bussarna kvar, med felet
+    if(!error || ok){ infoState.buses=result; infoState.vtFetchedAt=now; }
+    infoState.vtError=error ? VT.errorText(error) : null;
+    if(error) console.warn('Västtrafik: kunde inte hämta bussarna', error);
+    updateInfo();
+    if(infoState.vtAgain){ infoState.vtAgain=false; return refreshBuses(true); }
+  }
+
+  // ── Inställningar för Västtrafik (⋮ → Västtrafik) ──
+  function setVtResult(text, isError){
+    const el=document.getElementById('vtTestResult');
+    el.textContent=text;
+    el.className='meta'+(text ? (isError ? ' err' : ' ok') : '');
+  }
+  function showVtSettings(){
+    rememberOverlayReturn();
+    const s=loadVtSettings();
+    document.getElementById('vtKey').value = s ? s.key : '';
+    const sec=document.getElementById('vtSecret');
+    sec.value='';
+    sec.placeholder = s && s.secret ? '•••• sparad – lämna tomt för att behålla' : '';
+    document.getElementById('vtServer').value = s ? s.server : '';
+    document.getElementById('vtPortalLink').href = VT ? VT.PORTAL_URL : 'https://developer.vasttrafik.se/';
+    setVtResult(vtConfigured() ? 'Inställt. Välj Buss eller Båda under Anslutningar i Info.' : '', false);
+    showView('vtSettings');
+  }
+  // Stationen att prova med: resans slutstation, annars Herrljunga C
+  function vtTestStation(){
+    const end=state.route && state.route[state.route.length-1];
+    const c=end && end.sig ? coordOf(end.sig) : null;
+    if(c) return { name:end.name, lat:c.lat, lon:c.lon };
+    const h=allStationsCache.find(x=>x.name===VT_FALLBACK_STATION.name && x.lat!=null);
+    return h ? { name:h.name, lat:h.lat, lon:h.lon } : VT_FALLBACK_STATION;
+  }
+  async function saveAndTestVt(){
+    if(!VT){ setVtResult('Västtrafikmodulen kunde inte laddas – ladda om sidan.', true); return null; }
+    const old=loadVtSettings()||{};
+    const server=document.getElementById('vtServer').value.trim();
+    const s={
+      key:document.getElementById('vtKey').value.trim(),
+      secret:document.getElementById('vtSecret').value.trim() || old.secret || '',
+      server:VT.cleanServer(server),
+      deviceId:old.deviceId || ('rt'+Math.random().toString(36).slice(2, 10))
+    };
+    if(server && !s.server){ setVtResult('Den egna servern måste vara en https-adress.', true); return null; }
+    if(!VT.configured(s)){ setVtResult('Fyll i nyckel och hemlighet, eller en egen server.', true); return null; }
+    writeJsonKey(STORAGE_KEY_VT, s);
+    vtTokenStore.set(null);
+    document.getElementById('vtSecret').value='';
+    document.getElementById('vtSecret').placeholder = s.secret ? '•••• sparad – lämna tomt för att behålla' : '';
+    const st=vtTestStation();
+    setVtResult('Sparat. Testar Västtrafik…', false);
+    try{
+      const client=vtClient(s);
+      if(!client.viaServer) await client.token();
+      const areas=await client.stopAreasNear(st.lat, st.lon, VT.DEFAULTS.stopRadiusM);
+      if(!areas.length){ setVtResult(`Västtrafik svarar, men det finns ingen hållplats inom ${VT.DEFAULTS.stopRadiusM} m från ${st.name}.`, false); return { ok:true, areas:[] }; }
+      const buses=VT.busesOnly(await client.board('departures', areas[0].gid, Date.now(), 60));
+      setVtResult(`Fungerar${client.viaServer ? ' via egen server' : ''}: ${buses.length} bussavgång${buses.length===1?'':'ar'} från ${areas[0].name} närmaste timmen. Välj Buss eller Båda under Anslutningar i Info.`, false);
+      if(state.running) refreshBuses(true);
+      return { ok:true, areas, buses };
+    }catch(e){
+      setVtResult(`Sparat, men det gick inte: ${VT.errorText(e)}`, true);
+      return { ok:false, error:e };
+    }
+  }
+  function removeVtSettings(){
+    if(!confirm('Ta bort Västtrafiks nyckel och hemlighet från den här enheten?')) return;
+    localStorage.removeItem(STORAGE_KEY_VT);
+    vtTokenStore.set(null);
+    infoState.buses=new Map();
+    showVtSettings();
+    setVtResult('Borttaget från enheten. Info visar bara tåg.', false);
+    if(state.running) updateInfo();
+  }
+
   function timeMs(v){
     if(!v) return null;
     const t=new Date(v).getTime();
@@ -3272,7 +3561,9 @@
           line:infoState.line, trains:infoState.trains, ourKey:infoState.ourKey, known, now:Date.now(),
           knownDouble:loadInfoSettings().double,
           history:infoState.history, routeNames, messages:infoState.messages,
-          positions:infoState.positions, coords:lineCoords(), ourPos
+          positions:infoState.positions, coords:lineCoords(), ourPos,
+          buses:infoState.buses, names:lineNames(), connMode:connSettings().mode, connAlerts:connSettings().alerts,
+          marked:markedConnections()
         });
       }catch(e){
         console.error('Infofliken: fel i beräkningen', e);
@@ -3282,6 +3573,7 @@
         rememberDouble(model.doubleSections);
         recordMeetings(model);
         recordEvents(model);
+        recordMarks(model);
       }
     }
     infoState.model=model;
@@ -3315,10 +3607,25 @@
     for(const m of model.messages) add(m, null);
     for(const m of model.messagesHidden||[]) add(m, m.reason);
   }
+  /* De markerade anslutningarna sparas i körningen: senaste läget och om det föreslogs att ringa trafikledningen
+     (info.marked), så att det går att se i efterhand hur ofta en anslutning blir knapp. */
+  function recordMarks(model){
+    if(!infoState.markLog) infoState.markLog=new Map();
+    const asked=new Set((model.actions||[]).map(a=>a.c.key));
+    for(const x of model.markedList||[]){
+      const c=x.c, prev=infoState.markLog.get(c.key);
+      infoState.markLog.set(c.key, {
+        sig:x.sig, name:sigName(x.sig), dir:x.dir, kind:c.kind, train:c.ident||c.otn, to:connTo(c)||'', from:connFrom(c)||'',
+        planned:new Date(c.adv).toISOString(), status:c.status, transferMin:c.transferMin,
+        suggested:!!(asked.has(c.key) || (prev && prev.suggested))
+      });
+    }
+  }
   function infoLogEntry(){
     const events=infoState.eventLog ? Array.from(infoState.eventLog.values()) : [];
-    if(!infoState.meetLog.size && !events.length) return null;
-    return { meetings:Array.from(infoState.meetLog.values()), ...(events.length ? { events } : {}) };
+    const marked=infoState.markLog ? Array.from(infoState.markLog.values()) : [];
+    if(!infoState.meetLog.size && !events.length && !marked.length) return null;
+    return { meetings:Array.from(infoState.meetLog.values()), ...(events.length ? { events } : {}), ...(marked.length ? { marked } : {}) };
   }
 
   // ── Text och utseende ──
@@ -3336,6 +3643,9 @@
     return 'dl-live';
   }
   const placesText = sigs => (sigs||[]).map(sigName).join(' / ');
+  // Vart en anslutning går och varifrån den kommer: bussar har Västtrafiks text, tåg Trafikverkets platser
+  const connTo = c => c.kind==='buss' ? (c.toText||'') : placesText(c.to);
+  const connFrom = c => c.kind==='buss' ? (c.fromText||'') : placesText(c.from);
   function trainText(c){
     return [c.product, c.ident].filter(Boolean).join(' ');
   }
@@ -3357,6 +3667,7 @@
     const missed=m.missed+(m.midMissed||0);
     if(missed) parts.push(`${missed} anslutning${missed>1?'ar':''} missas`);
     else if(m.tight) parts.push(`${m.tight} knapp${m.tight>1?'a':''} anslutning${m.tight>1?'ar':''}`);
+    if(m.actions && m.actions.length) parts.push('☎ ring trafikledningen');
     if(m.deviations.length) parts.push(m.deviations[0].text);
     if(m.messages.length) parts.push(m.messages[0].header);
     const t=tourStatus();
@@ -3412,8 +3723,46 @@
   }
   function connectionSub(c){
     const delay = c.status==='avgått' ? `avgick ${roundClock(c.dep)}` : (c.delayMin>0 ? `${c.delayMin} min sent` : (c.delayMin<0 ? `${-c.delayMin} min tidigt` : 'i tid'));
-    return [escapeHtml(trainText(c)), c.track?`spår ${escapeHtml(c.track)}`:'', delay].filter(Boolean).join(' · ');
+    return [escapeHtml(trainText(c)), c.track?`${c.kind==='buss'?'läge':'spår'} ${escapeHtml(c.track)}`:'', delay].filter(Boolean).join(' · ');
   }
+
+  // En anslutning: ☆ framför, tryck markerar att resenärer ska byta (★)
+  function connRow(c, title, incoming){
+    return `<div class="info-row conn-row${c.level?' l'+c.level:''}${c.marked?' marked':''}" role="button" tabindex="0" data-info="mark" data-key="${escapeHtml(c.key||'')}" aria-pressed="${c.marked?'true':'false'}">` +
+      `<span class="ir-t">${roundClock(c.adv)}</span>` +
+      `<span class="ir-txt"><b><span class="star" aria-hidden="true">${c.marked?'★':'☆'}</span>${title}</b><small>${connectionSub(c)}</small></span>` +
+      `<span class="ir-s">${connectionStatusHtml(c, incoming)}</span></div>`;
+  }
+  // Förslaget när en markerad anslutning blir knapp eller missas (railtimer-info.js: actions, actionText), högst två rader
+  function actionRowHtml(a){
+    const t=INFO.actionText(a, { name:sigName, clock:roundClock });
+    return `<div class="info-row action l2"><span class="ir-t" aria-hidden="true">☎</span><span class="ir-txt"><b>${escapeHtml(t.title)}</b><small>${escapeHtml(t.sub)}</small></span><span class="ir-s"></span></div>`;
+  }
+
+  // Valet Tåg | Buss | Båda överst i anslutningarna. Utan Västtrafik går bara Tåg att välja.
+  function connControlHtml(mode, alerts, vtOn){
+    const b=(k, label)=>`<button type="button" data-info="conn-${k}" aria-pressed="${mode===k}"${!vtOn && k!=='tag'?' disabled':''}>${label}</button>`;
+    let h=`<div class="conn-ctl"><span class="cc-label">Anslutningar</span>` +
+      `<span class="seg" role="group" aria-label="Visa anslutningar">${b('tag','Tåg')}${b('buss','Buss')}${b('bada','Båda')}</span>`;
+    if(vtOn) h+=`<button type="button" class="cc-alerts" data-info="conn-alerts" aria-pressed="${alerts}" title="Om varningarna, panelens rad och utropet bara gäller det som visas">Varningar: ${alerts?'bara valda':'alla'}</button>`;
+    h+='</div>';
+    if(!vtOn) h+='<p class="info-hint">Bussar kräver en nyckel från Västtrafik: <button type="button" class="linkish" data-info="vt-settings">⋮ → Västtrafik (bussar)</button>.</p>';
+    else if(mode!=='tag' && infoState.vtError) h+=`<p class="info-hint err">Västtrafik: ${escapeHtml(infoState.vtError)}${infoState.vtFetchedAt?` Bussarna är från ${formatClock(infoState.vtFetchedAt)}.`:''}</p>`;
+    else if(!alerts && mode!=='bada') h+='<p class="info-hint">Varningarna och utropet gäller alla anslutningar, även de dolda.</p>';
+    if(!markedConnections().size) h+='<p class="info-hint">Tryck ☆ på en anslutning som resenärer ska byta till.</p>';
+    return h;
+  }
+  // Rubriken för ett anslutningsavsnitt, med valet och hur många som är dolda: "· bara buss · 2 tåg dolda"
+  function connSecHtml(title, mode, hidden){
+    const parts=[];
+    if(mode==='buss') parts.push('bara buss');
+    else if(mode==='tag' && vtConfigured()) parts.push('bara tåg');
+    const h=hidden||{};
+    if(h['tåg']) parts.push(`${h['tåg']} tåg dold${h['tåg']>1?'a':'t'}`);
+    if(h.buss) parts.push(`${h.buss} buss${h.buss>1?'ar dolda':' dold'}`);
+    return `<div class="info-sec"><span>${escapeHtml(title)}${parts.length?` <small class="sec-note">· ${parts.join(' · ')}</small>`:''}</span></div>`;
+  }
+  const connNoun = mode => mode==='buss' ? 'bussar' : 'anslutningar';
 
   function infoPaneHtml(m){
     const st = text => `<div class="info-state">${text}</div>`;
@@ -3438,6 +3787,9 @@
       `<div class="ih-main"><b>${roundClock(m.end.predArr)}</b><span class="ih-delay ${delayCls(m.end.delayMin)}">${delayText(m.end.delayMin)}</span>` +
       `${m.reason && !m.end.arrived ? `<span class="ih-why">möte i ${escapeHtml(sigName(m.reason.sig))}</span>` : ''}</div>` +
       `<div class="ih-sub">${sub}</div></div>`;
+
+    // Förslag: ring trafikledningen när en markerad anslutning blir knapp eller missas (högst två)
+    if(m.actions && m.actions.length) html+=`<div class="info-sec"><span>Åtgärd</span></div>${m.actions.slice(0, 2).map(actionRowHtml).join('')}`;
 
     // Färdig text att ropa ut när vi är sena eller en anslutning påverkas
     const ut=INFO.announcement(m, { name:sigName, clock:roundClock });
@@ -3473,32 +3825,44 @@
     html+=`<div class="info-sec"><span>Längs vägen</span></div>`;
     html+= rows.length ? rows.map(r=>r.html).join('') : '<div class="info-empty">Inga möten eller störningar framför oss.</div>';
 
-    // Anslutningar vid stationerna längs vägen: tåg därifrån efter vår ankomst och tåg som ansluter till oss där
-    if(m.stops && m.stops.length){
-      html+=`<div class="info-sec"><span>Anslutningar längs vägen</span></div>`;
+    // Anslutningar: valet Tåg | Buss | Båda (connSettings), sedan längs vägen, till oss i startstationen och i
+    // slutstationen. Rubrikerna säger valet och hur många som är dolda, så att ett glömt val syns.
+    const D=INFO.DEFAULTS;
+    const mode=m.connMode||'tag';
+    html+=connControlHtml(mode, m.connAlerts!==false, vtConfigured());
+    const waitingBuses = mode!=='tag' && !infoState.vtFetchedAt && !infoState.vtError;
+    const anyHidden = h => !!(h && (h['tåg'] || h.buss));
+
+    // Vid stationerna längs vägen: tåg och bussar därifrån efter vår ankomst, och de som ansluter till oss där
+    if((m.stops && m.stops.length) || anyHidden(m.stopsHidden)){
+      html+=connSecHtml('Anslutningar längs vägen', mode, m.stopsHidden);
       for(const st of m.stops){
         const where=escapeHtml(sigName(st.sig));
-        for(const c of st.connections) html+=infoRow(c.level, roundClock(c.adv), `${where} → ${escapeHtml(placesText(c.to)||'?')}`, connectionSub(c), connectionStatusHtml(c, false));
-        for(const c of st.incoming) html+=infoRow(c.level, roundClock(c.adv), `${where}: från ${escapeHtml(placesText(c.from)||'?')} till oss`, connectionSub(c), connectionStatusHtml(c, true));
+        for(const c of st.connections) html+=connRow(c, `${where} → ${escapeHtml(connTo(c)||'?')}`, false);
+        for(const c of st.incoming) html+=connRow(c, `${where}: från ${escapeHtml(connFrom(c)||'?')} till oss`, true);
       }
+      if(!m.stops.length) html+=`<div class="info-empty">Inga ${connNoun(mode)} längs vägen.</div>`;
     }
 
-    // Tåg som ansluter till oss i startstationen (bara före avgång)
-    if(m.incoming && m.incoming.length){
-      html+=`<div class="info-sec"><span>Ansluter till oss i ${escapeHtml(sigName(line[0].sig))}</span></div>`;
-      html+=m.incoming.map(c=>infoRow(c.level, roundClock(c.adv), `Från ${escapeHtml(placesText(c.from)||'?')}`, connectionSub(c), connectionStatusHtml(c, true))).join('');
+    // Som ansluter till oss i startstationen (bara före avgång)
+    if(m.incoming && (m.incoming.length || anyHidden(m.incomingHidden))){
+      html+=connSecHtml(`Ansluter till oss i ${sigName(line[0].sig)}`, mode, m.incomingHidden);
+      html+= m.incoming.length
+        ? m.incoming.map(c=>connRow(c, `Från ${escapeHtml(connFrom(c)||'?')}`, true)).join('')
+        : `<div class="info-empty">Inga ${connNoun(mode)} till oss.</div>`;
     }
 
     // Anslutningar i slutstationen. Ingen egen bytestid: minuterna att byta visas (se connectionStatus i railtimer-info.js)
-    const D=INFO.DEFAULTS;
-    html+=`<div class="info-sec"><span>Anslutningar i ${escapeHtml(endName)}</span></div>`;
+    html+=connSecHtml(`Anslutningar i ${endName}`, mode, m.connectionsHidden);
     html+= m.connections.length
-      ? m.connections.map(c=>infoRow(c.level, roundClock(c.adv), escapeHtml(placesText(c.to)||'?'), connectionSub(c), connectionStatusHtml(c, false))).join('')
-      : `<div class="info-empty">Inga anslutningar ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst enligt tidtabell.</div>`;
+      ? m.connections.map(c=>connRow(c, escapeHtml(connTo(c)||'?'), false)).join('')
+      : `<div class="info-empty">${waitingBuses ? 'Hämtar bussar från Västtrafik…' : `Inga ${connNoun(mode)} ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst enligt tidtabell.`}</div>`;
 
     const basis = m.recoveryObs ? `Trafikverkets tider och egna gångtider (upp till ${m.recoveryObs} körningar per sträcka)` : 'Trafikverkets tider och tidtabellen';
     const notShown=(m.messagesHidden||[]).filter(h=>h.reason!=='inte under resan').length;
-    const transferNote=`Anslutningar: tåg som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. `;
+    const what = mode==='buss' ? 'bussar' : (mode==='bada' ? 'tåg och bussar' : 'tåg');
+    const transferNote=`Anslutningar: ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. ` +
+      (mode!=='tag' ? `Bussarna kommer från Västtrafik (hållplatser inom ${VT ? VT.DEFAULTS.stopRadiusM : 350} m från stationen), tågen från Trafikverket. ` : '');
     html+=`<p class="info-foot">${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Tågklareraren kan flytta möten.` +
       `${infoState.error?` Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).`:''}` +
       ` ${pushEnabled() ? 'Notiser i bakgrunden är på: lämnar du appen bevakas resan och du får en notis om något blir värre.' : 'Vill du få notiser när appen är stängd: ⋮ → Notiser i bakgrunden.'}</p>`;
@@ -3550,6 +3914,30 @@
     if(btn.dataset.info==='utrop-sv' || btn.dataset.info==='utrop-en'){
       infoState.utropLang=btn.dataset.info.slice(6);
       renderInfo();
+      return;
+    }
+    // Valet Tåg | Buss | Båda och om varningarna följer det. Sparas på telefonen.
+    const k=btn.dataset.info;
+    if(k==='conn-tag' || k==='conn-buss' || k==='conn-bada'){
+      const mode=k.slice(5);
+      saveConnSettings({ mode });
+      updateInfo();
+      if(mode!=='tag') refreshBuses(true);
+      return;
+    }
+    if(k==='conn-alerts'){
+      saveConnSettings({ alerts: !connSettings().alerts });
+      updateInfo();
+      return;
+    }
+    if(k==='vt-settings'){ showVtSettings(); return; }
+    if(k==='mark'){
+      if(!state.trainNumber) return;
+      const on=toggleConnMark(btn.dataset.key);
+      updateInfo();
+      const text=on ? `★ Resenärer byter – markerat för tåg ${state.trainNumber}, även nästa gång` : 'Markeringen borttagen';
+      showJourneyMessage(text, false);
+      setTimeout(()=>{ if(els.journeyMsg.textContent===text) els.journeyMsg.style.display='none'; }, 4000);
       return;
     }
     if(btn.dataset.info==='utrop-copy'){
@@ -3890,6 +4278,7 @@
     document.getElementById('statistics').style.display = view==='statistics' ? 'block' : 'none';
     document.getElementById('settings').style.display = view==='settings' ? 'block' : 'none';
     document.getElementById('pushSettings').style.display = view==='pushSettings' ? 'block' : 'none';
+    document.getElementById('vtSettings').style.display = view==='vtSettings' ? 'block' : 'none';
     window.scrollTo(0,0);
     renderAutoStartStatus();
   }
@@ -4012,7 +4401,7 @@
   }
 
   function rememberOverlayReturn(){
-    if(currentView!=='statistics' && currentView!=='settings' && currentView!=='pushSettings') overlayReturnView=currentView;
+    if(currentView!=='statistics' && currentView!=='settings' && currentView!=='pushSettings' && currentView!=='vtSettings') overlayReturnView=currentView;
   }
 
   // Tillbaka till vyn som var öppen – en pågående resa ska alltid gå att komma tillbaka till

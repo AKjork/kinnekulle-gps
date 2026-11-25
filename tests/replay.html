@@ -2310,6 +2310,265 @@ test('info: mötande tågets position, anslutningar längs vägen och färdigt u
   assertEqual(mt.position.side, 'beyond', 'positionen sparas med mötet');
 });
 
+// ── Bussar från Västtrafik, valet Tåg | Buss | Båda och ☆ markerade anslutningar ──
+/* Simulerat Västtrafik (Planera Resa v4) för resan Lidköping → Hällekis: hållplatsen Hällekis station vid Hällekis
+   med bussarna B1 mot Mariestad (6 min efter vår planerade ankomst), B2 mot Götene (20 min), B3 mot Lidköping
+   (längs vår linje) och Västtågen (tåg: kommer från Trafikverket). opts.cors=false: token går inte att hämta
+   från webbläsaren. opts.server: egen server som lägger till token. */
+function fakeVasttrafik(route, opts) {
+  const o = opts || {};
+  const M = 60000;
+  const E = Date.parse(route[route.length - 1].scheduledArrival);
+  const calls = [];
+  let tokens = 0;
+  const resp = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+  const call = (line, mode, t, dir, extra) => Object.assign({
+    serviceJourney: { gid: 'SJ' + line, direction: dir, origin: 'Mariestad Resecentrum', line: { name: 'Buss ' + line, shortName: line, transportMode: mode } },
+    stopPoint: { gid: 'SP1', name: 'Hällekis station', platform: 'A' }, plannedTime: new Date(t).toISOString(), isCancelled: false
+  }, extra || {});
+  const fetch = async (url, init) => {
+    const i = init || {};
+    calls.push({ url, init: i });
+    if (i.mode === 'no-cors') return { ok: false, status: 0, type: 'opaque' };
+    const viaServer = o.server && url.startsWith(o.server);
+    if (url.endsWith('/token')) {
+      if (o.cors === false) throw new TypeError('Failed to fetch');
+      tokens++;
+      return resp(200, { access_token: 'VT' + tokens, expires_in: 3600 });
+    }
+    if (!viaServer && !(i.headers && i.headers.Authorization === 'Bearer VT' + tokens)) return resp(401, {});
+    if (url.includes('/locations/by-coordinates')) {
+      const lat = Number(new URL(url).searchParams.get('latitude'));
+      const near = Math.abs(lat - STATIONS[5][1]) < 0.001;
+      return resp(200, { results: near ? [{ gid: 'G-HLK', name: 'Hällekis station', locationType: 'stoparea', straightLineDistanceInMeters: 80 }] : [] });
+    }
+    if (url.includes('/stop-areas/G-HLK/departures')) return resp(200, { results: [
+      call('B1', 'bus', E + 6 * M, 'Mariestad Resecentrum'),
+      call('B2', 'bus', E + 20 * M, 'Götene Resecentrum', { estimatedTime: new Date(E + 22 * M).toISOString() }),
+      call('B3', 'bus', E + 10 * M, 'Lidköping Resecentrum'),
+      call('VTG', 'train', E + 7 * M, 'Mariestad')
+    ] });
+    if (url.includes('/arrivals')) return resp(200, { results: [] });
+    return resp(404, {});
+  };
+  return { fetch, calls, tokens: () => tokens, boards: () => calls.filter(c => c.url.includes('/stop-areas/')).length };
+}
+// Trafikverket och Västtrafik i samma fetch
+function withVasttrafik(r, opts) {
+  r.vt = fakeVasttrafik(r.rt.state.route, opts);
+  r.w.fetch = (url, init) => String(url).includes('vasttrafik') || (opts && opts.server && String(url).startsWith(opts.server)) ? r.vt.fetch(url, init) : r.trv.fetch(url, init);
+  return r.vt;
+}
+const infoPaneText = r => r.w.document.getElementById('infoPane').textContent;
+const connRows = r => Array.from(r.w.document.querySelectorAll('#infoPane .conn-row')).map(e => e.textContent);
+
+test('buss: utan Västtrafik går bara Tåg att välja, och inget hämtas från Västtrafik', async () => {
+  const r = await midJourneyWithInfo();
+  const fetched = [];
+  const trvFetch = r.trv.fetch;
+  r.w.fetch = (url, init) => { fetched.push(String(url)); return trvFetch(url, init); };
+  r.rt.setInfoTab('info');
+  const d = r.w.document;
+  const btn = k => d.querySelector(`[data-info="conn-${k}"]`);
+  assert(btn('tag') && btn('buss') && btn('bada'), 'valet finns');
+  assertEqual(btn('tag').getAttribute('aria-pressed'), 'true', 'Tåg är valt');
+  assert(btn('buss').disabled && btn('bada').disabled, 'Buss och Båda är gråa');
+  assert(infoPaneText(r).includes('Bussar kräver en nyckel från Västtrafik'), infoPaneText(r));
+  assert(infoPaneText(r).includes('Tryck ☆ på en anslutning som resenärer ska byta till.'), 'förklaringen till ☆');
+  assert(!d.querySelector('.cc-alerts'), 'inget varningsval utan bussar');
+  assert(!infoPaneText(r).includes('bara tåg'), 'rubrikerna som förut');
+  // Även om valet Buss sparats visas tågen och inget hämtas från Västtrafik
+  r.rt.saveConnSettings({ mode: 'buss' });
+  await r.rt.refreshInfo();
+  assertEqual(r.rt.infoModel().connMode, 'tag', 'utan Västtrafik gäller Tåg');
+  assert(!fetched.some(u => u.includes('vasttrafik')), 'inget från Västtrafik');
+  // Länken öppnar inställningarna
+  d.querySelector('[data-info="vt-settings"]').click();
+  assertEqual(d.getElementById('vtSettings').style.display, 'block', 'inställningarna för Västtrafik');
+});
+
+test('buss: Buss visar bussarna i slutstationen och döljer tågen med antal; varningarna följer valet eller gäller alla', async () => {
+  const r = await midJourneyWithInfo();
+  r.w.localStorage.setItem('railtimer_vt_v1', JSON.stringify({ key: 'k', secret: 's', deviceId: 't1' }));
+  const vt = withVasttrafik(r);
+  r.rt.setInfoTab('info');
+  const d = r.w.document;
+  assert(!d.querySelector('[data-info="conn-buss"]').disabled, 'Buss går att välja med nyckel');
+  assert(infoPaneText(r).includes('Anslutningar i Hällekis · bara tåg'), 'rubriken säger valet: ' + infoPaneText(r));
+  const vibBefore = r.vibrations.length;
+  d.querySelector('[data-info="conn-buss"]').click();
+  await realSleep(80);
+  assertEqual(JSON.parse(r.w.localStorage.getItem('railtimer_conn_v1')).mode, 'buss', 'valet sparas');
+  const m = r.rt.infoModel();
+  assertEqual(m.connMode, 'buss', 'Buss');
+  assertEqual(m.connections.map(c => [c.kind, c.ident]), [['buss', 'B1'], ['buss', 'B2']], 'B3 går längs vår linje och Västtåget kommer från Trafikverket');
+  assertEqual(m.connections[0].status, 'missas', 'B1 hinns inte när vi är 6 min sena');
+  assertEqual(m.connections[1].delayMin, 2, 'B2 med Västtrafiks beräknade tid');
+  assertEqual(m.connectionsHidden, { 'tåg': 2, buss: 0 }, 'två tåg dolda');
+  assert(infoPaneText(r).includes('Anslutningar i Hällekis · bara buss · 2 tåg dolda'), infoPaneText(r));
+  const rows = connRows(r);
+  assert(rows.some(t => t.includes('Mariestad Resecentrum') && t.includes('Buss B1') && t.includes('läge A') && t.includes('missas')), rows.join(' | '));
+  assert(!rows.some(t => t.includes('Västtågen')), 'tågen syns inte');
+  assertEqual(vt.tokens(), 1, 'ett token');
+  assert(vt.calls.some(c => c.url.includes('/stop-areas/G-HLK/departures?startDateTime=')), 'avgångarna i Hällekis');
+  assert(JSON.parse(r.w.localStorage.getItem('railtimer_vt_stops_v1')).Hlk.areas[0].gid === 'G-HLK', 'hållplatsen sparas per station');
+  // Panelen, meddelandet och utropet följer valet
+  assert(/· 1 anslutning missas$/.test(d.getElementById('npInfo').textContent), d.getElementById('npInfo').textContent);
+  assert(r.vibrations.length > vibBefore, 'meddelande för bussen');
+  assert(d.getElementById('journeyMsg').textContent.includes('buss B1 Mariestad Resecentrum: missas'), d.getElementById('journeyMsg').textContent);
+  assert(r.rt.spoken().some(t => t === `Anslutningen till bussen mot Mariestad Resecentrum ${formatHm(m.connections[0].adv)} hinns inte.`), r.rt.spoken().join(' | '));
+  assert(d.getElementById('utropText').textContent.includes('Buss B1 mot Mariestad Resecentrum'), d.getElementById('utropText').textContent);
+  // Hämtas inte igen inom två minuter
+  const boards = vt.boards();
+  await r.rt.refreshInfo();
+  assertEqual(vt.boards(), boards, 'bussarna hämtas högst varannan minut');
+  // Varningarna gäller alla: tåget 3051 som missas räknas också
+  d.querySelector('[data-info="conn-alerts"]').click();
+  assertEqual(r.rt.infoModel().connAlerts, false, 'varningarna följer inte valet');
+  assert(/· 2 anslutningar missas$/.test(d.getElementById('npInfo').textContent), d.getElementById('npInfo').textContent);
+  assert(infoPaneText(r).includes('Varningarna och utropet gäller alla anslutningar, även de dolda.'), 'det står');
+  assertEqual(d.querySelector('[data-info="conn-alerts"]').textContent, 'Varningar: alla', 'knappen säger alla');
+  d.querySelector('[data-info="conn-alerts"]').click();
+  // Båda: tåg och bussar i tidsordning
+  d.querySelector('[data-info="conn-bada"]').click();
+  await realSleep(50);
+  const both = r.rt.infoModel().connections;
+  assertEqual(both.map(c => c.kind), ['tåg', 'buss', 'tåg', 'buss'], 'i tidsordning');
+  assert(!infoPaneText(r).includes('dolda'), 'inget dolt');
+  // Tåg igen: bussarna försvinner, rubriken säger bara tåg
+  d.querySelector('[data-info="conn-tag"]').click();
+  await r.rt.refreshInfo();
+  assertEqual(r.rt.infoModel().connections.map(c => c.kind), ['tåg', 'tåg'], 'bara tåg');
+  assertEqual(r.rt.vtState().buses.size, 0, 'bussarna tas bort');
+});
+
+test('buss: Västtrafik stoppar token i webbläsaren – Info säger det, och med egen server fungerar det', async () => {
+  const r = await midJourneyWithInfo();
+  r.w.localStorage.setItem('railtimer_vt_v1', JSON.stringify({ key: 'k', secret: 's' }));
+  r.rt.saveConnSettings({ mode: 'buss' });
+  const server = 'https://railtimer-vt.exempel.workers.dev';
+  withVasttrafik(r, { cors: false, server });
+  await r.rt.refreshBuses(true);
+  r.rt.setInfoTab('info');
+  const hint = r.w.document.querySelector('#infoPane .info-hint.err');
+  assert(hint && hint.textContent.includes('Västtrafik tillåter inte frågan från webbläsaren') && hint.textContent.includes('egen server'), hint ? hint.textContent : infoPaneText(r));
+  assertEqual(r.rt.infoModel().connections.length, 0, 'inga bussar');
+  // Inställningarna: testet säger samma sak
+  r.rt.showVtSettings();
+  const res = await r.rt.saveAndTestVt();
+  assert(!res.ok && r.w.document.getElementById('vtTestResult').textContent.includes('tillåter inte'), r.w.document.getElementById('vtTestResult').textContent);
+  // Egen server
+  r.w.document.getElementById('vtServer').value = server + '/';
+  const ok = await r.rt.saveAndTestVt();
+  assert(ok.ok, 'fungerar via egen server');
+  assert(r.w.document.getElementById('vtTestResult').textContent.startsWith('Fungerar via egen server: 3 bussavgångar från Hällekis station'), r.w.document.getElementById('vtTestResult').textContent);
+  assertEqual(JSON.parse(r.w.localStorage.getItem('railtimer_vt_v1')).server, server, 'adressen sparas utan / på slutet');
+  await r.rt.refreshBuses(true);
+  await realSleep(100); // testet i inställningarna startade redan en hämtning
+  assertEqual(r.rt.infoModel().connections.map(c => c.ident), ['B1', 'B2'], 'bussarna via servern');
+  assert(r.vt.calls.filter(c => c.url.startsWith(server)).every(c => !(c.init.headers && c.init.headers.Authorization)), 'utan token till servern');
+  assert(!r.w.document.querySelector('#infoPane .info-hint.err'), 'felet borta');
+});
+
+test('☆ markerad anslutning: knapp eller missad ger ☎ ring trafikledningen överst, i panelen och uppläst – en gång', async () => {
+  const r = await midJourneyWithInfo(); // 6 min sena till Hällekis: 3051 (5 min efter) missas
+  r.rt.setInfoTab('info');
+  const d = r.w.document;
+  const row = () => Array.from(d.querySelectorAll('#infoPane .conn-row')).find(e => e.textContent.includes('Västtågen 3051'));
+  assert(row() && row().textContent.includes('☆'), 'raden har ☆');
+  assertEqual(r.rt.infoModel().actions.length, 0, 'inget förslag utan markering');
+  const vib = r.vibrations.length;
+  r.rt.clearSpoken();
+  row().click();
+  assert(d.getElementById('journeyMsg').textContent.startsWith('★ Resenärer byter – markerat för tåg 3344'), d.getElementById('journeyMsg').textContent);
+  assert(row().classList.contains('marked') && row().textContent.includes('★'), 'markerad');
+  assert(JSON.parse(r.w.localStorage.getItem('railtimer_conn_marks_v1'))['3344']['ut|Hlk|tåg|3051'], 'sparas för tågnumret');
+  const m = r.rt.infoModel();
+  assertEqual(m.actions.length, 1, 'ett förslag');
+  const wait = m.actions[0].waitMin;
+  assert(wait >= 1 && wait <= 15, 'väntan ' + wait);
+  const act = d.querySelector('#infoPane .info-row.action');
+  assert(act && act.textContent.includes(`Ring trafikledningen: kan 3051 vänta ca ${wait} min?`), act ? act.textContent : infoPaneText(r));
+  assert(act.textContent.includes('Hällekis → Mariestad') && act.textContent.includes('spår vid samma plattform?'), act.textContent);
+  assert(d.querySelector('#infoPane .info-sec').textContent === 'Åtgärd', 'överst, före utropet');
+  assert(d.getElementById('npInfo').textContent.includes('☎ ring trafikledningen'), d.getElementById('npInfo').textContent);
+  assert(r.vibrations.length === vib + 1, 'vibrerar');
+  assert(r.rt.spoken()[0] === `Ring trafikledningen. Kan tåget mot Mariestad vänta cirka ${wait} minuter?`, r.rt.spoken().join(' | '));
+  assert(!infoPaneText(r).includes('Tryck ☆'), 'förklaringen behövs inte längre');
+  await r.rt.refreshInfo();
+  assertEqual(r.vibrations.length, vib + 1, 'meddelas en gång');
+  // Tryck igen tar bort markeringen
+  row().click();
+  assertEqual(r.rt.infoModel().actions.length, 0, 'borttagen');
+  assert(!d.querySelector('#infoPane .info-row.action'), 'inget förslag');
+  assertEqual(r.w.localStorage.getItem('railtimer_conn_marks_v1'), '{}', 'inget sparat');
+  // Markera igen och avsluta: körningen sparar markeringen och att det föreslogs att ringa
+  row().click();
+  r.rt.stopJourney(false, 'test');
+  await realSleep(100);
+  const logs = r.rt.loadLogs();
+  const mk = logs[logs.length - 1].info.marked;
+  assert(mk && mk.length === 1 && mk[0].train === '3051' && mk[0].sig === 'Hlk' && mk[0].suggested === true && mk[0].status === 'missas', JSON.stringify(mk));
+});
+
+// ── Provsidan vasttrafik-koll.html ──
+async function loadVtKoll(setup) {
+  const frame = document.getElementById('app');
+  await new Promise(resolve => { frame.onload = resolve; frame.src = '../vasttrafik-koll.html?test=1&n=' + Date.now(); });
+  let w = frame.contentWindow;
+  w.localStorage.clear();
+  if (setup) setup(w);
+  await new Promise(resolve => { frame.onload = resolve; frame.src = '../vasttrafik-koll.html?test=1&n=' + Date.now(); });
+  w = frame.contentWindow;
+  for (let i = 0; i < 100 && !w.__vtkoll; i++) await realSleep(20);
+  if (!w.__vtkoll) throw new Error('Provsidan startade inte i testläge');
+  return w;
+}
+const VT_LOG = [{ id: 'k1', trainNumber: '3344', startedAt: '2026-11-25T05:00:00Z', stops: STATIONS.map(s => ({ name: s[0], sig: s[3], lat: s[1], lon: s[2] })) }];
+
+test('provsidan för Västtrafik: token, hållplatser och bussar vid resans stationer – utan nyckeln i resultatet', async () => {
+  const w = await loadVtKoll(w => {
+    w.localStorage.setItem('railtimer_vt_v1', JSON.stringify({ key: 'nyckel1', secret: 'hemlig1' }));
+    w.localStorage.setItem('kmon_gps_logs_v1', JSON.stringify(VT_LOG));
+    w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'gh', branch: 'main' }));
+  });
+  const vt = fakeVasttrafik([{ scheduledArrival: new Date().toISOString() }]);
+  w.__vtkoll.setFetchForTest(vt.fetch);
+  assert(w.document.getElementById('setup').textContent.includes('Nyckel och hemlighet finns'), w.document.getElementById('setup').textContent);
+  const res = await w.__vtkoll.run();
+  assert(res.tokenDirect.ok && res.dataDirect.ok, 'token och frågor direkt');
+  assertEqual(res.stations.map(s => s.name), STATIONS.map(s => s[0]), 'resans stationer');
+  const hlk = res.stations.find(s => s.name === 'Hällekis');
+  assertEqual(hlk.areas.map(a => a.name), ['Hällekis station'], 'hållplatsen vid Hällekis');
+  assertEqual(hlk.departures.length, 4, 'avgångarna');
+  const text = w.document.getElementById('result').textContent;
+  assert(text.includes('Token direkt från telefonenfungerar'), text);
+  assert(text.includes('Avgångar närmaste timmen: 3 bussar (1 med Västtrafiks beräknade tid), 1 andra'), text);
+  assert(text.includes('Ingen hållplats inom 350 m från stationen.'), 'stationer utan hållplats');
+  const fake = browserFakeGitHub(w);
+  w.__vtkoll.setGithubFetchForTest(fake.fetch);
+  await w.__vtkoll.save();
+  const saved = Array.from(fake.files.keys()).find(k => k.startsWith('api-koll/vasttrafik-koll_'));
+  assert(saved && /^api-koll\/vasttrafik-koll_\d{4}-\d\d-\d\d_\d{6}\.json$/.test(saved), 'sparad fil: ' + saved);
+  const body = fake.files.get(saved).text;
+  assert(!body.includes('nyckel1') && !body.includes('hemlig1') && !body.includes('VT1'), 'inte nyckel, hemlighet eller token');
+});
+
+test('provsidan för Västtrafik: token stoppas i webbläsaren – sidan säger vad som behövs', async () => {
+  const w = await loadVtKoll(w => {
+    w.localStorage.setItem('railtimer_vt_v1', JSON.stringify({ key: 'k', secret: 's' }));
+  });
+  w.__vtkoll.setFetchForTest(fakeVasttrafik([{ scheduledArrival: new Date().toISOString() }], { cors: false }).fetch);
+  const res = await w.__vtkoll.run();
+  assertEqual(res.tokenDirect.kind, 'blocked', 'stoppat');
+  const text = w.document.getElementById('result').textContent;
+  assert(text.includes('docs/vasttrafik-worker.js') && text.includes('egen liten server'), text);
+  assert(w.document.getElementById('status').textContent.includes('gick inte att fråga'), w.document.getElementById('status').textContent);
+  // Utan inställningar
+  const w2 = await loadVtKoll();
+  assert(w2.document.getElementById('setup').textContent.includes('Västtrafik är inte inställt'), 'säger att det saknas');
+});
+
 // ── Platsminnen och halt (2026-11-25t) ──
 test('platsminne: visas i stationsraden, läses upp när tåget är nära och synkas med GitHub', async () => {
   const fixes = buildJourney();
@@ -3084,6 +3343,31 @@ window.prepareShot = async function (name) {
     await realSleep(100);
     r0.w.document.getElementById('journeyMsg').style.display = 'none';
     r0.rt.setInfoTab('info');
+  } else if (name === 'info-buss') {
+    // Infofliken med Båda, bussar från Västtrafik och en markerad anslutning som ger förslaget att ringa
+    const frame = document.getElementById('app');
+    frame.style.height = '1300px';
+    const r = await midJourneyWithInfo();
+    r.w.localStorage.setItem('railtimer_vt_v1', JSON.stringify({ key: 'k', secret: 's' }));
+    r.rt.saveConnSettings({ mode: 'bada' });
+    r.rt.toggleConnMark('ut|Hlk|tåg|3051');
+    withVasttrafik(r);
+    await r.rt.refreshBuses(true);
+    r.w.document.getElementById('journeyMsg').style.display = 'none';
+    r.rt.setInfoTab('info');
+  } else if (name === 'vasttrafik-installningar') {
+    const r = await midJourneyWithInfo();
+    r.rt.stopJourney(false, 'test');
+    r.rt.showVtSettings();
+  } else if (name === 'vasttrafik-data') {
+    const frame = document.getElementById('app');
+    frame.style.height = '1600px';
+    const w = await loadVtKoll(w => {
+      w.localStorage.setItem('railtimer_vt_v1', JSON.stringify({ key: 'k', secret: 's' }));
+      w.localStorage.setItem('kmon_gps_logs_v1', JSON.stringify(VT_LOG));
+    });
+    w.__vtkoll.setFetchForTest(fakeVasttrafik([{ scheduledArrival: new Date().toISOString() }]).fetch);
+    await w.__vtkoll.run();
   } else if (name === 'info-tur') {
     const r = await midJourneyWithInfo();
     r.rt.saveTour(['3344', '3346']);

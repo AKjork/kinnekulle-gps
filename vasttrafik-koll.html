@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1a1d23">
+<title>RailTimer – Västtrafik-data</title>
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<style>
+  :root{
+    --bg:#1a1d23; --bg-solid:#0d0f12; --ink:#e8eaed; --ink-dim:#9aa0a6; --mut:#6b7280;
+    --pri:#22c55e; --b:#2d3139; --card-bg:#1e2128; --err:#ef4444; --warn:#f59e0b; --blue:#3b82f6;
+  }
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;background:var(--bg-solid);color:var(--ink);line-height:1.45;font-size:15px}
+  header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--b);padding:.6rem .75rem;display:flex;align-items:center;gap:.75rem;z-index:2}
+  header h1{font-size:1.05rem;margin:0;flex:1}
+  header a{color:var(--ink-dim);text-decoration:none;font-size:.9rem}
+  main{padding:.75rem;max-width:960px;margin:0 auto}
+  .intro{color:var(--ink-dim);font-size:.9rem;margin:.25rem 0 .75rem}
+  button{background:var(--pri);color:#04130a;border:0;border-radius:8px;padding:.6rem 1rem;font-size:1rem;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--b);font-weight:500}
+  button:disabled{opacity:.5}
+  .status{font-size:.85rem;color:var(--ink-dim);min-height:1.3em;margin:.25rem 0 .75rem}
+  .status.err{color:var(--err)} .status.ok{color:var(--pri)}
+  section.card{background:var(--card-bg);border:1px solid var(--b);border-radius:10px;padding:.75rem;margin-bottom:.75rem}
+  section.card h2{font-size:1rem;margin:0 0 .4rem}
+  .sub{color:var(--ink-dim);font-size:.85rem;margin:.2rem 0 .5rem}
+  .ok-text{color:var(--pri)} .err-text{color:var(--err)} .warn-text{color:var(--warn)}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{border-collapse:collapse;width:100%;font-size:.82rem;font-variant-numeric:tabular-nums}
+  th,td{text-align:left;padding:.3rem .45rem;border-bottom:1px solid var(--b);vertical-align:top;white-space:nowrap}
+  th{color:var(--ink-dim);font-weight:500}
+  .mut{color:var(--mut)}
+  .actions{display:flex;flex-wrap:wrap;gap:.5rem;margin:.5rem 0 1rem}
+  code{font-size:.85em}
+</style>
+</head>
+<body>
+<header>
+  <a href="./">← Appen</a>
+  <h1>Västtrafik-data</h1>
+</header>
+<main>
+  <p class="intro">Provar Västtrafiks API (Planera Resa v4) från den här telefonen med inställningarna i appen (⋮ → Västtrafik). Sidan visar om token går att hämta direkt, vilka hållplatser som finns vid stationerna och vilka bussar Västtrafik har där nu.</p>
+  <p id="setup" class="sub"></p>
+  <div class="actions">
+    <button id="btnRun" type="button">Kör kontroll</button>
+  </div>
+  <div id="status" class="status" role="status" aria-live="polite"></div>
+  <div id="actions" class="actions" style="display:none">
+    <button id="btnSave" type="button">Spara i railtimer-data</button>
+    <button id="btnDownload" type="button" class="ghost">Ladda ner JSON</button>
+  </div>
+  <div id="result"></div>
+</main>
+<script src="railtimer-github.js"></script>
+<script src="railtimer-vt.js"></script>
+<script>
+(function(){
+  'use strict';
+  const VT = window.RailTimerVt;
+  const GH = window.RailTimerGitHub || null;
+  const TEST_MODE = new URLSearchParams(location.search).has('test');
+  const KEY_LOGS = 'kmon_gps_logs_v1';
+  const KEY_STATIONS = 'kmon_all_stations_v1';
+  const KEY_GITHUB = 'railtimer_github_v1';
+  const KEY_VT = 'railtimer_vt_v1';
+  // Stationer att prova när telefonen inte har några körningar: Kinnekullebanans och Västra stambanans byten
+  const DEFAULT_NAMES = ['Herrljunga C', 'Vara', 'Lidköping', 'Götene', 'Mariestad', 'Skövde C'];
+  const FALLBACK = [{ name: 'Herrljunga C', lat: 58.0796, lon: 13.0258 }];
+  let fetchForTest = null, ghFetchForTest = null;
+  let lastResult = null, lastDownload = null;
+
+  const $ = id => document.getElementById(id);
+  function readJson(key, fallback){
+    try{ const v = JSON.parse(localStorage.getItem(key) || 'null'); return v == null ? fallback : v; }catch(e){ return fallback; }
+  }
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function setStatus(text, cls){ const el = $('status'); el.textContent = text; el.className = 'status' + (cls ? ' ' + cls : ''); }
+  const clock = t => t == null ? '–' : new Date(t).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Stockholm' });
+  const doFetch = (url, init) => (fetchForTest || window.fetch.bind(window))(url, init);
+  function settings(){ return readJson(KEY_VT, null) || {}; }
+
+  // Stationerna att prova: senaste körningens stationer med läge, annars stationslistans byten
+  function stationsToTry(){
+    const logs = readJson(KEY_LOGS, []);
+    const last = (Array.isArray(logs) ? logs : []).filter(l => l && Array.isArray(l.stops))
+      .sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')))[0];
+    const out = [];
+    const add = (name, lat, lon) => { if(name && Number.isFinite(lat) && Number.isFinite(lon) && !out.some(x => x.name === name)) out.push({ name, lat, lon }); };
+    if(last){
+      const stops = last.stops.filter((st, i) => i === 0 || i === last.stops.length - 1 || st.shouldStop !== false);
+      for(const st of stops) add(st.name, Number(st.lat), Number(st.lon));
+    }
+    const cache = readJson(KEY_STATIONS, null);
+    const list = cache && Array.isArray(cache.stations) ? cache.stations : [];
+    for(const n of DEFAULT_NAMES){ const s = list.find(x => x.name === n); if(s) add(s.name, Number(s.lat), Number(s.lon)); }
+    if(!out.length) FALLBACK.forEach(s => add(s.name, s.lat, s.lon));
+    return out.slice(0, 8);
+  }
+
+  function describeSetup(){
+    const s = settings();
+    const server = VT.cleanServer(s.server);
+    if(!VT.configured(s)){ $('setup').innerHTML = '<span class="warn-text">Västtrafik är inte inställt.</span> Lägg in nyckel och hemlighet i appen under ⋮ → Västtrafik (bussar).'; return; }
+    $('setup').textContent = server ? `Egen server: ${server}` + (s.key ? ' (nyckel och hemlighet finns också)' : '') : 'Nyckel och hemlighet finns. Token hämtas direkt från Västtrafik.';
+  }
+
+  async function step(fn){
+    try{ return { ok: true, value: await fn() }; }
+    catch(e){ return { ok: false, kind: e && e.kind || 'okänt', error: VT.errorText(e) }; }
+  }
+
+  async function runCheck(){
+    const s = settings();
+    if(!VT.configured(s)){ setStatus('Ställ in Västtrafik i appen först (⋮ → Västtrafik).', 'err'); return null; }
+    $('btnRun').disabled = true;
+    $('actions').style.display = 'none';
+    setStatus('Frågar Västtrafik …');
+    const online = () => TEST_MODE || navigator.onLine !== false;
+    const result = { checkedAt: new Date().toISOString(), userAgent: navigator.userAgent, viaServer: !!VT.cleanServer(s.server), server: VT.cleanServer(s.server) || null };
+    // 1. Token direkt från telefonen (bara med nyckel och hemlighet)
+    if(s.key && s.secret){
+      const direct = VT.createClient({ fetch: doFetch, settings: { key: s.key, secret: s.secret, deviceId: s.deviceId }, online });
+      const t = await step(async () => { await direct.token(); return true; });
+      result.tokenDirect = t.ok ? { ok: true } : { ok: false, kind: t.kind, error: t.error };
+      if(t.ok){
+        const q = await step(() => direct.stopAreasNear(stationsToTry()[0].lat, stationsToTry()[0].lon));
+        result.dataDirect = q.ok ? { ok: true } : { ok: false, kind: q.kind, error: q.error };
+      }
+    }
+    // 2. Egen server
+    if(result.server){
+      const via = VT.createClient({ fetch: doFetch, settings: { server: result.server }, online });
+      const q = await step(() => via.stopAreasNear(stationsToTry()[0].lat, stationsToTry()[0].lon));
+      result.serverCheck = q.ok ? { ok: true } : { ok: false, kind: q.kind, error: q.error };
+    }
+    // 3. Hållplatser och bussar, med det som appen använder (egen server om den finns)
+    const client = VT.createClient({ fetch: doFetch, settings: s, online });
+    const now = Date.now();
+    result.stations = [];
+    for(const st of stationsToTry()){
+      const row = { name: st.name, lat: st.lat, lon: st.lon };
+      const a = await step(() => client.stopAreasNear(st.lat, st.lon));
+      if(!a.ok){ row.error = a.error; row.kind = a.kind; result.stations.push(row); if(['blocked', 'auth', 'setup', 'network'].includes(a.kind)) break; continue; }
+      row.areas = a.value;
+      if(a.value.length && result.stations.filter(x => x.departures).length < 3){
+        const d = await step(() => client.board('departures', a.value[0].gid, now, 60));
+        const r = await step(() => client.board('arrivals', a.value[0].gid, now, 60));
+        if(d.ok) row.departures = d.value; else row.departuresError = d.error;
+        if(r.ok) row.arrivals = r.value; else row.arrivalsError = r.error;
+      }
+      result.stations.push(row);
+    }
+    lastResult = result;
+    render(result);
+    const works = result.stations.some(x => x.areas);
+    setStatus(works ? 'Klart. Västtrafik svarar från telefonen.' : 'Klart, men Västtrafik gick inte att fråga – se nedan.', works ? 'ok' : 'err');
+    $('actions').style.display = '';
+    $('btnRun').disabled = false;
+    return result;
+  }
+
+  function verdict(x){
+    if(!x) return '<span class="mut">provades inte</span>';
+    return x.ok ? '<span class="ok-text">fungerar</span>' : `<span class="err-text">${escapeHtml(x.error)}</span>`;
+  }
+
+  function render(r){
+    let h = '<section class="card"><h2>Vägen till Västtrafik</h2><div class="scroll"><table><tbody>';
+    if(r.tokenDirect) h += `<tr><td>Token direkt från telefonen</td><td>${verdict(r.tokenDirect)}</td></tr>`;
+    if(r.dataDirect) h += `<tr><td>Frågor direkt från telefonen</td><td>${verdict(r.dataDirect)}</td></tr>`;
+    if(r.server) h += `<tr><td>Egen server</td><td>${verdict(r.serverCheck)}</td></tr>`;
+    h += '</tbody></table></div>';
+    if(r.tokenDirect && !r.tokenDirect.ok && r.tokenDirect.kind === 'blocked'){
+      h += '<p class="sub">Västtrafik tillåter inte att token hämtas från webbläsaren. Appen behöver då en egen liten server som har nyckeln och hemligheten och lägger till token. Den finns färdig i appens repo, <code>docs/vasttrafik-worker.js</code>, och kan köras gratis hos Cloudflare. Lägg sedan in serverns adress i appen under ⋮ → Västtrafik.</p>';
+    }
+    h += '</section>';
+    for(const st of r.stations){
+      h += `<section class="card"><h2>${escapeHtml(st.name)}</h2>`;
+      if(st.error){ h += `<p class="err-text">${escapeHtml(st.error)}</p></section>`; continue; }
+      h += st.areas.length
+        ? `<p class="sub">Hållplatser inom ${VT.DEFAULTS.stopRadiusM} m: ${st.areas.map(a => `${escapeHtml(a.name)} (${a.dist} m)`).join(', ')}</p>`
+        : `<p class="sub">Ingen hållplats inom ${VT.DEFAULTS.stopRadiusM} m från stationen.</p>`;
+      for(const [label, list, err] of [['Avgångar närmaste timmen', st.departures, st.departuresError], ['Ankomster närmaste timmen', st.arrivals, st.arrivalsError]]){
+        if(err){ h += `<p class="err-text">${label}: ${escapeHtml(err)}</p>`; continue; }
+        if(!list) continue;
+        const buses = VT.busesOnly(list);
+        const withEst = buses.filter(c => c.est != null).length;
+        h += `<p class="sub">${label}: ${buses.length} bussar (${withEst} med Västtrafiks beräknade tid), ${list.length - buses.length} andra (tåg, spårvagn …).</p>`;
+        if(buses.length){
+          h += '<div class="scroll"><table><thead><tr><th>Plan</th><th>Beräknad</th><th>Linje</th><th>' + (label.startsWith('Avg') ? 'Mot' : 'Från') + '</th><th>Läge</th><th></th></tr></thead><tbody>';
+          for(const c of buses.slice(0, 10)){
+            h += `<tr><td>${clock(c.planned)}</td><td>${c.est != null ? clock(c.est) : '<span class="mut">–</span>'}</td><td>${escapeHtml(c.line)}</td>` +
+              `<td>${escapeHtml(label.startsWith('Avg') ? c.direction : c.origin)}</td><td>${escapeHtml(c.platform)}</td><td>${c.canceled ? '<span class="err-text">inställd</span>' : ''}</td></tr>`;
+          }
+          h += '</tbody></table></div>';
+        }
+      }
+      h += '</section>';
+    }
+    $('result').innerHTML = h;
+  }
+
+  function resultFileName(){
+    const d = new Date(lastResult.checkedAt);
+    const p = n => String(n).padStart(2, '0');
+    return `vasttrafik-koll_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.json`;
+  }
+  // Resultatet har aldrig nyckel, hemlighet eller token
+  async function saveToGithub(){
+    const s = readJson(KEY_GITHUB, null);
+    const repo = s && GH ? GH.parseRepo(s.repo) : null;
+    if(!lastResult || !repo || !s.token){ setStatus('Ställ in uppladdningen i appen först (⋮ → Uppladdning).', 'err'); return; }
+    $('btnSave').disabled = true;
+    setStatus('Sparar i ' + s.repo + ' …');
+    try{
+      const client = GH.createClient({ owner: repo.owner, repo: repo.repo, token: s.token, branch: s.branch || 'main', fetch: ghFetchForTest || undefined });
+      const path = `api-koll/${resultFileName()}`;
+      await client.putFile(path, JSON.stringify(lastResult, null, 1), `Västtrafik-kontroll ${lastResult.checkedAt.slice(0, 10)}`);
+      setStatus(`Sparat som ${path}.`, 'ok');
+    }catch(e){
+      setStatus('Kunde inte spara: ' + ((e && e.message) || e), 'err');
+    }finally{
+      $('btnSave').disabled = false;
+    }
+  }
+  function download(){
+    if(!lastResult) return;
+    const text = JSON.stringify(lastResult, null, 1);
+    lastDownload = { filename: resultFileName(), text };
+    if(TEST_MODE) return;
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = lastDownload.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function init(){
+    if(!VT){ setStatus('Modulen kunde inte laddas – ladda om sidan.', 'err'); return; }
+    describeSetup();
+    $('btnRun').addEventListener('click', runCheck);
+    $('btnSave').addEventListener('click', saveToGithub);
+    $('btnDownload').addEventListener('click', download);
+    if(TEST_MODE){
+      window.__vtkoll = {
+        setFetchForTest: fn => { fetchForTest = fn; }, setGithubFetchForTest: fn => { ghFetchForTest = fn; },
+        run: runCheck, save: saveToGithub, download, describeSetup,
+        getResult: () => lastResult, getLastDownload: () => lastDownload
+      };
+    }
+  }
+  init();
+})();
+</script>
+</body>
+</html>

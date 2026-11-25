@@ -6,7 +6,8 @@
      sträcka samtidigt möts mellan stationerna, och då är sträckan dubbelspår.
    - prognos per plats längs resan: våra egna tider, uppehåll, annonserad avgångstid, mötena och
      de egna gångtiderna från tidigare körningar (så mycket vi brukar ta igen).
-   - anslutningar i slutstationen och tåg som ansluter till oss i startstationen.
+   - anslutningar i slutstationen och tåg som ansluter till oss i startstationen, även Västtrafiks bussar
+     (input.buses, hämtade med railtimer-vt.js) och valet Tåg | Buss | Båda.
    - avvikelser för vårt tåg (t.ex. Spårändrat) och störningar (OperativeEvent) längs vägen.
    Rena funktioner utan beroenden. Används av index.html och testas med node --test. */
 (function (root, factory) {
@@ -30,6 +31,7 @@
     historyMinObs: 3,         // egna gångtider räknas från så här många mätningar
     maxConnections: 8,
     midConnectionWindowMin: 20, // anslutningar vid stationerna längs vägen: högst så här länge efter vår ankomst
+    holdMaxMin: 15,           // förslaget att ringa trafikledningen: bara när det räcker att vänta högst så här länge
     positionMaxAgeMs: 5 * 60000, // tågpositioner äldre än så används inte
     maxSpeedMs: 200 / 3.6     // inget tåg kör fortare: det mötande tåget kan inte vara framme tidigare än så
   };
@@ -491,7 +493,7 @@
       else if (departed && !arrived) status = 'avgått';
       else status = connectionStatus(transfer, o);
       out.push({
-        otn: tr.otn, ident: tr.ident, product: tr.product, to: tr.to,
+        kind: 'tåg', otn: tr.otn, ident: tr.ident, product: tr.product, to: tr.to,
         adv: dep.adv, dep: theirDep, delayMin: roundMin(theirDep - dep.adv), track: dep.track,
         transferMin: Math.floor(transfer), plannedTransferMin: Math.round(plannedTransfer), status,
         source: departed ? 'faktisk' : (dep.est != null ? 'trafikverket' : 'plan')
@@ -518,7 +520,7 @@
       const theirArr = arrived ? arr.actual : Math.max(arr.est != null ? arr.est : arr.adv, now);
       const transfer = (predDep - theirArr) / MIN;
       out.push({
-        otn: tr.otn, ident: tr.ident, product: tr.product, from: tr.from,
+        kind: 'tåg', otn: tr.otn, ident: tr.ident, product: tr.product, from: tr.from,
         adv: arr.adv, arr: theirArr, delayMin: roundMin(theirArr - arr.adv), track: arr.track,
         transferMin: Math.floor(transfer), arrived,
         status: arr.canceled ? 'inställt' : connectionStatus(transfer, o),
@@ -527,6 +529,107 @@
     }
     out.sort((a, b) => a.adv - b.adv);
     return out.slice(0, o.maxConnections);
+  }
+
+  // ── Bussar (Västtrafik, railtimer-vt.js) ──
+  // Orten i ett namn: "Lidköping Resecentrum" → "lidköping", "Herrljunga C" → "herrljunga", "Skara via Götene" → "skara"
+  function townKey(name) {
+    const s = String(name || '').toLocaleLowerCase('sv').split(/\s+via\s+/)[0];
+    const m = s.match(/[a-zåäöéü]+(?:-[a-zåäöéü]+)*/);
+    return m ? m[0] : '';
+  }
+  /* Orterna längs vår linje utom stationens egen. En buss dit går längs vår linje och är ingen anslutning,
+     som tågen längs linjen. En buss inom stationens egen ort (stadsbuss) räknas. */
+  function lineTownsExcept(line, names, sig) {
+    const here = townKey(names.get(sig));
+    const out = new Set();
+    for (const l of line) {
+      if (l.sig === sig) continue;
+      const k = townKey(names.get(l.sig));
+      if (k && k !== here) out.add(k);
+    }
+    return out;
+  }
+
+  /* Bussar som går från stationen efter vår ankomst: samma fönster och regler som tågen (outgoing).
+     Bussens tid: Västtrafiks beräknade tid, annars tidtabellen. Västtrafik har ingen faktisk tid: en buss vars
+     tid passerat för mer än 30 s sedan räknas som avgången. */
+  function busOutgoing(calls, L, predArr, arrived, towns, now, o) {
+    const out = [];
+    const ourAdv = L.advArr != null ? L.advArr : L.plannedArr;
+    if (ourAdv == null || predArr == null) return out;
+    for (const b of calls || []) {
+      const plannedTransfer = (b.planned - ourAdv) / MIN;
+      if (plannedTransfer < Math.max(o.minPlannedTransferMin, o.transferMin) || plannedTransfer > o.connectionWindowMin) continue;
+      const k = townKey(b.direction);
+      if (k && towns.has(k)) continue;
+      const t = b.est != null ? b.est : b.planned;
+      const departed = t < now - 30000;
+      const theirDep = departed ? t : Math.max(t, now);
+      const transfer = (theirDep - predArr) / MIN;
+      let status;
+      if (b.canceled) status = 'inställt';
+      else if (departed && !arrived) status = 'avgått';
+      else status = connectionStatus(transfer, o);
+      out.push({
+        kind: 'buss', otn: b.id, ident: b.line, product: 'Buss', to: [], toText: b.direction,
+        adv: b.planned, dep: theirDep, delayMin: roundMin(theirDep - b.planned), track: b.platform, stop: b.stop,
+        transferMin: Math.floor(transfer), plannedTransferMin: Math.round(plannedTransfer), status,
+        source: b.est != null ? 'västtrafik' : 'plan'
+      });
+    }
+    out.sort((a, b) => a.adv - b.adv);
+    return out.slice(0, o.maxConnections);
+  }
+  // Bussar som kommer till stationen före vår avgång och ansluter till oss (som incoming)
+  function busIncoming(calls, L, predDep, towns, now, o) {
+    const out = [];
+    const ourAdv = L.advDep != null ? L.advDep : L.plannedDep;
+    if (ourAdv == null || predDep == null) return out;
+    for (const b of calls || []) {
+      const plannedTransfer = (ourAdv - b.planned) / MIN;
+      if (plannedTransfer < Math.max(o.minPlannedTransferMin, o.transferMin) || plannedTransfer > o.incomingWindowMin) continue;
+      const k = townKey(b.origin);
+      if (k && towns.has(k)) continue;
+      const t = b.est != null ? b.est : b.planned;
+      const arrived = t <= now;
+      const theirArr = arrived ? t : Math.max(t, now);
+      const transfer = (predDep - theirArr) / MIN;
+      out.push({
+        kind: 'buss', otn: b.id, ident: b.line, product: 'Buss', from: [], fromText: b.origin,
+        adv: b.planned, arr: theirArr, delayMin: roundMin(theirArr - b.planned), track: b.platform, stop: b.stop,
+        transferMin: Math.floor(transfer), arrived,
+        status: b.canceled ? 'inställt' : connectionStatus(transfer, o),
+        source: b.est != null ? 'västtrafik' : 'plan'
+      });
+    }
+    out.sort((a, b) => a.adv - b.adv);
+    return out.slice(0, o.maxConnections);
+  }
+
+  /* Valet Tåg | Buss | Båda (mode 'tag', 'buss', 'bada'). Ger de som visas och hur många tåg och bussar
+     som döljs. */
+  const CONN_MODES = ['tag', 'buss', 'bada'];
+  function connShows(mode, c) {
+    if (mode === 'bada') return true;
+    return mode === 'buss' ? c.kind === 'buss' : c.kind !== 'buss';
+  }
+  /* Nyckeln för en markerad anslutning (resenärer ska byta), samma varje dag för vårt tågnummer:
+     riktning (ut = från stationen, in = till oss), station och tågets nummer – för en buss linjen och klockslaget. */
+  function connKey(c, sig, dir) {
+    if (c.kind === 'buss') {
+      const d = new Date(c.adv);
+      return `${dir}|${sig}|buss|${c.ident}|${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+    return `${dir}|${sig}|tåg|${c.ident || c.otn}`;
+  }
+  function splitByMode(list, mode) {
+    const shown = [], hidden = { tåg: 0, buss: 0 };
+    for (const c of list || []) {
+      if (connShows(mode, c)) shown.push(c);
+      else hidden[c.kind === 'buss' ? 'buss' : 'tåg']++;
+    }
+    return { shown, hidden };
   }
 
   // ── Störningar (OperativeEvent) ──
@@ -758,11 +861,26 @@
     const messages = cls.shown;
 
     const startDeparted = known[0].dep != null;
-    const conn = outgoing(trains, our, endL, predArr, arrived, lineSigs, now, o);
-    const inc = startDeparted ? [] : incoming(trains, our, line[0], preds[0].dep, lineSigs, now, o);
 
-    // Anslutningar vid stationerna längs vägen där vi stannar och inte har åkt från: tåg som går därifrån åt
-    // ett annat håll högst midConnectionWindowMin efter vår ankomst, och tåg som kommer dit före vår avgång
+    // Bussar (Västtrafik): input.buses = Map(sig → { departures, arrivals }), bara bussar (railtimer-vt.js).
+    // Orterna längs linjen tas från namnen (input.names, annars routeNames).
+    const buses = input.buses || new Map();
+    const names = new Map(routeNames);
+    if (input.names) for (const [k, v] of input.names) if (v) names.set(k, v);
+    const busAt = sig => buses.get(sig) || null;
+    const byAdv = (a, b) => a.adv - b.adv;
+
+    const conn = outgoing(trains, our, endL, predArr, arrived, lineSigs, now, o);
+    const endBus = busAt(endL.sig);
+    if (endBus) conn.push(...busOutgoing(endBus.departures, endL, predArr, arrived, lineTownsExcept(line, names, endL.sig), now, o));
+    conn.sort(byAdv);
+    const inc = startDeparted ? [] : incoming(trains, our, line[0], preds[0].dep, lineSigs, now, o);
+    const startBus = busAt(line[0].sig);
+    if (!startDeparted && startBus) inc.push(...busIncoming(startBus.arrivals, line[0], preds[0].dep, lineTownsExcept(line, names, line[0].sig), now, o));
+    inc.sort(byAdv);
+
+    // Anslutningar vid stationerna längs vägen där vi stannar och inte har åkt från: tåg och bussar som går
+    // därifrån åt ett annat håll högst midConnectionWindowMin efter vår ankomst, och som kommer dit före vår avgång
     const stops = [];
     for (let i = Math.max(frontier, 1); i < n - 1; i++) {
       const L = line[i];
@@ -770,7 +888,15 @@
       const oi = Object.assign({}, o, { connectionWindowMin: o.midConnectionWindowMin, incomingWindowMin: o.midConnectionWindowMin });
       const out = preds[i].arr != null ? outgoing(trains, our, L, preds[i].arr, known[i].arr != null, lineSigs, now, oi) : [];
       const into = preds[i].dep != null ? incoming(trains, our, L, preds[i].dep, lineSigs, now, oi) : [];
-      if (out.length || into.length) stops.push({ i, sig: L.sig, connections: out, incoming: into });
+      const b = busAt(L.sig);
+      if (b) {
+        const towns = lineTownsExcept(line, names, L.sig);
+        if (preds[i].arr != null) out.push(...busOutgoing(b.departures, L, preds[i].arr, known[i].arr != null, towns, now, oi));
+        if (preds[i].dep != null) into.push(...busIncoming(b.arrivals, L, preds[i].dep, towns, now, oi));
+        out.sort(byAdv);
+        into.sort(byAdv);
+      }
+      if (out.length || into.length) stops.push({ i, sig: L.sig, connectionsAll: out, incomingAll: into });
     }
 
     // Nivåer: 0 inget att göra, 1 håll koll, 2 påverkar
@@ -781,26 +907,84 @@
     for (const m of meetings) { m.waitMin = roundMin(m.waitMs); m.level = lvlMeeting(m); }
     for (const c of conn) c.level = lvlConn(c);
     for (const c of inc) c.level = lvlConn(c);
+    for (const st of stops) for (const c of st.connectionsAll.concat(st.incomingAll)) { c.level = lvlConn(c); c.sig = st.sig; }
+
+    /* Valet Tåg | Buss | Båda: listorna visar bara valda slag, och hur många som döljs.
+       Med connAlerts (förval) följer varningarna, siffran, panelens rad och utropet samma val; annars gäller
+       de alla anslutningar som hämtats. */
+    const mode = CONN_MODES.includes(input.connMode) ? input.connMode : 'tag';
+    const alertsFollow = input.connAlerts !== false;
+    const endSplit = splitByMode(conn, mode);
+    const incSplit = splitByMode(inc, mode);
+    const stopsHidden = { tåg: 0, buss: 0 };
+    for (const st of stops) {
+      const a = splitByMode(st.connectionsAll, mode), b = splitByMode(st.incomingAll, mode);
+      st.connections = a.shown;
+      st.incoming = b.shown;
+      st.hidden = { tåg: a.hidden.tåg + b.hidden.tåg, buss: a.hidden.buss + b.hidden.buss };
+      stopsHidden.tåg += st.hidden.tåg;
+      stopsHidden.buss += st.hidden.buss;
+    }
+    const shownStops = stops.filter(st => st.connections.length || st.incoming.length);
+    const alert = alertsFollow
+      ? { connections: endSplit.shown, incoming: incSplit.shown, stops: shownStops }
+      : { connections: conn, incoming: inc, stops: stops.map(st => ({ i: st.i, sig: st.sig, connections: st.connectionsAll, incoming: st.incomingAll })) };
     const midAll = [];
-    for (const st of stops) for (const c of st.connections.concat(st.incoming)) { c.level = lvlConn(c); c.sig = st.sig; midAll.push(c); }
+    for (const st of alert.stops) midAll.push(...st.connections, ...st.incoming);
+
+    /* Markerade anslutningar (input.marked: nycklar från connKey) gäller oavsett valet Tåg | Buss | Båda.
+       Blir en markerad anslutning knapp eller missas, och det räcker att den väntar högst holdMaxMin för att få
+       vanlig bytestid (transferMin), blir det ett förslag: ring trafikledningen och fråga om den kan vänta –
+       eller om vi kan vänta på den som ska till oss – och om spår vid samma plattform. Inte när den gått
+       eller är inställd. */
+    const marked = input.marked instanceof Set ? input.marked : new Set(input.marked || []);
+    const ourTrack = sig => {
+      const l = our.at.get(sig);
+      return (l && ((l.arr && l.arr.track) || (l.dep && l.dep.track))) || '';
+    };
+    const every = [];
+    for (const c of conn) every.push({ c, sig: endL.sig, dir: 'ut' });
+    for (const c of inc) every.push({ c, sig: line[0].sig, dir: 'in' });
+    for (const st of stops) {
+      for (const c of st.connectionsAll) every.push({ c, sig: st.sig, dir: 'ut' });
+      for (const c of st.incomingAll) every.push({ c, sig: st.sig, dir: 'in' });
+    }
+    const actions = [];
+    for (const x of every) {
+      x.c.key = connKey(x.c, x.sig, x.dir);
+      x.c.marked = marked.has(x.c.key);
+      if (!x.c.marked || (x.c.status !== 'knappt' && x.c.status !== 'missas')) continue;
+      const waitMin = o.transferMin - x.c.transferMin;
+      if (waitMin < 1 || waitMin > o.holdMaxMin) continue;
+      actions.push({
+        type: x.dir === 'ut' ? 'hold' : 'wait', sig: x.sig, c: x.c, waitMin,
+        ourTrack: x.sig === endL.sig ? end.track : ourTrack(x.sig), theirTrack: x.c.track || ''
+      });
+    }
+    actions.sort((a, b) => a.c.adv - b.c.adv);
+    const markedList = every.filter(x => x.c.marked).map(x => ({ sig: x.sig, dir: x.dir, c: x.c }));
+
     const endLevel = end.delayMin >= 6 ? 2 : (end.delayMin >= 2 ? 1 : 0);
-    const levels = [endLevel].concat(meetings.map(m => m.level), conn.map(c => c.level), inc.map(c => c.level),
+    const levels = [endLevel].concat(meetings.map(m => m.level), alert.connections.map(c => c.level), alert.incoming.map(c => c.level),
       midAll.map(c => c.level), deviations.map(() => 1), messages.map(() => 1));
-    const attention = meetings.filter(m => m.level).length + conn.filter(c => c.level).length +
-      inc.filter(c => c.level).length + midAll.filter(c => c.level).length + deviations.length + messages.length;
+    const attention = meetings.filter(m => m.level).length + alert.connections.filter(c => c.level).length +
+      alert.incoming.filter(c => c.level).length + midAll.filter(c => c.level).length + deviations.length + messages.length;
 
     // Varför vi blir sena: det möte som kostar mest
     const worstMeeting = meetings.filter(m => m.waitMin >= 1).sort((a, b) => b.waitMs - a.waitMs)[0] || null;
 
     return {
       now, frontier, end, currentDelayMin, recoveryMin, recoveryObs: rec.obs,
-      meetings, deviations, messages, messagesHidden: cls.hidden, connections: conn, incoming: startDeparted ? null : inc, stops,
-      midMissed: stops.reduce((k, st) => k + st.connections.filter(c => c.level === 2).length, 0),
+      meetings, deviations, messages, messagesHidden: cls.hidden,
+      connections: endSplit.shown, connectionsHidden: endSplit.hidden,
+      incoming: startDeparted ? null : incSplit.shown, incomingHidden: incSplit.hidden,
+      stops: shownStops, stopsHidden, connMode: mode, connAlerts: alertsFollow, alert, actions, markedList,
+      midMissed: alert.stops.reduce((k, st) => k + st.connections.filter(c => c.level === 2).length, 0),
       preds: preds.map((p, i) => ({ sig: line[i].sig, arr: p.arr, dep: p.dep, waitMs: p.waitMs })),
       doubleSections: Array.from(newDouble),
       reason: worstMeeting ? { sig: worstMeeting.sig, otn: worstMeeting.ident || worstMeeting.otn, waitMin: worstMeeting.waitMin } : null,
-      missed: conn.filter(c => c.level === 2).length,
-      tight: conn.filter(c => c.level === 1).length,
+      missed: alert.connections.filter(c => c.level === 2).length,
+      tight: alert.connections.filter(c => c.level === 1).length,
       level: Math.max.apply(null, levels),
       attention
     };
@@ -815,13 +999,19 @@
     const name = (opts && opts.name) || (s => s);
     const clock = (opts && opts.clock) || (t => new Date(Math.round(t / MIN) * MIN).toTimeString().slice(0, 5));
     const d = m.end.delayMin || 0;
-    const conns = m.connections || [];
+    const conns = (m.alert && m.alert.connections) || m.connections || [];
     const bad = conns.filter(c => c.status === 'missas' || c.status === 'avgått').slice(0, 3);
     const tight = conns.filter(c => c.status === 'knappt').slice(0, 3);
     const ok = conns.filter(c => c.status === 'ok').slice(0, 2);
     if (d < 3 && !bad.length && !tight.length) return null;
     const endName = name(m.end.sig);
-    const dest = c => (c.to || []).map(name).filter(Boolean).join(' / ') || '?';
+    const dest = c => c.kind === 'buss' ? (c.toText || '?') : ((c.to || []).map(name).filter(Boolean).join(' / ') || '?');
+    // "Tåget mot X 11:45" / "Buss 1 mot X 11:45"; "spår 3" / "läge A"
+    const what = (c, start) => c.kind === 'buss' ? `${start ? 'B' : 'b'}uss${c.ident ? ' ' + c.ident : 'en'} mot ${dest(c)} ${clock(c.adv)}` : `${start ? 'T' : 't'}åget mot ${dest(c)} ${clock(c.adv)}`;
+    const whatEn = c => c.kind === 'buss' ? `${c.ident ? 'bus ' + c.ident : 'the bus'} to ${dest(c)} at ${clock(c.adv)}` : `the train to ${dest(c)} at ${clock(c.adv)}`;
+    const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+    const fromSv = c => c.track ? `, ${c.kind === 'buss' ? 'den går från läge' : 'det går från spår'} ${c.track}` : '';
+    const fromEn = c => c.track ? `, departing from ${c.kind === 'buss' ? 'stop' : 'track'} ${c.track}` : '';
     const meetReason = m.reason && m.reason.waitMin >= 2;
     const msg = !meetReason && m.messages && m.messages[0] ? m.messages[0].header : '';
     const lowerFirst = t => t ? t.charAt(0).toLocaleLowerCase('sv') + t.slice(1) : t;
@@ -834,18 +1024,18 @@
     sv.push(`Beräknad ankomst till ${endName} ${clock(m.end.predArr)}${track}.`);
     en.push(`Expected arrival at ${endName} ${clock(m.end.predArr)}${m.end.track ? `, track ${m.end.track}` : ''}.`);
     for (const c of bad) {
-      sv.push(c.status === 'avgått' ? `Tåget mot ${dest(c)} ${clock(c.adv)} har tyvärr redan gått.` : `Tåget mot ${dest(c)} ${clock(c.adv)} hinns tyvärr inte.`);
-      en.push(c.status === 'avgått' ? `The train to ${dest(c)} at ${clock(c.adv)} has unfortunately already left.` : `The train to ${dest(c)} at ${clock(c.adv)} will unfortunately be missed.`);
+      sv.push(c.status === 'avgått' ? `${what(c, true)} har tyvärr redan gått.` : `${what(c, true)} hinns tyvärr inte.`);
+      en.push(c.status === 'avgått' ? `${cap(whatEn(c))} has unfortunately already left.` : `${cap(whatEn(c))} will unfortunately be missed.`);
     }
     // Knappt: hur många minuter det blir att byta, så att resenärerna själva kan avgöra
     for (const c of tight) {
       const n = Math.max(c.transferMin, 1);
-      sv.push(`Till tåget mot ${dest(c)} ${clock(c.adv)} har ni cirka ${n} minut${n === 1 ? '' : 'er'} att byta${c.track ? `, det går från spår ${c.track}` : ''}.`);
-      en.push(`You will have about ${n} minute${n === 1 ? '' : 's'} to change to the train to ${dest(c)} at ${clock(c.adv)}${c.track ? `, departing from track ${c.track}` : ''}.`);
+      sv.push(`Till ${what(c, false)} har ni cirka ${n} minut${n === 1 ? '' : 'er'} att byta${fromSv(c)}.`);
+      en.push(`You will have about ${n} minute${n === 1 ? '' : 's'} to change to ${whatEn(c)}${fromEn(c)}.`);
     }
     if (d >= 3) for (const c of ok) {
-      sv.push(`Tåget mot ${dest(c)} ${clock(c.adv)} hinner ni${c.track ? `, det går från spår ${c.track}` : ''}.`);
-      en.push(`You will make the train to ${dest(c)} at ${clock(c.adv)}${c.track ? `, departing from track ${c.track}` : ''}.`);
+      sv.push(`${what(c, true)} hinner ni${fromSv(c)}.`);
+      en.push(`You will make ${whatEn(c)}${fromEn(c)}.`);
     }
     return { sv: sv.join(' '), en: en.join(' ') };
   }
@@ -856,6 +1046,29 @@
      (appen i notifyInfo, bevakningen i bakgrunden i bevakning/bevaka.js) meddelar en nyckel en gång per nivå.
      text: kort, för toast och notis. say: för uppläsning (inga tågnummer, "minuter" utskrivet).
      opts: { name: sig → namn, clock: tid → "hh:mm" (avrundat till hel minut) }. */
+  /* Förslaget när en markerad anslutning blir knapp eller missas (compute: actions), kort:
+     title "Ring trafikledningen: kan 3053 vänta ca 3 min?", sub "Hällekis → Mariestad 11:55 · vi spår 2, 3053 spår 3 –
+     samma plattform?" och say för uppläsning. opts som i alerts. */
+  function actionText(a, opts) {
+    const name = (opts && opts.name) || (s => s);
+    const clock = (opts && opts.clock) || (t => new Date(Math.round(t / MIN) * MIN).toTimeString().slice(0, 5));
+    const c = a.c;
+    const to = c.kind === 'buss' ? (c.toText || '?') : ((c.to || []).map(name).join(' / ') || '?');
+    const from = c.kind === 'buss' ? (c.fromText || '?') : ((c.from || []).map(name).join(' / ') || '?');
+    const who = c.kind === 'buss' ? `buss ${c.ident}` : String(c.ident || c.otn);
+    const title = a.type === 'hold' ? `Ring trafikledningen: kan ${who} vänta ca ${a.waitMin} min?` : `Ring trafikledningen: kan vi vänta på ${who} ca ${a.waitMin} min?`;
+    const place = a.type === 'hold' ? `${name(a.sig)} → ${to} ${clock(c.adv)}` : `${name(a.sig)}: från ${from} ${clock(c.adv)}`;
+    let plat = '';
+    if (c.kind !== 'buss') {
+      if (a.ourTrack && a.theirTrack) { if (a.ourTrack !== a.theirTrack) plat = `vi spår ${a.ourTrack}, ${who} spår ${a.theirTrack} – samma plattform?`; }
+      else plat = 'spår vid samma plattform?';
+    }
+    const what = c.kind === 'buss' ? 'bussen' : 'tåget';
+    const mins = `${a.waitMin} minut${a.waitMin === 1 ? '' : 'er'}`;
+    const say = a.type === 'hold' ? `Ring trafikledningen. Kan ${what} mot ${to} vänta cirka ${mins}?` : `Ring trafikledningen. Kan vi vänta på ${what} från ${from} cirka ${mins}?`;
+    return { title, sub: [place, plat].filter(Boolean).join(' · '), say };
+  }
+
   function alerts(m, opts) {
     const out = [];
     if (!m) return out;
@@ -866,24 +1079,33 @@
     const minutes = k => `${k} minut${k === 1 ? '' : 'er'}`;
     const connSay = { knappt: 'blir knapp', missas: 'hinns inte', 'avgått': 'har gått', 'inställt': 'är inställd' };
     const connText = c => c.status === 'knappt' ? `knappt (${Math.max(c.transferMin, 0)} min)` : c.status;
+    // Bussar (Västtrafik) har riktningen som text; tåg Trafikverkets platser
+    const bus = c => c.kind === 'buss';
+    const to = c => bus(c) ? (c.toText || '') : places(c.to);
+    const from = c => bus(c) ? (c.fromText || '') : places(c.from);
+    const toUs = c => c.status === 'knappt' ? 'ger ett knappt byte till oss' : (c.status === 'inställt' ? (bus(c) ? 'är inställd' : 'är inställt') : 'hinner inte till oss');
     const add = (key, level, text, say) => out.push({ key, level, text, say });
+    // Först förslaget att ringa trafikledningen (markerad anslutning som blir knapp eller missas)
+    for (const a of m.actions || []) { const t = actionText(a, opts); add(`a|${a.c.key}`, 2, t.title, t.say); }
     for (const mt of m.meetings || []) if (mt.level) add(`m|${mt.otn}|${mt.sig}`, mt.level,
       `Möte ${name(mt.sig)}: ${mt.ident || mt.otn} är ${mt.theirDelayMin} min sent – vi väntar ca ${mt.waitMin} min`,
       `Möte i ${name(mt.sig)}. Mötande tåg ${minutes(mt.theirDelayMin)} sent. Vi väntar cirka ${minutes(mt.waitMin)}.`);
-    for (const c of m.connections || []) if (c.level) add(`c|${c.otn}`, c.level,
-      `Anslutning ${clock(c.adv)} ${places(c.to)}: ${connText(c)}`,
-      `Anslutningen mot ${places(c.to)} ${clock(c.adv)} ${connSay[c.status] || c.status}.`);
-    for (const c of m.incoming || []) if (c.level) add(`i|${c.otn}`, c.level,
-      `${trainText(c)} från ${places(c.from)}: ${c.status === 'knappt' ? 'knappt byte till oss' : (c.status === 'inställt' ? 'inställt' : 'hinner inte till oss')}`,
-      `Tåget från ${places(c.from)} ${c.status === 'knappt' ? 'ger ett knappt byte till oss' : (c.status === 'inställt' ? 'är inställt' : 'hinner inte till oss')}.`);
-    for (const st of m.stops || []) {
+    // Anslutningarna som varningarna gäller: valda slag (Tåg | Buss | Båda), eller alla om varningarna inte följer valet
+    const A = m.alert || m;
+    for (const c of A.connections || []) if (c.level) add(`c|${c.otn}`, c.level,
+      `Anslutning ${clock(c.adv)} ${bus(c) ? `buss ${c.ident} ` : ''}${to(c)}: ${connText(c)}`,
+      `Anslutningen ${bus(c) ? 'till bussen ' : ''}mot ${to(c)} ${clock(c.adv)} ${connSay[c.status] || c.status}.`);
+    for (const c of A.incoming || []) if (c.level) add(`i|${c.otn}`, c.level,
+      `${trainText(c)} från ${from(c)}: ${c.status === 'knappt' ? 'knappt byte till oss' : (c.status === 'inställt' ? 'inställt' : 'hinner inte till oss')}`,
+      `${bus(c) ? 'Bussen' : 'Tåget'} från ${from(c)} ${toUs(c)}.`);
+    for (const st of A.stops || []) {
       const where = name(st.sig);
       for (const c of st.connections) if (c.level) add(`c|${c.otn}|${st.sig}`, c.level,
-        `Anslutning i ${where} ${clock(c.adv)} ${places(c.to)}: ${connText(c)}`,
-        `Anslutningen i ${where} mot ${places(c.to)} ${connSay[c.status] || c.status}.`);
+        `Anslutning i ${where} ${clock(c.adv)} ${bus(c) ? `buss ${c.ident} ` : ''}${to(c)}: ${connText(c)}`,
+        `Anslutningen i ${where} ${bus(c) ? 'till bussen ' : ''}mot ${to(c)} ${connSay[c.status] || c.status}.`);
       for (const c of st.incoming) if (c.level) add(`i|${c.otn}|${st.sig}`, c.level,
-        `${trainText(c)} från ${places(c.from)} till oss i ${where}: ${c.status === 'knappt' ? 'knappt' : (c.status === 'inställt' ? 'inställt' : 'hinner inte')}`,
-        `Tåget från ${places(c.from)} ${c.status === 'knappt' ? 'ger ett knappt byte till oss' : (c.status === 'inställt' ? 'är inställt' : 'hinner inte till oss')} i ${where}.`);
+        `${trainText(c)} från ${from(c)} till oss i ${where}: ${c.status === 'knappt' ? 'knappt' : (c.status === 'inställt' ? 'inställt' : 'hinner inte')}`,
+        `${bus(c) ? 'Bussen' : 'Tåget'} från ${from(c)} ${toUs(c)} i ${where}.`);
     }
     for (const d of m.deviations || []) add(`d|${d.sig}|${d.text}`, 1, `${name(d.sig)}: ${d.text}`, `${name(d.sig)}: ${d.text}.`);
     for (const msg of m.messages || []) add(`t|${msg.id}`, 1, msg.header, `${msg.header}.`);
@@ -900,9 +1122,10 @@
   }
 
   return {
-    DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, alerts, newAlerts, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
+    DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, alerts, newAlerts, actionText, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
     request, queryOurTrain, queryLine, queryNames, queryMessages, resultOf,
     parseAnnouncement, groupTrains, nearestRun, buildLine, crossingOf, latestDelay, theirArrival,
-    historyMedians, recoveryRatios, plannedRun, predict, outgoing, incoming, signaturesIn, parseMessage, classifyMessages, messagesFor, compute
+    historyMedians, recoveryRatios, plannedRun, predict, outgoing, incoming, signaturesIn, parseMessage, classifyMessages, messagesFor, compute,
+    townKey, lineTownsExcept, busOutgoing, busIncoming, CONN_MODES, connShows, splitByMode, connKey
   };
 });

@@ -21,6 +21,9 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 | `railtimer-avbrott.js`, `railtimer-github.js`, `railtimer-karta.js`, `railtimer-analys.js` | Avbrott, uppladdning, kartans linje längs spåret, analysens beräkningar |
 | `railtimer-trv.js` | Trafikverkets API: frågor, rapporterade tider för en körning, jämförelse, kontrollen |
 | `railtimer-info.js` | Infofliken: möten, enkel- eller dubbelspår, prognos och anslutningar under resan |
+| `railtimer-vt.js` | Västtrafiks API (Planera Resa v4): token, hållplatser vid en station, avgångar och ankomster – bussanslutningar i Info |
+| `vasttrafik-koll.html` | Västtrafik-data: provar Västtrafiks API från telefonen (token, hållplatser, bussar) |
+| `docs/vasttrafik-worker.js` | Egen liten server för Västtrafik (Cloudflare Worker), om Västtrafik inte tillåter token från webbläsaren |
 | `railtimer-push.js` | Notiser i bakgrunden, appens del: prenumeration, VAPID-nyckel, begäran till bevakningen och när den startas och stoppas |
 | `bevakning/bevaka.js`, `bevakning/webpush.js` | Bevakningen i bakgrunden (körs i GitHub Actions i railtimer-data) och webbpush utan beroenden |
 | `api-koll.html` | Trafikverket-data: visar vad API:t svarar och appens tider mot Trafikverkets |
@@ -1347,3 +1350,55 @@ André 2026-11-25: han får inte installera appar på jobbmobilen (Android), bar
 - `node --test "tests/*.test.js"` (190): `tests/bevakning.test.js` (bevakningen med simulerat Trafikverket, webbpush, meddelandena), `tests/railtimer-push.test.js` (nyckel, stöd, begäran, nya försök, när bevakningen startar och stoppas) och `tests/sw-push.test.js` (notis, tyst när appen syns, tryck, begäran med nya försök, ny prenumeration, cachen kvar).
 - `node tests/run-browser-tests.mjs notiser` (3); alla webbläsartester: 116.
 - Bilder: `--shot=notiser` och `--shot=notiser-iphone`.
+
+## Uppdatering (2026-11-25w): bussar från Västtrafik, valet Tåg | Buss | Båda och markerade anslutningar
+
+André 2026-11-25:
+- "Hur är det med Västtrafiks bussar? Jag är bara intresserad av Västtrafiks bussar."
+- "Man kanske skulle bygga in ett val där användaren får välja tåg eller buss eller båda." Om valet även ska gälla varningar och utrop: "Gör det du rekommenderar men gör det också valbart."
+- "Ska man också kunna välja om man har anslutning med ett tåg eller inte? Och om man väljer att man har anslutning med ett tåg och vi är lite sena, då kanske förslag kan komma upp som beskriver ring trafikledningen och kolla om de kan hålla tåget. Kan anslutande tåg tas in på ett spår på samma plattform … Informationen måste vara kort och kompakt."
+
+Appversion `2026-11-25w`.
+
+### Västtrafik (`railtimer-vt.js`)
+- **Planera Resa v4** (`https://ext-api.vasttrafik.se/pr/v4`). Fälten kommer från Västtrafiks officiella JavaScript-klient (spegel: github.com/simonbengtsson/vasttrafik-api, `mirror/docs`).
+  - Token: OAuth2 client credentials, `POST /token` med Basic nyckel:hemlighet (`tokenRequest`, `parseToken`). Sparas i `railtimer_vt_token_v1` till strax före `expires_in`. Svarar Västtrafik 401 på en fråga hämtas ett nytt token en gång.
+  - Hållplatser vid en station: `/locations/by-coordinates?…&radiusInMeters=350&types=stoparea` (`parseStopAreas`), högst 3 närmast stationens koordinat. Sparas per signatur i `railtimer_vt_stops_v1` i 30 dagar, även tomma svar.
+  - Tavlorna: `/stop-areas/{gid}/departures` och `/arrivals` med `startDateTime`, `timeSpanInMinutes`, `max…PerLineAndDirection=10`, `limit=50` (`parseBoard`): linje, `transportMode`, riktning (`direction`), ursprung (`origin`), `plannedTime`, `estimatedTime` (realtid), `isCancelled` och läge (`stopPoint.platform`).
+  - **Bara bussar** (`busesOnly`: `transportMode === 'bus'`). Västtågen tas från Trafikverket, så att inget tåg kommer med två gånger. Samma tur från två hållplatsområden räknas en gång (`uniqueCalls`).
+- **Webbläsaren:** Västtrafiks JavaScript-klient skriver att token inte kan hämtas i webbläsaren. Det är inte provat här, eftersom utvecklingsmiljön inte når ext-api.vasttrafik.se. Därför:
+  - Ett misslyckat anrop klassas (`failure`): når samma adress fram med `mode: 'no-cors'` är det Västtrafiks CORS (`kind: 'blocked'`), annars nätfel. Felet säger då att det behövs en egen server.
+  - **Egen server** (`docs/vasttrafik-worker.js`, Cloudflare Worker): har nyckeln och hemligheten som hemligheter (`VT_KEY`, `VT_SECRET`), hämtar token och skickar `GET /pr/v4/…` vidare. Bara till `https://akjork.github.io` (CORS), bara GET och bara `/pr/v4/`. Med en server inställd går appens alla frågor dit utan token (`createClient`: `server + /pr/v4`). Anvisningen står överst i filen. Testas i `tests/vasttrafik-worker.test.js`.
+- **⋮ → Västtrafik (bussar)** (`#vtSettings`): nyckel, hemlighet och egen server (bara https), sparade i `railtimer_vt_v1` bara på enheten. *Spara och testa* sparar alltid och provar sedan token, hållplatserna vid resans slutstation (annars Herrljunga C) och bussarna därifrån närmaste timmen (`saveAndTestVt`). *Provsidan* öppnar `vasttrafik-koll.html`, men inte under en resa.
+
+### Bussarna i Info (`railtimer-info.js`)
+- `busOutgoing`/`busIncoming`: samma fönster och regler som tågen. I slutstationen 4–40 min efter vår ankomst, längs vägen 4–20 min, och till oss i startstationen 4–30 min före avgång (bara före avgång). Statusen är densamma: *missas* under 1 min, *knappt* under 4 min, annars *ok*, samt *inställt*.
+  - Bussens tid: Västtrafiks beräknade tid, annars tidtabellen. Västtrafik har ingen faktisk tid, så en buss vars tid passerat för mer än 30 s sedan räknas som avgången (*avgått* om vi inte är framme).
+  - **Bussar längs vår linje räknas inte**, som tågen: bussens destination (för bussar till oss ursprunget) jämförs ort mot ort (`townKey`: första ordet, "via" räknas inte) med stationerna på linjen utom stationens egen ort. Stadsbussar inom stationens ort räknas.
+- `input.buses` (Map signatur → `{ departures, arrivals }`) och `input.names` (signatur → namn för linjens platser) till `compute`. Anslutningarna har `kind` `tåg` eller `buss`; bussar har `toText`/`fromText`, `ident` = linjen och `track` = läget.
+- **Hämtning** (`refreshBuses` i index.html): bara när Buss eller Båda är valt och Västtrafik är inställt, högst varannan minut (`VT_REFRESH_MS`) efter Trafikverket. Tavlor behövs för slutstationen (avgångar), startstationen före avgång (ankomster) och stopp längs vägen som vi når inom en timme (`busTargets`). Går ingenting står de senaste bussarna kvar med felet. Ändras valet under en hämtning görs en ny direkt efteråt.
+
+### Valet Tåg | Buss | Båda
+- Överst i anslutningsdelen i Info (`connControlHtml`), sparat i `railtimer_conn_v1` (`{ mode, alerts }`). Förval Tåg. Utan Västtrafik är Buss och Båda gråa, med en länk till inställningarna, och då gäller Tåg även om något annat sparats.
+- Listorna visar valda slag (`splitByMode`). Rubrikerna säger valet och hur många som är dolda, till exempel *Anslutningar i Hällekis · bara buss · 2 tåg dolda*, så att ett glömt val syns (lärdomen från bytestiden, 2026-11-25u).
+- **Varningar: bara valda | alla** (`connAlerts`, förval bara valda): med *bara valda* följer panelens rad, siffran på fliken, meddelandena, uppläsningen och utropet valet. Med *alla* gäller de alla anslutningar som hämtats, och det står under valet. `compute` ger listorna i `alert` (`{ connections, incoming, stops }`), och `alerts()` och `announcement()` använder dem.
+- Utropet säger *Buss 1 mot Skara 11:45 hinns tyvärr inte.* och *… den går från läge A.* Meddelandet säger *Anslutningen till bussen mot Skara 11:45 hinns inte.*
+
+### ☆ Markerade anslutningar och förslaget att ringa trafikledningen
+- Varje anslutning i Info har ☆. Ett tryck markerar (★) att resenärer ska byta till den, ett nytt tryck tar bort markeringen. Markeringen sparas per vårt tågnummer (`railtimer_conn_marks_v1`), så den gäller även nästa gång samma tåg körs. Nyckeln (`connKey`): riktning (`ut` från stationen, `in` till oss), station och tågnummer, för bussar linje och klockslag.
+- Markerade anslutningar gäller oavsett valet Tåg | Buss | Båda. Blir en markerad anslutning *knapp* eller *missas*, och det räcker att den väntar högst 15 min (`holdMaxMin`) för vanlig bytestid (4 min), blir det ett förslag (`actions`, `actionText`):
+  - *☎ Ring trafikledningen: kan 3051 vänta ca 5 min?* och under: *Hällekis → Mariestad 05:32 · vi spår 2, 3051 spår 3 – samma plattform?* (bara *spår vid samma plattform?* när spåren är okända, inget när de är samma, inget för bussar).
+  - Till oss: *Ring trafikledningen: kan vi vänta på 3337 ca 2 min?*
+  - Inte när den gått eller är inställd.
+- Förslaget visas överst i Info (avsnittet *Åtgärd*, högst två), i panelens rad (*☎ ring trafikledningen*) och meddelas först, med uppläsning: *Ring trafikledningen. Kan tåget mot Mariestad vänta cirka 5 minuter?* En gång per anslutning.
+- Förklaringen *Tryck ☆ på en anslutning som resenärer ska byta till.* visas bara tills något markerats.
+- **Körningen** sparar de markerade (`info.marked`, se `docs/railtimer-data-README.md`), med `suggested` när förslaget kom.
+
+### Inte provat
+- Allt mot det riktiga Västtrafik: token från webbläsaren, CORS för frågorna, `limit=50`, att `startDateTime` bakåt i tiden ger bussar som redan gått, och vilka hållplatsområden som ligger inom 350 m från stationerna. Kör provsidan (⋮ → Västtrafik → Provsidan → Kör kontroll → Spara i railtimer-data) och kontrollera.
+- Bevakningen i bakgrunden (2026-11-25v) räknar utan bussar och utan markeringarna, eftersom de finns på telefonen. Den använder samma `alerts()`, så tågen meddelas som förut.
+
+### Tester
+- `node --test "tests/*.test.js"`, nya: `tests/railtimer-vt.test.js` (token, frågorna, hållplatser, tavlan, klienten med utgånget token, CORS och egen server), `tests/vasttrafik-worker.test.js`, och i `tests/railtimer-info.test.js` *bussar: …* och *markerade anslutningar: …*.
+- `node tests/run-browser-tests.mjs`, nya: *buss: utan Västtrafik …*, *buss: Buss visar bussarna …*, *buss: Västtrafik stoppar token …*, *☆ markerad anslutning: …* och *provsidan för Västtrafik: …* (2). Simulerat Västtrafik: `fakeVasttrafik` i `tests/replay.html`.
+- Bilder: `--shot=info-buss`, `--shot=vasttrafik-installningar` och `--shot=vasttrafik-data`.
