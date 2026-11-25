@@ -939,7 +939,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25za'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25zb'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1120,7 +1120,7 @@
       loadAllStations, stationNames: () => allStationsCache.map(s => s.name), checkForInterruptedJourney,
       removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog,
       setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; },
-      refreshInfo, updateInfo, setInfoTab, infoModel: () => infoState.model,
+      refreshInfo, updateInfo, setInfoTab, startInfo, infoModel: () => infoState.model,
       purpose, setPurpose, loadInfoTrips, tourRuns,
       refreshBuses, connSettings, saveConnSettings, markedConnections, toggleConnMark, infoLogEntry, showVtSettings, showVtStatus, saveAndTestVt, removeVtSettings, busTargets, vtState: () => ({ buses: infoState.buses, error: infoState.vtError, at: infoState.vtFetchedAt }),
       applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
@@ -3123,7 +3123,8 @@
   // Hämtar vårt tåg och alla tåg på resten av linjen från Trafikverket varje minut: möten med sena tåg,
   // prognos till slutstationen, anslutningar där, avvikelser och störningar (OperativeEvent). Kräver tågnummer.
   const INFO = window.RailTimerInfo || null;
-  const STORAGE_KEY_INFO = 'railtimer_info_v1';           // { double: ['Vdm|Vr', …] } (sträckor med dubbelspår)
+  const STORAGE_KEY_INFO = 'railtimer_info_v1';           // { double: ['Vdm|Vr', …] (sträckor med dubbelspår), meet: ['Vr', …] (mötesplatser) }
+  const STORAGE_KEY_INFO_LOG = 'railtimer_info_log_v1';   // pågående resans möten, händelser, markeringar och logg över Trafikverkets svar
   const STORAGE_KEY_SIG_NAMES = 'railtimer_sig_names_v1'; // namn på driftplatser som inte finns i stationslistan
   const INFO_REFRESH_MS = 60000;
   const INFO_MESSAGES_MS = 10*60000;  // störningar (hela landet i ett svar)
@@ -3154,8 +3155,8 @@
   function loadInfoSettings(){
     try{
       const s=JSON.parse(localStorage.getItem(STORAGE_KEY_INFO)||'{}')||{};
-      return { double: Array.isArray(s.double) ? s.double : [] };
-    }catch(e){ return { double:[] }; }
+      return { double: Array.isArray(s.double) ? s.double : [], meet: Array.isArray(s.meet) ? s.meet : [] };
+    }catch(e){ return { double:[], meet:[] }; }
   }
   function saveInfoSettings(s){
     try{ localStorage.setItem(STORAGE_KEY_INFO, JSON.stringify(s)); }catch(e){ console.warn('Kunde inte spara infoinställningarna', e); }
@@ -3167,6 +3168,16 @@
     const set=new Set(s.double);
     keys.forEach(k=>set.add(k));
     s.double=Array.from(set).slice(-300);
+    saveInfoSettings(s);
+  }
+  // Mötesplatser (där tåg enligt tidtabell står samtidigt) sparas på samma sätt, så att ett möte kan flyttas dit
+  // även när inga andra tåg möts där i dag
+  function rememberMeetPlaces(sigs){
+    if(!sigs || !sigs.length) return;
+    const s=loadInfoSettings();
+    const set=new Set(s.meet);
+    sigs.forEach(k=>set.add(k));
+    s.meet=Array.from(set).slice(-300);
     saveInfoSettings(s);
   }
 
@@ -3285,10 +3296,11 @@
   function startInfo(){
     stopInfo();
     Object.assign(infoState, { our:null, ourKey:null, line:null, trains:null, fetchedAt:null, error:null, messages:[], messagesAt:0,
-      model:null, lastHtml:'', notified:new Map(), meetLog:new Map(), eventLog:new Map(), safeFields:false,
+      model:null, lastHtml:'', notified:new Map(), meetLog:new Map(), eventLog:new Map(), markLog:new Map(), meetKeys:new Set(), trvLog:null, safeFields:false,
       positions:new Map(), positionsOff:false, utropLang:infoState.utropLang||'sv',
       buses:new Map(), vtAt:0, vtFetchedAt:null, vtError:null, vtBusy:false });
     infoState.history = INFO ? INFO.historyMedians(allRuns()) : null; // även körningar hämtade från GitHub
+    restoreInfoLog(); // samma resa efter omladdning: mötena och loggen hittills
     setInfoTab('stations');
     renderInfo();
     // I testläge hämtar testerna själva (refreshInfo), utan nätet
@@ -3335,6 +3347,7 @@
       infoState.trains=trains;
       infoState.fetchedAt=now;
       infoState.error=null;
+      infoState.trvPending=true;
     }catch(e){
       infoState.error = String(e && e.message || e);
       console.warn('Infofliken: kunde inte hämta från Trafikverket', e);
@@ -3350,6 +3363,7 @@
       await fetchMissingNames(sigs, lineSigs);
     }
     updateInfo();
+    if(infoState.trvPending){ infoState.trvPending=false; logTrvTrains(now); }
     await refreshPositions();
     await refreshBuses();
     if(infoState.line && now-infoState.messagesAt>=INFO_MESSAGES_MS) refreshTrainMessages(now);
@@ -3367,6 +3381,7 @@
       if(r.error) throw infoError('api', r.error);
       infoState.positions=INFO.parsePositions(r.list);
       updateInfo();
+      logTrvPositions(Date.now());
     }catch(e){
       if(e.kind==='api' || e.kind==='http'){ infoState.positionsOff=true; console.warn('Tågpositioner: Trafikverket godtog inte frågan', e.message); }
       else console.warn('Tågpositioner kunde inte hämtas', e);
@@ -3650,7 +3665,7 @@
         const ourPos = lp && state.lastFixTime && Date.now()-state.lastFixTime<60000 ? { lat:lp.coords.latitude, lon:lp.coords.longitude } : null;
         model=INFO.compute({
           line:infoState.line, trains:infoState.trains, ourKey:infoState.ourKey, known, now:Date.now(),
-          knownDouble:loadInfoSettings().double,
+          knownDouble:loadInfoSettings().double, knownMeetPlaces:loadInfoSettings().meet,
           history:infoState.history, routeNames, messages:infoState.messages,
           positions:infoState.positions, coords:lineCoords(), ourPos,
           buses:infoState.buses, names:lineNames(), connMode:connSettings().mode, connAlerts:connSettings().alerts,
@@ -3662,7 +3677,9 @@
       }
       if(model){
         rememberDouble(model.doubleSections);
+        rememberMeetPlaces(model.meetPlaces);
         recordMeetings(model);
+        if(infoState.trvLog) INFO.trvLogModel(infoState.trvLog, model, Date.now());
         recordEvents(model);
         recordMarks(model);
       }
@@ -3672,14 +3689,20 @@
     if(model) notifyInfo(model);
   }
 
-  // Mötena sparas i körningen (senaste läget innan vi åkte från mötesstationen)
+  /* Mötena sparas i körningen (senaste läget innan vi åkte från mötesstationen). sig är tidtabellens mötesplats;
+     at där mötet blev enligt appen, och move om det flyttats: 'rapporterat' (det mötande tåget rapporterat förbi
+     mötesplatsen) eller 'beräknat' (förutsett när vi är sena). Tågen loggas också i infoState.trvLog. */
   function recordMeetings(model){
+    if(!infoState.meetKeys) infoState.meetKeys=new Set();
     for(const m of model.meetings){
+      if(m.trainKey) infoState.meetKeys.add(m.trainKey);
       infoState.meetLog.set(`${m.otn}|${m.sig}`, {
         sig:m.sig, name:sigName(m.sig), train:m.ident||m.otn,
         theirPlanned:new Date(m.their.planned).toISOString(),
         theirDelayMin:m.theirDelayMin, theirSource:m.their.source,
         waitMin:m.waitMin, single:m.single, canceled:m.canceled, moved:m.moved,
+        ...(m.at && m.at!==m.sig ? { at:m.at, atName:sigName(m.at) } : {}),
+        ...(m.move ? { move:m.move } : {}), ...(m.onLine ? { onLine:true } : {}),
         ...(m.position ? { position:{ distM:m.position.distM, side:m.position.side, ageS:m.position.ageS, speedKmh:m.position.speedKmh } } : {})
       });
     }
@@ -3715,8 +3738,50 @@
   function infoLogEntry(){
     const events=infoState.eventLog ? Array.from(infoState.eventLog.values()) : [];
     const marked=infoState.markLog ? Array.from(infoState.markLog.values()) : [];
-    if(!infoState.meetLog.size && !events.length && !marked.length) return null;
-    return { meetings:Array.from(infoState.meetLog.values()), ...(events.length ? { events } : {}), ...(marked.length ? { marked } : {}) };
+    const trv=INFO ? INFO.trvLogOut(infoState.trvLog) : null;
+    if(!infoState.meetLog.size && !events.length && !marked.length && !trv) return null;
+    return { meetings:Array.from(infoState.meetLog.values()), ...(events.length ? { events } : {}), ...(marked.length ? { marked } : {}), ...(trv ? { trv } : {}) };
+  }
+
+  /* Loggen över Trafikverkets svar (railtimer-info.js: trvLog…) för vårt tåg och de mötande tågen, efter varje
+     hämtning. Allt som ska med i körningen (möten, händelser, markeringar, loggen) sparas per resa i
+     railtimer_info_log_v1, så att det finns kvar om appen laddas om mitt i resan (till exempel ny version). */
+  function logTrvTrains(now){
+    if(!INFO || !infoState.line || !infoState.trains) return;
+    if(!infoState.trvLog) infoState.trvLog=INFO.trvLogNew(state.startedAt ? new Date(state.startedAt).getTime() : now, infoState.line.map(l=>l.sig));
+    const keys=new Set([infoState.ourKey].concat(Array.from(infoState.meetKeys||[])));
+    INFO.trvLogTrains(infoState.trvLog, infoState.trains, keys, now);
+    saveInfoLog();
+  }
+  function logTrvPositions(now){
+    if(!INFO || !infoState.trvLog || !infoState.positions || !infoState.model) return;
+    const otns=infoState.model.meetings.filter(m=>!m.canceled).map(m=>m.otn);
+    INFO.trvLogPositions(infoState.trvLog, infoState.positions, otns, now);
+    saveInfoLog();
+  }
+  function saveInfoLog(){
+    if(!state.running || state.purpose==='info' || !state.journeyId) return;
+    const mapOut=m=>m ? Array.from(m.entries()) : [];
+    try{
+      localStorage.setItem(STORAGE_KEY_INFO_LOG, JSON.stringify({ journeyId:String(state.journeyId),
+        meetLog:mapOut(infoState.meetLog), eventLog:mapOut(infoState.eventLog), markLog:mapOut(infoState.markLog),
+        meetKeys:Array.from(infoState.meetKeys||[]), trvLog:infoState.trvLog||null }));
+    }catch(e){ console.warn('Kunde inte spara infons logg', e); }
+  }
+  function restoreInfoLog(){
+    try{
+      const s=JSON.parse(localStorage.getItem(STORAGE_KEY_INFO_LOG)||'null');
+      if(!s || String(s.journeyId)!==String(state.journeyId)) return false;
+      infoState.meetLog=new Map(s.meetLog||[]);
+      infoState.eventLog=new Map(s.eventLog||[]);
+      infoState.markLog=new Map(s.markLog||[]);
+      infoState.meetKeys=new Set(s.meetKeys||[]);
+      infoState.trvLog=s.trvLog && Array.isArray(s.trvLog.rows) ? s.trvLog : null;
+      return true;
+    }catch(e){ return false; }
+  }
+  function clearInfoLog(){
+    try{ localStorage.removeItem(STORAGE_KEY_INFO_LOG); }catch(e){}
   }
 
   // ── Text och utseende ──
@@ -3785,20 +3850,30 @@
     return `${formatDistance(p.distM)} från ${place}${speed} · ${age}`;
   }
 
+  /* Ett möte. m.sig är tidtabellens mötesplats, m.at där mötet blir: flyttat närmare oss när det mötande tåget
+     rapporterats förbi mötesplatsen (move 'rapporterat') eller troligen när vi är sena ('beräknat'). */
   function meetingRow(m, line){
-    const L=line[m.i];
+    const atI=m.atI!=null ? m.atI : m.i;
+    const at=m.at || m.sig;
+    const L=line[atI];
     const planned=L.advDep!=null ? L.advDep : L.plannedDep;
+    const train=m.ident||m.otn;
     const their = m.canceled ? 'inställt' : (m.theirDelayMin>0 ? `${m.theirDelayMin} min sent` : 'i tid');
+    let moved='';
+    if(m.onLine) moved=`möts på dubbelspåret efter ${sigName(at)} (enligt plan i ${sigName(m.sig)})`;
+    else if(at!==m.sig) moved = m.move==='rapporterat' ? `flyttat hit från ${sigName(m.sig)} – ${train} har passerat ${sigName(m.sig)}`
+      : `troligen hit i stället för ${sigName(m.sig)} – ${train} hinner först till enkelspåret`;
+    else if(m.moved) moved='mötet flyttat närmare oss';
     const sub=[
-      `${escapeHtml(m.ident||m.otn)} ${their}${m.canceled?'':' ('+sourceText(m.their.source)+')'}`,
-      m.position ? escapeHtml(positionText(m.position, sigName(m.sig))) : '',
+      `${escapeHtml(train)} ${their}${m.canceled?'':' ('+sourceText(m.their.source)+')'}`,
+      escapeHtml(moved),
+      m.position ? escapeHtml(positionText(m.position, sigName(at))) : '',
       m.single ? 'enkelspår' : 'dubbelspår',
-      m.moved ? 'mötet flyttat närmare oss' : '',
       m.waitMin>=1 ? `vi avgår ca ${roundClock(m.ourDep)}` : ''
     ].filter(Boolean).join(' · ');
     const status = m.waitMin>=1 ? `<span class="${m.waitMin>=5?'dl-very-late':'dl-late'}">+${m.waitMin} min</span><small>väntan</small>`
       : '<span class="dl-live">ingen väntan</span>';
-    return infoRow(m.level, roundClock(planned), `${escapeHtml(sigName(m.sig))} · möte ${escapeHtml(m.ident||m.otn)}`, sub, status);
+    return infoRow(m.level, roundClock(planned), `${escapeHtml(sigName(at))} · möte ${escapeHtml(train)}`, sub, status);
   }
 
   function connectionStatusHtml(c, incoming){
@@ -3900,7 +3975,7 @@
     // Längs vägen: möten, avvikelser för vårt tåg och störningar, i ordning längs linjen
     const idxOf=new Map(line.map((l,i)=>[l.sig,i]));
     const rows=[];
-    for(const mt of m.meetings) rows.push({ i:mt.i, html:meetingRow(mt, line) });
+    for(const mt of m.meetings) rows.push({ i:mt.atI!=null ? mt.atI : mt.i, html:meetingRow(mt, line) });
     for(const d of m.deviations){
       const L=line[d.i];
       const t = d.kind==='arr' ? (L.advArr!=null?L.advArr:L.plannedArr) : (L.advDep!=null?L.advDep:L.plannedDep);
@@ -3954,7 +4029,7 @@
     const what = mode==='buss' ? 'bussar' : (mode==='bada' ? 'tåg och bussar' : 'tåg');
     const transferNote=`Anslutningar: ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. ` +
       (mode!=='tag' ? `Bussarna kommer från Västtrafik (hållplatser inom ${VT ? VT.DEFAULTS.stopRadiusM : 350} m från stationen), tågen från Trafikverket. ` : '');
-    html+=`<p class="info-foot">${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Tågklareraren kan flytta möten.` +
+    html+=`<p class="info-foot">${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Är vi sena räknar appen med att tågklareraren flyttar mötet närmare oss när det ger minst väntan sammanlagt (troligen), till en plats där tåg enligt tidtabell kan mötas. Är det mötande tåget sent räknas med mötet enligt tidtabell.` +
       `${infoState.error?` Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).`:''}</p>`;
     return html;
   }
@@ -6794,6 +6869,7 @@
     try{
       localStorage.removeItem(STORAGE_KEY_ACTIVE_JOURNEY);
     }catch(e){}
+    clearInfoLog(); // körningen tar infon ur minnet (saveLog); den sparade kopian behövs bara för Återuppta
   }
 
   function checkForInterruptedJourney(){

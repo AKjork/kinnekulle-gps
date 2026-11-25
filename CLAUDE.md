@@ -886,7 +886,7 @@ Dataunderlag (`railtimer-data`, 214 körningar): uppehåll över 2 min vid mella
 - **Frågorna** har svensk tid oavsett telefonens tidszon (`localIso`, som `swedishLocal` i `railtimer-trv.js`). **Skydd:** godtar Trafikverket inte frågan med alla fält (felsvar, inte tidsgräns eller nätfel) frågas igen utan `LocationDateTimeOTN` och `PlannedEstimatedTimeAtLocation` (`SAFE_ANNOUNCEMENT_FIELDS`, `infoAnnouncements`), som `fetchTimetable` gör sedan 2026-11-25g, och resten av resan frågas utan dem. Driftstiden blir då den annonserade tiden.
 - **Möten** (`crossingOf`): ett motgående tåg (tiden minskar längs vår linje) möter oss vid plats *i* om båda är där samtidigt enligt tidtabell: vi lämnar inte platsen innan de kommit och de har inte lämnat den innan vi kommer. Är de enligt tidtabell på samma sträcka samtidigt minst 1 min möts de mellan stationerna, och då är sträckan **dubbelspår**. Sådana sträckor sparas (`railtimer_info_v1.double`) och gäller även nästa resa. Övriga sträckor räknas som enkelspår.
 - **Det mötande tågets ankomst** (`theirArrival`): faktisk tid, annars Trafikverkets beräknade tid (`EstimatedTimeAtLocation`, eller planerad försening), annars senast rapporterade försening framräknad (`latestDelay`), annars tidtabellen – aldrig före nu om tåget inte kommit.
-- **Vi väntar** på enkelspår till det mötande tåget kommit in + 1 min (`meetMarginMs`). Inget beroende om mötet är på dubbelspår, om det mötande tåget är inställt, eller om det redan passerat mötesplatsen mot oss (*mötet flyttat närmare oss*). Möten vi passerat visas inte.
+- **Vi väntar** på enkelspår till det mötande tåget kommit in + 1 min (`meetMarginMs`). Inget beroende om mötet är på dubbelspår, om det mötande tåget är inställt, eller om det redan passerat mötesplatsen mot oss (*mötet flyttat närmare oss*). Möten vi passerat visas inte. *Sedan 2026-11-25zb väntar vi i stället på den plats dit mötet flyttats.*
 - **Prognos** (`predict`): från senaste plats vi har en tid för (appens egna tider före Trafikverkets) framåt: planerad gångtid × faktor, minst 30 s uppehåll vid annonserade stopp, inte före annonserad avgång, och mötena. Platser vi inte nått ligger aldrig före nu.
 - **Egna gångtider** (`historyMedians`, `recoveryRatios`): median för verklig gångtid mellan stationsparen ur telefonens körningar (minst 3). Faktorn är median/planerad, högst 1 och minst 0,85, så de visar hur mycket vi brukar ta igen men gör oss aldrig senare. *Tar igen ca N min* jämför med prognosen utan dem.
 - **Anslutningar i slutstationen** (`outgoing`): annonserade avgångar minst bytestiden och högst 40 min efter vår annonserade ankomst. Tåg som går längs vår linje (har tider på andra platser på linjen, eller destination där) räknas inte. Deras avgång: faktisk, beräknad (aldrig före nu) eller tidtabellen. Status: *ok* (byte ≥ bytestid + 2 min), *knappt*, *missas*, *avgått* (gått innan vi är framme) eller *inställt*. *Ingen egen bytestid sedan 2026-11-25u: missas under 1 min, knappt under 4 min.*
@@ -913,7 +913,7 @@ Dataunderlag (`railtimer-data`, 214 körningar): uppehåll över 2 min vid mella
 ### Inte provat
 - Möten och anslutningar mot riktiga svar med flera tåg: utvecklingsmiljön når inte Trafikverkets API, och kontrollsidan hämtar bara förarens tåg.
 - `OperativeEvent` har inget sparat svar än; tolkningen följer kontrollsidan. Går frågan inte visas fliken utan störningar.
-- Tågklareraren kan flytta möten. Prognosen räknar med mötet enligt tidtabell tills det mötande tåget passerat mötesplatsen.
+- Tågklareraren kan flytta möten. Prognosen räknar med mötet enligt tidtabell tills det mötande tåget passerat mötesplatsen. *Ändrat 2026-11-25zb: flyttade möten räknas och förutses.*
 
 ### Tester
 - `node --test "tests/*.test.js"` (149), nya i `tests/railtimer-info.test.js` (21): linjen, körningen, möte, väntan med sent tåg, Trafikverkets beräknade tid, dubbelspår (även sparat), inställt och flyttat möte, passerat möte, prognos aldrig före nu, egna gångtider, anslutningar (ok, knappt, missas, avgått, tillbaka längs linjen, bytestid), tåg som ansluter till oss, avvikelser, störningar (OperativeEvent), frågorna (även utan de oprovade fälten) och annonserad tid när tågorderns saknas.
@@ -1513,3 +1513,62 @@ Appversion `2026-11-25za` (bokstäverna tog slut vid z; därefter za, zb …).
 - `node tests/run-browser-tests.mjs` (122), nya: *buss: utan inställningar används den gemensamma nyckeln …* och *buss: saknas den gemensamma nyckeln …*. Provsidans två tester provar även den gemensamma. Simulerat: `vt-token.json` i `fakeVasttrafik` (`opts.shared`).
 - Testet *tidtabell: hela vägen …* godtar versioner med två bokstäver (`[a-z]{0,2}`).
 - Bilder: `--shot=vasttrafik-installningar` och `--shot=vasttrafik-data` (utan egen nyckel).
+
+## Uppdatering (2026-11-25zb): flyttade möten och loggen över Trafikverkets svar
+
+André 2026-11-25: räknas den beräknade ankomsttiden på var man är, avstånd och fart, eller på Trafikverkets annonserade tid? "Om man är sen, då kan till exempel ett tågmöte flyttas så att man blir ännu mer sen." "Den datan kanske man kan få ut av Trafikverket på något sätt. Och läsa av om möten flyttas." "Gör det du rekommenderar." Appversion `2026-11-25zb` (bokstäverna a–z och za var använda för dagen).
+
+### Förut
+- Prognosen räknade med mötet enligt tidtabell. När det mötande tåget rapporterats på en plats närmare oss än mötesplatsen (`moved`) togs väntan bort helt. Prognosen blev alltså för tidig just när vi var sena och mötet flyttades mot oss.
+- Trafikverkets beräknade tid för vårt tåg visas bara bredvid prognosen. För de mötande tågen används den.
+- Trafikverkets öppna API har ingen mötesplan. Det som går att läsa av är det mötande tågets rapporter, beräknade tider och position.
+
+### Mötesplatser (`meetingPlaces`)
+- Möten kan bara flyttas till platser där tåg kan mötas:
+  - där två tåg enligt tidtabell är samtidigt (det kräver två spår; samma minut räknas bara när den ena står still);
+  - tidtabellens mötesplatser för våra möten;
+  - ändarna av dubbelspår;
+  - start- och slutstationen.
+- Nya platser sparas i `railtimer_info_v1.meet` (högst 300) och används även nästa resa (`knownMeetPlaces`, `meetPlaces` från `compute`). Mellan två mötesplatser räknas enkelspåret som en sträcka.
+
+### Flyttade möten (`compute`: `move`, `predict`)
+- Vid varje mötesplats *i* före tidtabellens mötesplats, som vi inte åkt från, och för varje mötande tåg som kör förbi *i*:
+  - **Rapporterat:** har tåget åkt från nästa mötesplats *c* mot oss, eller rapporterats mellan *c* och oss, blir mötet i *i*. `move: 'rapporterat'`.
+  - **Förutsett:** vill tåget åka från *c* (`theirDeparture`: faktisk, Trafikverkets beräknade, senast rapporterade försening, tidtabellen) innan vi hinner till *c* (`travel`), väljer appen det som ger minst väntan sammanlagt: vi väntar i *i* tills tåget kommit in + 1 min, eller tåget väntar i *c* tills vi kommit dit + 1 min. Väntar vi är mötet flyttat, `move: 'beräknat'`. Med lika gångtider är det samma sak som att den som når sträckan först kör först.
+  - Väntar vi kan fler möten flyttas hit, så frågan ställs igen tills inget ändras.
+- **Det mötande tågets ankomst** till den nya platsen: `theirArrival`, men aldrig före avgången från *c* plus tågets planerade gångtid därifrån, aldrig före senaste rapporten plus gångtiden, och aldrig före avståndet från tågets position i 200 km/h.
+- **Aldrig längre bort:** är det mötande tåget sent väntar vi på tidtabellens mötesplats som förut. Ett möte flyttas bara närmare oss, så prognosen blir aldrig tidigare av ändringen.
+- **Dubbelspår** till nästa mötesplats: möts vi på sträckan blir det ingen väntan (`onLine`).
+- Utan mötesplats mellan oss och det mötande tåget (till exempel när vi redan åkt ut på sträckan) blir det som förut.
+- `predictMoves: false` (`opts`) stänger av förutsägelsen; rapporterade flyttar räknas alltid.
+- **Exempel** (enhetstest, 23349 med 24360 i tid, Järpås mötesplats): vi 14 min sena från Lidköping. Förut +13 min till Herrljunga och möte i Vara utan väntan. Nu möte i Järpås, 6,5 min väntan och +19 min. 5 min sena: 24360 väntar hellre i Vara, ingen ändring.
+
+### Hur det visas
+- Varje möte har `sig` (tidtabellens mötesplats), `at`/`atI` (där mötet blir), `move` (`rapporterat`, `beräknat` eller null) och `onLine`. Efter flytt gäller `their`, `theirDelayMin`, `position` och `single` den nya platsen.
+- Info: *Blomberg · möte 3347* med *flyttat hit från Råbäck – 3347 har passerat Råbäck*, eller *troligen hit i stället för Råbäck – 3347 hinner först till enkelspåret*. Raderna står i ordning efter `at`.
+- Panelens rad och prognosens rubrik säger var vi väntar (*möte Blomberg*). `reason.sig` är `at`, och `reason.late` säger om det mötande tåget är sent.
+- Meddelandena (`alerts`): *Möte Blomberg i stället för Råbäck (troligen): vi väntar ca 7 min på 3347*. Uppläst: *Mötet flyttas troligen till Blomberg. Vi väntar där cirka 7 minuter.* (rapporterat: *Mötet är flyttat närmare oss. Vi väntar troligen i Blomberg …*). Nyckeln är tidtabellens mötesplats, så ett möte som flyttas meddelas inte igen på samma nivå.
+- Ett flyttat möte får nivå efter väntan (förut alltid 0).
+- Utropet: är det mötande tåget i tid står det *på grund av väntan på mötande tåg* (*due to waiting for an oncoming train*), inte *möte med ett försenat tåg*.
+- Infoflikens sista rad förklarar regeln.
+
+### Loggen över Trafikverkets svar (`info.trv`)
+- Så att det i efterhand går att pröva om ett flyttat möte syntes hos Trafikverket i förväg (`trvLogNew`, `trvLogTrains`, `trvLogPositions`, `trvLogModel`, `trvLogOut`).
+- Efter varje hämtning sparas vårt tågs och de mötande tågens annonseringar på linjens platser. Varje rad har planerad, beräknad och rapporterad tid, inställt, preliminär och ändringstid, plus avvikelserna.
+- Mötande tågs position sparas när tåget flyttat sig 200 m eller efter 3 min.
+- Det appen räknade med sparas också: mötesplats, flytt, väntan, deras försening och prognosen till slutstationen.
+- Bara ändringar sparas, högst 600 rader (`trvLogMax`), tider i sekunder från resans start. Formatet står i `docs/railtimer-data-README.md`.
+- Frågorna hämtar nu också `ModifiedTime` och `EstimatedTimeIsPreliminary` (`parseAnnouncement`: `modified`, `prelim`). Båda fanns i kontrollsidans riktiga svar 2026-11-25 (57 resp. 50 av 57 annonseringar), och de finns också i reservfrågan utan de oprovade fälten.
+- **Kvar efter omladdning:** mötena, händelserna, markeringarna och loggen sparas per resa i `railtimer_info_log_v1` (`saveInfoLog`) och läses när infon startar för samma resa (`restoreInfoLog`). Förut försvann `info.meetings`, `info.events` och `info.marked` om appen laddades om mitt i resan, till exempel vid ny version. Kopian tas bort när resan är slut (`clearActiveJourney`).
+- Inte i Bara info, där inget sparas som mätning.
+- `info.meetings` får `at`, `atName`, `move` och `onLine`.
+
+### Inte provat
+- Mot riktiga flyttade möten. Regeln är en modell, och tågklareraren kan välja annorlunda (till exempel efter prioritet). Pröva efter resor med möten: jämför `info.trv` och `info.meetings` med GPS-spåret (var vi stod still).
+- Mötesplatser som inga tåg möts på i tidsfönstret (1 h bakåt till 45 min efter vår ankomst), och som inte setts tidigare resor, är okända. Då blir sträckan längre och väntan räknas på platsen före.
+
+### Tester
+- `node --test "tests/*.test.js"` (195), nya i `tests/railtimer-info.test.js`: *flyttat möte: …* (rapporterat, förutsett, lite sena, aldrig längre bort, bara på en mötesplats, mötesplatser ur tidtabellen, dubbelspår, rapporterat medan vi står kvar) och *loggen över Trafikverkets svar: …*.
+- `node tests/run-browser-tests.mjs` (123), nytt: *info: flyttat möte – 3347 har åkt från Råbäck mot oss och vi väntar i Blomberg; …* (Info, panelen, meddelandet, loggen, omladdning, körningen, utan mötesplats). Testet *tidtabell: hela vägen …* godtar nu en eller två bokstäver efter datumet.
+- Bild: `--shot=info-flyttat`.
+

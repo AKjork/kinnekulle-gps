@@ -1939,10 +1939,12 @@ function fakeTrafikverketInfo(route, opts) {
   const E = Date.parse(route[5].scheduledArrival);
   const late = o.meetLateMin != null ? o.meetLateMin : 6;
   const est = mins => late ? { EstimatedTimeAtLocation: iso(mins) } : {};
+  // opts.meetReported: 3347 rapporterat avgånget från Råbäck mot oss i tid
+  const reported = o.meetReported ? { TimeAtLocation: iso(A4 + M), TimeAtLocationWithSeconds: iso(A4 + M) } : {};
   const meet = [
     row('3347', 'Hlk', 'Avgang', A4 - 8 * M),
     row('3347', 'Rbk', 'Ankomst', A4, est(A4 + late * M)),
-    row('3347', 'Rbk', 'Avgang', A4 + M, est(A4 + (late + 1) * M)),
+    row('3347', 'Rbk', 'Avgang', A4 + M, Object.assign(est(A4 + (late + 1) * M), reported)),
     row('3347', 'Bmb', 'Ankomst', A4 + 8 * M), row('3347', 'Bmb', 'Avgang', A4 + 9 * M),
     row('3347', 'Kll', 'Ankomst', A4 + 14 * M)
   ];
@@ -2082,6 +2084,71 @@ test('info: mötena sparas i körningen när resan avslutas', async () => {
   const mt = log.info.meetings[0];
   assertEqual([mt.sig, mt.name, mt.train, mt.theirDelayMin, mt.single], ['Rbk', 'Råbäck', '3347', 6, true], 'mötet');
   assert(mt.waitMin >= 5, 'beräknad väntan');
+});
+
+/* Som midJourneyWithInfo, men vi är lateMin min senare än tidtabellen (förutom de 2,5 min som scheduleFor ger) */
+async function lateJourneyWithInfo(lateMin, opts) {
+  const fixes = buildJourney();
+  const stopT = fixes.find(f => f.leg === 2 && f.frac > 0.55).t;
+  const plan = scheduleFor(fixes);
+  const route = rt => {
+    plan(rt);
+    for (const st of rt) for (const k of ['scheduledArrival', 'scheduledDeparture']) if (st[k]) st[k] = new Date(Date.parse(st[k]) - lateMin * 60000).toISOString();
+  };
+  const r = await runJourney(fixes, { trainNumber: '3344', drop: f => f.t > stopT, route });
+  r.vibrations = [];
+  r.w.navigator.vibrate = p => { r.vibrations.push(p); return true; };
+  r.w.localStorage.setItem('railtimer_info_v1', JSON.stringify({ double: [], meet: (opts && opts.meetPlaces) || [] }));
+  r.trv = fakeTrafikverketInfo(r.rt.state.route, opts);
+  r.w.fetch = r.trv.fetch;
+  await r.rt.refreshInfo();
+  await realSleep(50);
+  return r;
+}
+
+test('info: flyttat möte – 3347 har åkt från Råbäck mot oss och vi väntar i Blomberg; loggen över Trafikverkets svar sparas i körningen', async () => {
+  // Vi är 12,5 min sena, 3347 i tid har åkt från Råbäck. Blomberg är en känd mötesplats.
+  const r = await lateJourneyWithInfo(10, { meetLateMin: 0, meetReported: true, meetPlaces: ['Bmb'] });
+  const d = r.w.document;
+  const m = r.rt.infoModel();
+  const mt = m.meetings[0];
+  assertEqual([mt.sig, mt.at, mt.move, mt.moved], ['Rbk', 'Bmb', 'rapporterat', true], 'mötet flyttat till Blomberg');
+  assert(mt.waitMin >= 1, 'vi väntar i Blomberg: ' + mt.waitMin);
+  assert(/· möte Blomberg ·/.test(d.getElementById('npInfo').textContent), 'panelen: ' + d.getElementById('npInfo').textContent);
+  const texts = r.w.RailTimerInfo.alerts(m, { name: s => ({ Bmb: 'Blomberg', Rbk: 'Råbäck' })[s] || s }).map(a => a.text);
+  assert(texts.some(t => /^Möte Blomberg i stället för Råbäck: vi väntar ca \d+ min på 3347$/.test(t)), 'meddelandet: ' + texts.join(' | '));
+  r.rt.setInfoTab('info');
+  const pane = d.getElementById('infoPane').textContent;
+  assert(pane.includes('Blomberg · möte 3347') && pane.includes('flyttat hit från Råbäck – 3347 har passerat Råbäck'), 'fliken: ' + pane);
+  assert(pane.includes('flyttar mötet närmare oss'), 'förklaringen');
+
+  // Loggen: vårt tåg och 3347 längs linjen, med rapporten från Råbäck och vad appen räknade med
+  const stored = JSON.parse(r.w.localStorage.getItem('railtimer_info_log_v1'));
+  assertEqual(stored.journeyId, String(r.rt.state.journeyId), 'sparad för resan');
+  const rows = stored.trvLog.rows;
+  assert(rows.some(x => x[0] === 'a' && x[2] === '3344'), 'vårt tåg');
+  assert(rows.some(x => x[0] === 'a' && x[2] === '3347' && x[3] === 'Rbk' && x[4] === 'd' && x[7] != null), '3347:s rapport från Råbäck');
+  assert(rows.some(x => x[0] === 'm' && x[2] === '3347' && x[3] === 'Rbk' && x[4] === 'Bmb' && x[5] === 'rapporterat'), 'vad appen räknade med');
+  assert(rows.some(x => x[0] === 'e'), 'prognosen till slutstationen');
+  assert(!rows.some(x => x[2] === '3051'), 'anslutningarna loggas inte');
+  const n = rows.length;
+  await r.rt.refreshInfo();
+  assertEqual(JSON.parse(r.w.localStorage.getItem('railtimer_info_log_v1')).trvLog.rows.length, n, 'samma svar igen ger inga nya rader');
+
+  // Omladdning mitt i resan: mötena och loggen finns kvar
+  r.rt.startInfo();
+  assert(r.rt.infoLogEntry() && r.rt.infoLogEntry().trv.rows.length === n, 'loggen återställd');
+  assertEqual(r.rt.infoLogEntry().meetings[0].at, 'Bmb', 'mötet återställt');
+
+  r.rt.stopJourney(false, 'Avslutad manuellt');
+  const log = r.rt.loadLogs().pop();
+  assertEqual([log.info.meetings[0].sig, log.info.meetings[0].at, log.info.meetings[0].move], ['Rbk', 'Bmb', 'rapporterat'], 'mötet i körningen');
+  assert(log.info.trv && log.info.trv.v === 1 && log.info.trv.rows.length === n && !log.info.trv.last, 'loggen i körningen, utan hjälpfälten');
+  assertEqual(r.w.localStorage.getItem('railtimer_info_log_v1'), null, 'den sparade kopian tas bort när resan är slut');
+
+  // Utan mötesplatsen Blomberg finns ingen plats att vänta på före Råbäck: som förut ingen väntan
+  const r2 = await lateJourneyWithInfo(10, { meetLateMin: 0, meetReported: true });
+  assertEqual([r2.rt.infoModel().meetings[0].at, r2.rt.infoModel().meetings[0].waitMin], ['Rbk', 0], 'utan mötesplats');
 });
 
 test('info: utan tågnummer förklarar fliken varför den är tom', async () => {
@@ -3263,6 +3330,11 @@ window.prepareShot = async function (name) {
     const r = await midJourneyWithInfo();
     r.w.document.getElementById('journeyMsg').style.display = 'none';
     r.rt.setInfoTab(name === 'info' ? 'info' : 'stations');
+  } else if (name === 'info-flyttat') {
+    // Vi är sena och 3347 har åkt från Råbäck mot oss: mötet flyttat till Blomberg
+    const r = await lateJourneyWithInfo(10, { meetLateMin: 0, meetReported: true, meetPlaces: ['Bmb'] });
+    r.w.document.getElementById('journeyMsg').style.display = 'none';
+    r.rt.setInfoTab('info');
   } else if (name === 'startformular') {
     // Startformuläret med dagens tur, ifylld rutt och raden om automatisk start
     const r = await armedApp();

@@ -33,7 +33,11 @@
     midConnectionWindowMin: 20, // anslutningar vid stationerna längs vägen: högst så här länge efter vår ankomst
     holdMaxMin: 15,           // förslaget att ringa trafikledningen: bara när det räcker att vänta högst så här länge
     positionMaxAgeMs: 5 * 60000, // tågpositioner äldre än så används inte
-    maxSpeedMs: 200 / 3.6     // inget tåg kör fortare: det mötande tåget kan inte vara framme tidigare än så
+    maxSpeedMs: 200 / 3.6,    // inget tåg kör fortare: det mötande tåget kan inte vara framme tidigare än så
+    predictMoves: true,       // möten flyttas närmare oss när vi är sena och det ger minst väntan sammanlagt
+    trvLogMax: 600,           // högst så många rader i loggen över Trafikverkets svar under resan
+    trvLogPosM: 200,          // mötande tågs position loggas när tåget flyttat sig så här långt …
+    trvLogPosMs: 3 * 60000    // … eller så här länge sedan senast
   };
 
   /* Trafikverkets Deviation-texter som inte säger något om tågets gång, bara till resenärerna:
@@ -110,7 +114,9 @@
     'DepartureDateOTN', 'Deviation', 'EstimatedTimeAtLocation', 'FromLocation', 'LocationDateTimeOTN',
     'LocationSignature', 'OperationalTrainNumber', 'PlannedEstimatedTimeAtLocation',
     'PlannedEstimatedTimeAtLocationIsValid', 'ProductInformation', 'TimeAtLocation',
-    'TimeAtLocationWithSeconds', 'ToLocation', 'TrackAtLocation'
+    'TimeAtLocationWithSeconds', 'ToLocation', 'TrackAtLocation',
+    // Fanns i kontrollsidans riktiga svar 2026-11-25 (57 resp. 50 av 57 annonseringar); bara till loggen under resan
+    'ModifiedTime', 'EstimatedTimeIsPreliminary'
   ];
   /* Utan de fält som inte är provade mot det riktiga API:et (tågorderns tid och planerad försening).
      Godtar Trafikverket inte frågan med alla fält frågar appen igen med de här, som fetchTimetable gör
@@ -199,6 +205,8 @@
       est: ms(a.EstimatedTimeAtLocation) != null ? ms(a.EstimatedTimeAtLocation) : planEst,
       actual: ms(a.TimeAtLocationWithSeconds) != null ? ms(a.TimeAtLocationWithSeconds) : ms(a.TimeAtLocation),
       canceled: !!a.Canceled,
+      prelim: a.EstimatedTimeIsPreliminary === true || a.EstimatedTimeIsPreliminary === 'true',
+      modified: ms(a.ModifiedTime),
       advertised: !!a.Advertised,
       track: a.TrackAtLocation || '',
       deviations: texts(a.Deviation),
@@ -306,7 +314,7 @@
       if (od < p.a) rel = 'before';      // vi lämnar platsen innan de kommer
       else if (p.d < oa) rel = 'after';  // de har lämnat platsen innan vi kommer
       else rel = 'overlap';
-      if (rel === 'overlap') return { kind: 'station', i: p.i, maxIdx: pts[pts.length - 1].i };
+      if (rel === 'overlap') return { kind: 'station', i: p.i, maxIdx: pts[pts.length - 1].i, minIdx: pts[0].i };
       if (rel === 'after') {
         if (!prev) return null; // möts före vår startstation
         if (p.i === prev.i + 1) {
@@ -351,6 +359,71 @@
       else t = planned;
     }
     return { t: Math.max(t, now), source, planned, advPlanned, arrived: false };
+  }
+
+  /* När det mötande tåget åker från platsen mot oss om det inte behöver vänta på oss: faktisk tid, Trafikverkets
+     beräknade tid, senast kända försening framräknad, eller tidtabellen. Aldrig före ankomsten dit och aldrig
+     före nu om det inte åkt. null: tåget åker inte därifrån. */
+  function theirDeparture(tr, sig, now) {
+    const loc = tr.at.get(sig);
+    const r = loc && loc.dep;
+    if (!r) return null;
+    if (r.actual != null) return { t: r.actual, planned: r.plan, source: 'faktisk', departed: true };
+    let t, source;
+    if (r.est != null) { t = r.est; source = 'trafikverket'; }
+    else {
+      const ld = latestDelay(tr);
+      if (ld && ld.delay > 0) { t = r.plan + ld.delay; source = 'senast'; }
+      else { t = r.plan; source = 'plan'; }
+    }
+    const a = loc.arr ? (loc.arr.actual != null ? loc.arr.actual : loc.arr.est) : null;
+    if (a != null) t = Math.max(t, a);
+    return { t: Math.max(t, now), planned: r.plan, source, departed: false };
+  }
+
+  // Lägsta plats på vår linje där tåget rapporterats (faktisk tid): { k, t, plan } eller null
+  function progressOf(tr, line) {
+    for (let k = 0; k < line.length; k++) {
+      const loc = tr.at.get(line[k].sig);
+      if (!loc) continue;
+      const r = loc.arr && loc.arr.actual != null ? loc.arr : (loc.dep && loc.dep.actual != null ? loc.dep : null);
+      if (r) return { k, t: r.actual, plan: r.plan };
+    }
+    return null;
+  }
+
+  /* Platser på vår linje där tåg kan mötas: där två tåg enligt tidtabell är samtidigt (det kräver två spår),
+     ändarna av sträckor med dubbelspår, start- och slutstationen, och platser vi känner till sedan förut
+     (known: signaturer). Ger { idx: Set(index), found: [signaturer ur tidtabellen] }. */
+  function together(a, b) {
+    const lo = Math.max(a[0], b[0]), hi = Math.min(a[1], b[1]);
+    if (lo < hi) return true;
+    return lo === hi && ((a[0] < lo && lo < a[1]) || (b[0] < lo && lo < b[1]));
+  }
+  function meetingPlaces(line, trains, double, known) {
+    const n = line.length;
+    const idx = new Set(n ? [0, n - 1] : []);
+    const found = [];
+    const knownSet = new Set(known || []);
+    for (let i = 0; i < n; i++) {
+      const sig = line[i].sig;
+      if (knownSet.has(sig)) idx.add(i);
+      const iv = [];
+      for (const tr of (trains || new Map()).values()) {
+        const loc = tr.at.get(sig);
+        if (!loc) continue;
+        const a = planArr(loc), d = planDep(loc);
+        if (a != null && d != null && d >= a) iv.push([a, d]);
+      }
+      iv.sort((x, y) => x[0] - y[0]);
+      let two = false;
+      for (let x = 0; x < iv.length && !two; x++) {
+        for (let y = x + 1; y < iv.length && iv[y][0] <= iv[x][1]; y++) if (together(iv[x], iv[y])) { two = true; break; }
+      }
+      if (two) { idx.add(i); found.push(sig); }
+    }
+    for (let i = 0; i + 1 < n; i++) if (double && double.has(sectionKey(line[i].sig, line[i + 1].sig))) { idx.add(i); idx.add(i + 1); }
+    return { idx, found };
   }
 
   // ── Egna gångtider ──
@@ -407,14 +480,38 @@
     return run > 0 ? run : (run === 0 ? 0 : 60000);
   }
 
+  /* Vår ankomst till plats c om vi åker från plats i vid tiden t, utan möten: samma räkning som i predict
+     (planerad gångtid × faktor, uppehåll vid stoppen däremellan, inte före annonserad avgång, aldrig före nu). */
+  function travel(line, ratios, i, t, c, now, opts) {
+    let x = t;
+    for (let k = i; k < c; k++) {
+      x = Math.max(x + plannedRun(line, k) * ratios[k], now);
+      if (k + 1 < c) {
+        const L = line[k + 1];
+        let d = x + (L.stop ? opts.minDwellMs : 0);
+        if (L.advDep != null) d = Math.max(d, L.advDep);
+        x = Math.max(d, now);
+      }
+    }
+    return x;
+  }
+
   // ── Prognosen ──
   /* Vår beräknade ankomst och avgång vid varje plats. known: index → { arr, dep } (verkliga tider).
+     meets: mötena med planerad mötesplats m.i (compute). Där väntar vi, om mötet beror på oss (m.dependent),
+     tills det mötande tåget kommit in + marginalen.
+     move(m, i, dep, arriveAt): kan mötet i stället bli vid plats i före den planerade (compute)? Ger
+     { need, kind, their } = möte här, vi kan åka tidigast need; { done } = mötet är avklarat utan väntan här;
+     null = inte här. arriveAt(c) = vår ankomst till plats c om vi åker från i vid dep.
+     Efteråt har varje möte atI (var mötet blir), waitMs, ourDep och move ('rapporterat', 'beräknat' eller null).
      Platser vi inte nått än ligger aldrig före nu. */
-  function predict(line, known, meetingsAt, ratios, now, opts) {
+  function predict(line, known, meets, ratios, now, opts, move) {
     const n = line.length;
     let f = -1;
     for (let i = 0; i < n; i++) if (known[i] && (known[i].arr != null || known[i].dep != null)) f = i;
     const preds = [];
+    const list = (meets || []).slice().sort((a, b) => a.i - b.i);
+    for (const m of list) Object.assign(m, { atI: m.i, waitMs: 0, ourDep: null, need: null, move: null, theirAt: null, onLine: false, resolved: false });
     for (let i = 0; i < n; i++) {
       const L = line[i], K = known[i] || {};
       const p = { arr: null, dep: null, base: null, waitMs: 0 };
@@ -435,14 +532,36 @@
           if (!Number.isFinite(dep)) dep = L.plannedDep != null ? L.plannedDep : now;
           dep = Math.max(dep, now);
           p.base = dep;
-          for (const m of meetingsAt.get(i) || []) {
-            if (!m.dependent) continue;
-            const need = m.their.t + opts.meetMarginMs;
-            if (need > dep) dep = need;
+          const here = [];
+          // Möten som enligt tidtabell är här
+          for (const m of list) {
+            if (m.resolved || m.i !== i) continue;
+            m.resolved = true;
+            if (m.dependent) { m.need = m.their.t + opts.meetMarginMs; if (m.need > dep) dep = m.need; }
+            here.push(m);
           }
-          for (const m of meetingsAt.get(i) || []) {
+          // Möten längre fram som i stället blir här. Väntar vi här kan fler hinna fram först, så frågan
+          // ställs igen tills inget ändras.
+          if (move) {
+            let again = true;
+            for (let round = 0; again && round <= list.length; round++) {
+              again = false;
+              for (const m of list) {
+                if (m.resolved || m.i <= i) continue;
+                const d0 = dep;
+                const r = move(m, i, dep, c => travel(line, ratios, i, d0, c, now, opts));
+                if (!r) continue;
+                m.resolved = true;
+                if (r.done) { m.onLine = !!r.onLine; m.atI = i; continue; }
+                Object.assign(m, { atI: i, move: r.kind, need: r.need, theirAt: r.their || null });
+                here.push(m);
+                if (r.need > dep) { dep = r.need; again = true; }
+              }
+            }
+          }
+          for (const m of here) {
             m.ourDep = dep;
-            m.waitMs = m.dependent ? Math.max(0, Math.min(dep, m.their.t + opts.meetMarginMs) - p.base) : 0;
+            m.waitMs = m.need != null ? Math.max(0, Math.min(dep, m.need) - p.base) : 0;
           }
           p.waitMs = dep - p.base;
           p.dep = dep;
@@ -771,12 +890,15 @@
       return { distM: Math.round(distM), speedKmh: pos.speedKmh, ageS: Math.max(0, Math.round((now - pos.t) / 1000)), t: pos.t, side };
     }
 
-    const meetingsAt = new Map();
     const meetings = [];
+    const trainOf = new Map(); // mötets nyckel → det mötande tåget
     for (const { tr, c } of raw) {
       const i = c.i;
       if (i >= n - 1) continue;                         // vid slutstationen åker vi inte vidare
       if (i < frontier || (i === frontier && known[i].dep != null)) continue; // redan passerat
+      // Rapporterat där vi redan varit: tåget har passerat oss, mötet är avklarat
+      const prog = progressOf(tr, line);
+      if (prog && (prog.k < frontier || (prog.k === frontier && known[frontier].dep != null))) continue;
       const their = theirArrival(tr, line[i].sig, now);
       if (!their) continue;
       const sec = sectionKey(line[i].sig, line[i + 1].sig);
@@ -800,21 +922,84 @@
         if (earliest > their.t) { their.t = earliest; their.source = 'position'; }
       }
       const m = {
+        key: `${tr.key}|${i}`, trainKey: tr.key,
         i, sig: line[i].sig, otn: tr.otn, ident: tr.ident, product: tr.product, position,
         their, theirDelayMin: roundMin(their.t - their.planned),
         single, canceled, moved,
         dependent: single && !canceled && !moved && c.maxIdx > i,
+        minIdx: c.minIdx != null ? c.minIdx : 0, prog,
         waitMs: 0, ourDep: null
       };
-      if (!meetingsAt.has(i)) meetingsAt.set(i, []);
-      meetingsAt.get(i).push(m);
+      trainOf.set(m.key, tr);
       meetings.push(m);
     }
 
+    /* Flyttade möten. Tågklareraren kan flytta ett möte närmare oss när vi är sena, så att det mötande tåget
+       inte står och väntar på oss. På enkelspår mellan två mötesplatser (sträckan i–c) får bara ett av tågen
+       vara ute: antingen väntar vi i i tills det mötande tåget kommit in, eller så väntar det i c tills vi
+       kommit dit. Vi räknar med det som ger minst väntan sammanlagt. Har tåget redan åkt mot oss från c
+       (rapporterat) blir mötet här. Ett möte flyttas aldrig längre bort än tidtabellens mötesplats, så när
+       det mötande tåget är sent väntar vi där som förut – prognosen blir aldrig tidigare av det här. */
+    const places = meetingPlaces(line, trains, double, input.knownMeetPlaces);
+    for (const { c } of raw) places.idx.add(c.i);
+    const nextPlace = i => { for (let k = i + 1; k < n; k++) if (places.idx.has(k)) return k; return n - 1; };
+    const singleBetween = (a, b) => { for (let k = a; k < b; k++) if (double.has(sectionKey(line[k].sig, line[k + 1].sig))) return false; return true; };
+    function move(m, i, dep, arriveAt) {
+      const tr = trainOf.get(m.key);
+      if (!tr || m.canceled || !places.idx.has(i) || m.minIdx > i) return null;
+      const here = tr.at.get(line[i].sig);
+      if (m.prog && m.prog.k <= i) {
+        // Rapporterat här: står det här möts vi här; har det redan åkt härifrån är mötet avklarat
+        if (m.prog.k === i && here && here.arr && here.arr.actual != null && !(here.dep && here.dep.actual != null)) {
+          return { need: here.arr.actual + o.meetMarginMs, kind: 'rapporterat', their: theirArrival(tr, line[i].sig, now) };
+        }
+        return { done: true };
+      }
+      const c = nextPlace(i);
+      if (c > m.i) return null;
+      const X0 = theirArrival(tr, line[i].sig, now);
+      if (!X0) return null;
+      const cLoc = tr.at.get(line[c].sig);
+      // Ute på sträckan mot oss: åkt från c, eller rapporterat mellan c och oss
+      const entered = !!(cLoc && cLoc.dep && cLoc.dep.actual != null) || !!(m.prog && m.prog.k < c);
+      const E = entered ? null : theirDeparture(tr, line[c].sig, now);
+      // Hit kommer tåget tidigast efter avgången från c och sin planerade gångtid, och efter senaste rapporten
+      let t = X0.t, source = X0.source;
+      const later = (v, s) => { if (v != null && v > t) { t = v; source = s; } };
+      if (E && X0.planned != null && E.planned != null) later(E.t + (X0.planned - E.planned), E.source);
+      if (m.prog && X0.planned != null && m.prog.plan != null) later(m.prog.t + (X0.planned - m.prog.plan), 'senast');
+      const pos = positionAt(tr.otn, line[i].sig, i);
+      if (pos && pos.side === 'beyond') later(pos.t + pos.distM / o.maxSpeedMs * 1000, 'position');
+      const their = Object.assign({}, X0, { t, source });
+      if (!singleBetween(i, c)) {
+        // Dubbelspår till nästa mötesplats: möts vi på sträckan blir det ingen väntan
+        if (entered || (E && E.t < arriveAt(c) && t > dep)) return { done: true, onLine: true };
+        return null;
+      }
+      if (entered) return { need: t + o.meetMarginMs, kind: 'rapporterat', their };
+      if (!o.predictMoves || !E) return null;
+      const A = arriveAt(c);
+      if (E.t >= A) return null; // vi hinner till c innan de vill åka därifrån: mötet blir längre fram
+      const ourWait = t + o.meetMarginMs - dep;   // vi väntar här
+      const theirWait = A + o.meetMarginMs - E.t; // de väntar i c
+      if (ourWait > theirWait) return null;
+      return { need: t + o.meetMarginMs, kind: m.moved ? 'rapporterat' : 'beräknat', their };
+    }
+
     const rec = recoveryRatios(line, routeNames, input.history, o);
-    const { preds } = predict(line, known, meetingsAt, rec.ratios, now, o);
+    const { preds } = predict(line, known, meetings, rec.ratios, now, o, move);
     // Samma prognos utan egna gångtider: så mycket tar vi igen tack vare dem
-    const plain = rec.obs ? predict(line, known, new Map(Array.from(meetingsAt, ([k, v]) => [k, v.map(m => Object.assign({}, m))])), line.map(() => 1), now, o).preds : preds;
+    const plain = rec.obs ? predict(line, known, meetings.map(m => Object.assign({}, m)), line.map(() => 1), now, o, move).preds : preds;
+    // Var mötet blir: plats, det mötande tågets ankomst dit och position i förhållande till den platsen
+    for (const m of meetings) {
+      m.at = line[m.atI].sig;
+      if (m.atI !== m.i) {
+        if (m.theirAt) { m.their = m.theirAt; m.theirDelayMin = roundMin(m.their.t - m.their.planned); }
+        m.position = positionAt(m.otn, m.at, m.atI);
+        m.single = singleBetween(m.atI, nextPlace(m.atI));
+      }
+      delete m.theirAt; delete m.need; delete m.resolved;
+    }
 
     const endL = line[n - 1];
     const predArr = preds[n - 1].arr;
@@ -901,9 +1086,10 @@
 
     // Nivåer: 0 inget att göra, 1 håll koll, 2 påverkar
     // Väntan i hela minuter, samma som visas
-    const lvlMeeting = m => (m.canceled || m.moved) ? 0 : (m.waitMin >= 5 ? 2 : (m.waitMin >= 1 ? 1 : 0));
+    // Ett flyttat möte räknas som andra: efter väntan (förut 0, eftersom väntan inte räknades)
+    const lvlMeeting = m => m.canceled ? 0 : (m.waitMin >= 5 ? 2 : (m.waitMin >= 1 ? 1 : 0));
     const lvlConn = c => (c.status === 'missas' || c.status === 'avgått') ? 2 : ((c.status === 'knappt' || c.status === 'inställt') ? 1 : 0);
-    meetings.sort((a, b) => a.i - b.i);
+    meetings.sort((a, b) => a.atI - b.atI || a.i - b.i);
     for (const m of meetings) { m.waitMin = roundMin(m.waitMs); m.level = lvlMeeting(m); }
     for (const c of conn) c.level = lvlConn(c);
     for (const c of inc) c.level = lvlConn(c);
@@ -982,7 +1168,10 @@
       midMissed: alert.stops.reduce((k, st) => k + st.connections.filter(c => c.level === 2).length, 0),
       preds: preds.map((p, i) => ({ sig: line[i].sig, arr: p.arr, dep: p.dep, waitMs: p.waitMs })),
       doubleSections: Array.from(newDouble),
-      reason: worstMeeting ? { sig: worstMeeting.sig, otn: worstMeeting.ident || worstMeeting.otn, waitMin: worstMeeting.waitMin } : null,
+      meetPlaces: places.found.filter(s => !(input.knownMeetPlaces || []).includes(s)),
+      // late: det mötande tåget är sent (annars väntar vi för att vi själva är sena och mötet flyttats)
+      reason: worstMeeting ? { sig: worstMeeting.at, otn: worstMeeting.ident || worstMeeting.otn, waitMin: worstMeeting.waitMin,
+        late: worstMeeting.theirDelayMin >= 1, moved: worstMeeting.atI !== worstMeeting.i } : null,
       missed: alert.connections.filter(c => c.level === 2).length,
       tight: alert.connections.filter(c => c.level === 1).length,
       level: Math.max.apply(null, levels),
@@ -1016,9 +1205,12 @@
     const msg = !meetReason && m.messages && m.messages[0] ? m.messages[0].header : '';
     const lowerFirst = t => t ? t.charAt(0).toLocaleLowerCase('sv') + t.slice(1) : t;
     const sv = [], en = [];
+    // Är det mötande tåget i tid väntar vi för att mötet flyttats när vi själva är sena: då inget "försenat tåg"
+    const meetSv = m.reason && m.reason.late ? ' på grund av möte med ett försenat tåg' : ' på grund av väntan på mötande tåg';
+    const meetEn = m.reason && m.reason.late ? ' due to a delayed oncoming train' : ' due to waiting for an oncoming train';
     if (d >= 3) {
-      sv.push(`Vi är cirka ${d} minuter försenade${meetReason ? ' på grund av möte med ett försenat tåg' : (msg ? ` på grund av ${lowerFirst(msg)}` : '')}.`);
-      en.push(`We are approximately ${d} minutes late${meetReason ? ' due to a delayed oncoming train' : (msg ? ' due to a traffic disruption' : '')}.`);
+      sv.push(`Vi är cirka ${d} minuter försenade${meetReason ? meetSv : (msg ? ` på grund av ${lowerFirst(msg)}` : '')}.`);
+      en.push(`We are approximately ${d} minutes late${meetReason ? meetEn : (msg ? ' due to a traffic disruption' : '')}.`);
     }
     const track = m.end.track ? `, spår ${m.end.track}` : '';
     sv.push(`Beräknad ankomst till ${endName} ${clock(m.end.predArr)}${track}.`);
@@ -1087,9 +1279,23 @@
     const add = (key, level, text, say) => out.push({ key, level, text, say });
     // Först förslaget att ringa trafikledningen (markerad anslutning som blir knapp eller missas)
     for (const a of m.actions || []) { const t = actionText(a, opts); add(`a|${a.c.key}`, 2, t.title, t.say); }
-    for (const mt of m.meetings || []) if (mt.level) add(`m|${mt.otn}|${mt.sig}`, mt.level,
-      `Möte ${name(mt.sig)}: ${mt.ident || mt.otn} är ${mt.theirDelayMin} min sent – vi väntar ca ${mt.waitMin} min`,
-      `Möte i ${name(mt.sig)}. Mötande tåg ${minutes(mt.theirDelayMin)} sent. Vi väntar cirka ${minutes(mt.waitMin)}.`);
+    // Nyckeln är tidtabellens mötesplats, så att ett möte som flyttas inte meddelas en gång till på samma nivå
+    for (const mt of m.meetings || []) {
+      if (!mt.level) continue;
+      const train = mt.ident || mt.otn;
+      const at = mt.at || mt.sig;
+      if (at !== mt.sig) {
+        const sure = mt.move === 'rapporterat';
+        add(`m|${mt.otn}|${mt.sig}`, mt.level,
+          `Möte ${name(at)} i stället för ${name(mt.sig)}${sure ? '' : ' (troligen)'}: vi väntar ca ${mt.waitMin} min på ${train}`,
+          sure ? `Mötet är flyttat närmare oss. Vi väntar troligen i ${name(at)} cirka ${minutes(mt.waitMin)}.`
+            : `Mötet flyttas troligen till ${name(at)}. Vi väntar där cirka ${minutes(mt.waitMin)}.`);
+      } else {
+        add(`m|${mt.otn}|${mt.sig}`, mt.level,
+          `Möte ${name(at)}: ${train} är ${mt.theirDelayMin} min sent – vi väntar ca ${mt.waitMin} min`,
+          `Möte i ${name(at)}. Mötande tåg ${minutes(mt.theirDelayMin)} sent. Vi väntar cirka ${minutes(mt.waitMin)}.`);
+      }
+    }
     // Anslutningarna som varningarna gäller: valda slag (Tåg | Buss | Båda), eller alla om varningarna inte följer valet
     const A = m.alert || m;
     for (const c of A.connections || []) if (c.level) add(`c|${c.otn}`, c.level,
@@ -1111,6 +1317,76 @@
     for (const msg of m.messages || []) add(`t|${msg.id}`, 1, msg.header, `${msg.header}.`);
     return out;
   }
+  /* ── Loggen över Trafikverkets svar under resan ──
+     Så att det i efterhand går att pröva om ett flyttat möte syntes hos Trafikverket i förväg: vårt tågs och de
+     mötande tågens annonseringar längs linjen, de mötande tågens position och vad appen räknade med. Bara
+     ändringar sparas, högst opts.trvLogMax rader (full: true när det tog slut). Tider i sekunder från t0, null
+     när de saknas. Rader:
+       ['a', s, tåg, plats, 'a'|'d', planerad, beräknad, rapporterad, inställd 0/1, preliminär 0/1, ändrad, avvikelser]
+       ['p', s, tåg, lat, lon, km/h, positionens tid]
+       ['m', s, tåg, tidtabellens mötesplats, mötesplats, 'rapporterat'|'beräknat'|'', väntan min, deras försening min, källa]
+       ['e', s, beräknad ankomst till slutstationen (hel minut), försening min]
+     log.last och log.lastPos håller reda på vad som redan sparats och följer inte med i körningen (trvLogOut). */
+  function trvLogNew(t0, lineSigs) {
+    return { v: 1, t0: Math.floor(t0 / 1000) * 1000, line: (lineSigs || []).slice(), rows: [], last: {}, lastPos: {}, full: false };
+  }
+  const relS = (log, t) => t == null ? null : Math.round((t - log.t0) / 1000);
+  function trvLogPut(log, key, kind, now, tail, opts) {
+    const sig = JSON.stringify(tail);
+    if (log.last[key] === sig) return false;
+    const max = (opts && opts.trvLogMax) || DEFAULTS.trvLogMax;
+    if (log.rows.length >= max) { log.full = true; return false; }
+    log.last[key] = sig;
+    log.rows.push([kind, relS(log, now)].concat(tail));
+    return true;
+  }
+  // Annonseringarna på linjens platser för tågen med nycklarna keys (vårt tåg och de mötande)
+  function trvLogTrains(log, trains, keys, now, opts) {
+    if (!log || !trains) return;
+    const sigs = new Set(log.line);
+    for (const key of keys || []) {
+      const tr = trains.get(key);
+      if (!tr) continue;
+      for (const [sig, loc] of tr.at) {
+        if (!sigs.has(sig)) continue;
+        for (const r of [loc.arr, loc.dep]) {
+          if (!r) continue;
+          trvLogPut(log, `a|${tr.key}|${sig}|${r.kind}`, 'a', now, [tr.otn, sig, r.kind === 'arr' ? 'a' : 'd', relS(log, r.plan),
+            relS(log, r.est), relS(log, r.actual), r.canceled ? 1 : 0, r.prelim ? 1 : 0, relS(log, r.modified), r.deviations.join(' | ')], opts);
+        }
+      }
+    }
+  }
+  // Mötande tågs position (parsePositions): när tåget flyttat sig trvLogPosM eller det gått trvLogPosMs sedan senast
+  function trvLogPositions(log, positions, otns, now, opts) {
+    if (!log || !positions) return;
+    const o = Object.assign({}, DEFAULTS, opts || {});
+    for (const otn of otns || []) {
+      const p = positions.get(String(otn));
+      if (!p || p.lat == null || p.lon == null) continue;
+      const prev = log.lastPos[otn];
+      if (prev && (p.t <= prev.t || (haversine(prev.lat, prev.lon, p.lat, p.lon) < o.trvLogPosM && p.t - prev.t < o.trvLogPosMs))) continue;
+      if (log.rows.length >= o.trvLogMax) { log.full = true; return; }
+      log.lastPos[otn] = { lat: p.lat, lon: p.lon, t: p.t };
+      log.rows.push(['p', relS(log, now), String(otn), Math.round(p.lat * 1e5) / 1e5, Math.round(p.lon * 1e5) / 1e5,
+        p.speedKmh != null ? Math.round(p.speedKmh) : null, relS(log, p.t)]);
+    }
+  }
+  // Vad appen räknade med (compute): mötena och ankomsten till slutstationen
+  function trvLogModel(log, m, now, opts) {
+    if (!log || !m) return;
+    for (const mt of m.meetings || []) {
+      trvLogPut(log, `m|${mt.otn}|${mt.sig}`, 'm', now, [mt.otn, mt.sig, mt.at || mt.sig, mt.move || '', mt.waitMin,
+        mt.theirDelayMin, mt.their ? mt.their.source : ''], opts);
+    }
+    if (m.end && m.end.predArr != null) trvLogPut(log, 'e', 'e', now, [relS(log, Math.round(m.end.predArr / MIN) * MIN), m.end.delayMin], opts);
+  }
+  // Det som sparas i körningen (info.trv), eller null om inget loggats
+  function trvLogOut(log) {
+    if (!log || !log.rows || !log.rows.length) return null;
+    return Object.assign({ v: log.v, t0: new Date(log.t0).toISOString(), line: log.line, rows: log.rows }, log.full ? { full: true } : {});
+  }
+
   // Det som är nytt eller värre än i `notified` (Map nyckel → nivå), som nu räknas som meddelat; viktigast först
   function newAlerts(list, notified) {
     const fresh = [];
@@ -1124,7 +1400,8 @@
   return {
     DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, alerts, newAlerts, actionText, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
     request, queryOurTrain, queryLine, queryNames, queryMessages, resultOf,
-    parseAnnouncement, groupTrains, nearestRun, buildLine, crossingOf, latestDelay, theirArrival,
+    parseAnnouncement, groupTrains, nearestRun, buildLine, crossingOf, latestDelay, theirArrival, theirDeparture,
+    progressOf, meetingPlaces, travel, trvLogNew, trvLogTrains, trvLogPositions, trvLogModel, trvLogOut,
     historyMedians, recoveryRatios, plannedRun, predict, outgoing, incoming, signaturesIn, parseMessage, classifyMessages, messagesFor, compute,
     townKey, lineTownsExcept, busOutgoing, busIncoming, CONN_MODES, connShows, splitByMode, connKey
   };

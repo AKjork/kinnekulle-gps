@@ -40,7 +40,7 @@ function setup(rows, opts) {
   const known = new Map(Object.entries(o.known || {}));
   return I.compute({
     line, trains, ourKey: our.key, known, now: o.now != null ? o.now : at('10:55'),
-    knownDouble: o.knownDouble, history: o.history, routeNames: ROUTE,
+    knownDouble: o.knownDouble, knownMeetPlaces: o.knownMeet, history: o.history, routeNames: ROUTE, opts: o.opts,
     messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos,
     buses: o.buses, names: o.names, connMode: o.connMode, connAlerts: o.connAlerts, marked: o.marked
   });
@@ -138,11 +138,105 @@ test('inställt mötande tåg: vi väntar inte', () => {
   assert.equal(m.end.delayMin, 0);
 });
 
-test('flyttat möte: det mötande tåget har redan passerat Vara mot oss', () => {
-  const m = setup(MEET({ Vr: { d: { TimeAtLocationWithSeconds: T('11:08') } } }).concat(
-    [ann('24360', 'Jp', 'a', '11:30', { TimeAtLocationWithSeconds: T('11:12') })]), { now: at('11:12') });
-  assert.equal(m.meetings[0].moved, true);
+/* Flyttade möten. Vi åkte från Lidköping 11:14 i stället för 11:00 (14 min sena) och är i Järpås 11:24.
+   24360 är i tid: i Vara 11:20–11:21 och i Järpås 11:30. Järpås är en mötesplats (känd sedan förut). */
+const LATE14 = { Lkp: { dep: at('11:14') } };
+test('flyttat möte: det mötande tåget har åkt från Vara mot oss – vi väntar i Järpås i stället för ingen väntan', () => {
+  const m = setup(MEET({ Vr: { d: { TimeAtLocationWithSeconds: T('11:21') } } }), { now: at('11:22'), known: LATE14, knownMeet: ['Jp'] });
+  const mt = m.meetings[0];
+  assert.equal(mt.moved, true, 'rapporterat förbi mötesplatsen');
+  assert.equal(mt.sig, 'Vr', 'tidtabellens mötesplats');
+  assert.equal(mt.at, 'Jp', 'mötet blir i Järpås');
+  assert.equal(mt.move, 'rapporterat');
+  // Järpås 11:24, 30 s uppehåll, 24360 in 11:30 + 1 min = 11:31
+  assert.equal(mt.ourDep, at('11:31'));
+  assert.equal(mt.waitMs, 6.5 * 60000);
+  assert.equal(mt.level, 2);
+  // 11:31 → Vara 11:40 → 11:40:30 → Vedum 11:49:30 → 11:50 → Herrljunga 11:59
+  assert.equal(m.end.predArr, at('11:59'));
+  assert.equal(m.end.delayMin, 19);
+  assert.equal(m.reason.sig, 'Jp');
+  assert.equal(m.reason.late, false, '24360 är i tid – vi är sena');
+});
+
+test('flyttat möte: förutsett när vi är sena – det mötande tåget hinner först till sträckan Vara–Järpås', () => {
+  // 11:14: vi har just åkt från Lidköping, 24360 är inte rapporterat än
+  const m = setup(MEET(), { now: at('11:14'), known: LATE14, knownMeet: ['Jp'] });
+  const mt = m.meetings[0];
+  assert.equal(mt.moved, false);
+  assert.equal(mt.at, 'Jp');
+  assert.equal(mt.move, 'beräknat');
+  // Vänta i Järpås 6,5 min är mindre än att 24360 väntar i Vara från 11:21 till vi är där 11:33:30 + 1 min
+  assert.equal(mt.ourDep, at('11:31'));
+  assert.equal(m.end.delayMin, 19);
+  // Utan flytten hade vi räknat med att 24360 väntade i Vara: 13 min sena
+  const old = setup(MEET(), { now: at('11:14'), known: LATE14, knownMeet: ['Jp'], opts: { predictMoves: false } });
+  assert.equal(old.meetings[0].at, 'Vr');
+  assert.equal(old.meetings[0].waitMin, 0);
+  assert.equal(old.end.delayMin, 13);
+  // Meddelandet och utropet säger att mötet troligen flyttas, inte att det mötande tåget är sent
+  const a = I.alerts(m, { name: s => ROUTE.get(s) || s }).find(x => x.key === 'm|24360|Vr');
+  assert.equal(a.text, 'Möte Järpås i stället för Vara (troligen): vi väntar ca 7 min på 24360');
+  assert.equal(a.say, 'Mötet flyttas troligen till Järpås. Vi väntar där cirka 7 minuter.');
+  const ut = I.announcement(m, { name: s => ROUTE.get(s) || s, clock: t => new Date(t).toTimeString().slice(0, 5) });
+  assert.match(ut.sv, /^Vi är cirka 19 minuter försenade på grund av väntan på mötande tåg\./);
+  assert.match(ut.en, /due to waiting for an oncoming train/);
+});
+
+test('flyttat möte: lite sena – 24360 väntar hellre i Vara, och vi väntar inte', () => {
+  // Åkte 11:05: i Järpås 11:15:30. Att vänta där till 11:31 kostar mer än att 24360 väntar i Vara till 11:25:30
+  const m = setup(MEET(), { now: at('11:05'), known: { Lkp: { dep: at('11:05') } }, knownMeet: ['Jp'] });
+  assert.equal(m.meetings[0].at, 'Vr');
+  assert.equal(m.meetings[0].move, null);
   assert.equal(m.meetings[0].waitMin, 0);
+  assert.equal(m.end.predArr, at('11:43') + 30000);
+});
+
+test('flyttat möte: aldrig längre bort – är det mötande tåget sent väntar vi i Vara som förut', () => {
+  const m = setup(MEET({ Vdm: { d: { TimeAtLocationWithSeconds: T('11:20') } } }), {
+    now: at('11:12'), known: { Lkp: { dep: at('11:00') }, Jp: { arr: at('11:10'), dep: at('11:11') } }, knownMeet: ['Jp']
+  });
+  assert.equal(m.meetings[0].at, 'Vr');
+  assert.equal(m.meetings[0].waitMin, 6);
+  assert.equal(m.reason.late, true);
+});
+
+test('flyttat möte: bara på en mötesplats – Järpås utan möten i tidtabellen flyttar inget', () => {
+  const m = setup(MEET(), { now: at('11:14'), known: LATE14 });
+  assert.equal(m.meetings[0].at, 'Vr');
+  assert.equal(m.meetings[0].waitMin, 0);
+  assert.equal(m.end.delayMin, 13);
+  assert.deepEqual(m.meetPlaces, ['Vr'], 'mötesplatsen ur tidtabellen sparas');
+});
+
+test('flyttat möte: mötesplatser ur tidtabellen – två tåg i Järpås samtidigt', () => {
+  // 3346 och 3347 står i Järpås samtidigt, alltså har Järpås två spår
+  const a = train('3346', [['Vr', null, '10:20'], ['Jp', '10:29', '10:32'], ['Lkp', '10:41', null]]);
+  const b = train('3347', [['Lkp', null, '10:21'], ['Jp', '10:30', '10:31'], ['Vr', '10:40', null]]);
+  const m = setup(MEET().concat(a, b), { now: at('11:14'), known: LATE14 });
+  assert.deepEqual(m.meetPlaces.sort(), ['Jp', 'Vr']);
+  const mt = m.meetings.find(x => x.otn === '24360');
+  assert.equal(mt.at, 'Jp');
+  assert.equal(mt.move, 'beräknat');
+  const known = setup(MEET().concat(a, b), { now: at('11:14'), known: LATE14, knownMeet: ['Jp', 'Vr'] });
+  assert.deepEqual(known.meetPlaces, [], 'inget nytt att spara');
+});
+
+test('flyttat möte: dubbelspår mellan Järpås och Vara – vi möts på sträckan och väntar inte', () => {
+  const m = setup(MEET(), { now: at('11:14'), known: LATE14, knownMeet: ['Jp'], knownDouble: ['Jp|Vr'] });
+  assert.equal(m.meetings[0].waitMin, 0);
+  assert.equal(m.meetings[0].onLine, true);
+  assert.equal(m.end.delayMin, 13);
+});
+
+test('flyttat möte: rapporterat förbi Vara medan vi står kvar i Lidköping – vi väntar där', () => {
+  // Vi har inte åkt (12 min sena), 24360 åkte från Vara 11:21 och Järpås är ingen mötesplats
+  const m = setup(MEET({ Vr: { d: { TimeAtLocationWithSeconds: T('11:21') } } }), { now: at('11:22') });
+  const mt = m.meetings[0];
+  assert.equal(mt.at, 'Lkp');
+  assert.equal(mt.move, 'rapporterat');
+  assert.equal(mt.ourDep, at('11:41'), '24360 i Lidköping 11:40 + 1 min');
+  assert.equal(m.preds[0].dep, at('11:41'));
 });
 
 test('passerat möte: när vi har åkt från Vara visas mötet inte längre', () => {
@@ -568,4 +662,51 @@ test('meddelanden: texter och nycklar, och samma sak meddelas en gång per nivå
   m.connections[0].level = 2;
   m.connections[0].status = 'missas';
   assert.deepEqual(I.newAlerts(I.alerts(m, { clock }), notified).map(a => a.text), ['Anslutning 11:49 G: missas'], 'värre: meddelas igen');
+});
+
+test('loggen över Trafikverkets svar: bara ändringar, mötande tågs position och vad appen räknade med', () => {
+  const rows1 = OUR().concat(MEET());
+  const trains1 = I.groupTrains(rows1);
+  const our = I.nearestRun(trains1, '23349', at('11:00'));
+  const line = I.buildLine(our, 'Lkp', 'Hr');
+  const log = I.trvLogNew(at('11:00'), line.map(l => l.sig));
+  const keys = [our.key, '24360|2026-11-25'];
+  I.trvLogTrains(log, trains1, keys, at('11:01'));
+  const first = log.rows.length;
+  assert.equal(first, 16, '8 annonseringar per tåg');
+  assert.deepEqual(log.rows.find(r => r[2] === '24360' && r[3] === 'Vr' && r[4] === 'a'),
+    ['a', 60, '24360', 'Vr', 'a', 20 * 60, null, null, 0, 0, null, '']);
+  // Samma svar igen: inget nytt
+  I.trvLogTrains(log, trains1, keys, at('11:02'));
+  assert.equal(log.rows.length, first);
+  // Trafikverket ger en beräknad tid i Vara: en rad
+  const trains2 = I.groupTrains(OUR().concat(MEET({ Vr: { a: { EstimatedTimeAtLocation: T('11:24'), EstimatedTimeIsPreliminary: true,
+    ModifiedTime: '2026-11-25T10:02:30.000Z' } } })));
+  I.trvLogTrains(log, trains2, keys, at('11:03'));
+  assert.equal(log.rows.length, first + 1);
+  assert.deepEqual(log.rows[first], ['a', 180, '24360', 'Vr', 'a', 1200, 1440, null, 0, 1, 150, '']);
+  // Position: en gång, sedan bara när tåget flyttat sig minst 200 m eller efter 3 min
+  const pos = (lat, t) => new Map([['24360', { otn: '24360', lat, lon: 12.99, t, speedKmh: 80.4 }]]);
+  I.trvLogPositions(log, pos(58.172, at('11:03')), ['24360'], at('11:03'));
+  I.trvLogPositions(log, pos(58.1721, at('11:04')), ['24360'], at('11:04'));
+  I.trvLogPositions(log, pos(58.180, at('11:05')), ['24360'], at('11:05'));
+  assert.deepEqual(log.rows.filter(r => r[0] === 'p').map(r => r[6]), [180, 300]);
+  assert.deepEqual(log.rows.filter(r => r[0] === 'p')[0], ['p', 180, '24360', 58.172, 12.99, 80, 180]);
+  // Vad appen räknade med
+  const m = setup(MEET(), { now: at('11:14'), known: LATE14, knownMeet: ['Jp'] });
+  I.trvLogModel(log, m, at('11:14'));
+  I.trvLogModel(log, m, at('11:14') + 5000);
+  assert.deepEqual(log.rows.filter(r => r[0] === 'm'), [['m', 840, '24360', 'Vr', 'Jp', 'beräknat', 7, 0, 'plan']]);
+  assert.deepEqual(log.rows.filter(r => r[0] === 'e'), [['e', 840, 3540, 19]]);
+  // Till körningen: utan det som bara håller reda på vad som sparats
+  const out = I.trvLogOut(log);
+  assert.equal(out.t0, '2026-11-25T10:00:00.000Z');
+  assert.deepEqual(Object.keys(out), ['v', 't0', 'line', 'rows']);
+  assert.ok(JSON.stringify(out).length < 3000);
+  assert.equal(I.trvLogOut(I.trvLogNew(at('11:00'), [])), null, 'tom logg sparas inte');
+  // Högst trvLogMax rader
+  const small = I.trvLogNew(at('11:00'), line.map(l => l.sig));
+  I.trvLogTrains(small, trains1, keys, at('11:01'), { trvLogMax: 5 });
+  assert.equal(small.rows.length, 5);
+  assert.equal(I.trvLogOut(small).full, true);
 });
