@@ -109,9 +109,11 @@ async function runJourney(fixes, opts) {
   let clock = installClock(w, fixes[0].t - STEP_MS);
   let rt = w.__railtimer;
   const route = STATIONS.map((s, i) => rt.makeRouteStation({ name: s[0], lat: s[1], lon: s[2], sig: s[3], radius: 200 }, i));
-  rt.initJourneyState(route, { trainNumber: 'TEST', vehicleType: 'Y31', notes: '' });
+  if (o.route) o.route(route);
+  rt.initJourneyState(route, { trainNumber: o.trainNumber || 'TEST', vehicleType: 'Y31', notes: '' });
   rt.showView('journey');
   rt.renderRouteCards();
+  if (o.afterStart) await o.afterStart(rt, w);
   const fed = [];
   let reloaded = false;
   for (const f of fixes) {
@@ -960,6 +962,125 @@ test('analys: hjälptexten för Stationstyp beskriver de nya flikarna', async ()
 // ── Körning ──
 
 // Bilder i telefonstorlek för granskning (node tests/run-browser-tests.mjs --shot=<namn>)
+// ── Resvyn och kartan ──
+
+/* Simulerat Overpass: ett spår mellan varje par av stationer som buktar ut åt sidan, så att
+   vägen längs spåret skiljer sig tydligt från fågelvägen. offline: true ger nätfel. */
+function fakeOverpass(opts) {
+  const o = opts || {};
+  const calls = [];
+  async function fetch(url, init) {
+    calls.push({ url, body: init && init.body });
+    if (o.offline) throw new TypeError('Failed to fetch');
+    const elements = [];
+    for (let i = 0; i + 1 < STATIONS.length; i++) {
+      const A = STATIONS[i], B = STATIONS[i + 1];
+      const geometry = [], nodes = [];
+      for (let k = 0; k <= 12; k++) {
+        const f = k / 12, bulge = 0.006 * Math.sin(Math.PI * f);
+        geometry.push({ lat: A[1] + (B[1] - A[1]) * f + bulge, lon: A[2] + (B[2] - A[2]) * f });
+        nodes.push(k === 0 ? i : (k === 12 ? i + 1 : 1000 + i * 100 + k));
+      }
+      elements.push({ type: 'way', id: 500 + i, nodes, geometry, tags: { railway: 'rail' } });
+    }
+    return { ok: true, status: 200, json: async () => ({ elements }) };
+  }
+  return { fetch, calls };
+}
+
+// Schemalagda tider för testresan: tidtabellen ligger 2–3 minuter före tåget
+function scheduleFor(fixes) {
+  const firstAt = i => fixes.find(f => f.dwellAt === i).t;
+  return route => route.forEach((st, i) => {
+    const base = i === 0 ? fixes[0].t + 120000 : firstAt(i) - 150000;
+    const m = Math.round(base / 60000) * 60000;
+    if (i > 0) st.scheduledArrival = new Date(m).toISOString();
+    if (i < route.length - 1) st.scheduledDeparture = new Date(m + (i === 0 ? 0 : 60000)).toISOString();
+  });
+}
+
+// Mitt på sträckan Källby → Blomberg
+async function midJourney(extra) {
+  const fixes = buildJourney();
+  const stopT = fixes.find(f => f.leg === 2 && f.frac > 0.55).t;
+  return runJourney(fixes, Object.assign({ trainNumber: '3344', drop: f => f.t > stopT, route: scheduleFor(fixes) }, extra));
+}
+
+const mapPaths = w => Array.from(w.document.querySelectorAll('#routeMap svg path:not(#mapTrail)'));
+
+test('karta: linjen går längs spåret när spårdata finns och hämtas bara en gång', async () => {
+  const ov = fakeOverpass();
+  const r = await midJourney({ afterStart: async rt => { rt.setRailFetchForTest(ov.fetch); await rt.loadRailGeometry(); } });
+  assertEqual(ov.calls.length, 1, 'ett anrop för hela rutten');
+  const paths = mapPaths(r.w);
+  assertEqual(paths.length, STATIONS.length - 1, 'en linje per sträcka');
+  assert(paths.every(p => !p.getAttribute('stroke-dasharray')), 'heldragna linjer längs spåret');
+  assert(paths.every(p => (p.getAttribute('d').match(/L/g) || []).length >= 3), 'linjerna har kurvor, inte bara två punkter');
+  assert(r.w.document.getElementById('mapNote').textContent.includes('OpenStreetMap'), 'källan anges');
+  assert((r.w.document.getElementById('mapTrail').getAttribute('d') || '').length > 20, 'körda delen ritas från GPS-spåret');
+  await r.rt.loadRailGeometry();
+  assertEqual(ov.calls.length, 1, 'sparade sträckor hämtas inte igen');
+  assert(r.w.localStorage.getItem('railtimer_rail_legs_v1').length > 100, 'sträckorna sparas på enheten');
+});
+
+test('karta: utan nät blir linjen rak och streckad, och resan fungerar som vanligt', async () => {
+  const ov = fakeOverpass({ offline: true });
+  const r = await midJourney({ afterStart: async rt => { rt.setRailFetchForTest(ov.fetch); await rt.loadRailGeometry(); } });
+  const paths = mapPaths(r.w);
+  assert(paths.length === STATIONS.length - 1 && paths.every(p => p.getAttribute('stroke-dasharray')), 'streckade raka linjer');
+  assert(r.w.document.getElementById('mapNote').textContent.includes('raka linjer'), 'det står att spårdata saknas');
+  assertEqual(r.w.localStorage.getItem('railtimer_rail_legs_v1'), null, 'nätfel sparas inte');
+  assert(r.rt.state.running && r.rt.state.route[2].actualDeparture, 'resan pågår med tider');
+});
+
+test('resvy: panelen visar nästa station, nedräkning och avvikelse; listan markerar nästa station', async () => {
+  const r = await midJourney();
+  const d = r.w.document;
+  assertEqual(d.getElementById('nextStop').textContent, 'Blomberg', 'nästa station');
+  assert(/km|m$/.test(d.getElementById('nextValue1').textContent), 'avstånd');
+  assert(/^\d+:\d\d$/.test(d.getElementById('nextCountdown').textContent), 'nedräkning m:ss: ' + d.getElementById('nextCountdown').textContent);
+  assertEqual(d.getElementById('nextDelay').textContent, '+2 min', 'avvikelse');
+  assert(d.getElementById('nextDelay').classList.contains('dl-late'), 'gul vid försening');
+  const cards = d.querySelectorAll('#cards .card');
+  assert(cards[3].classList.contains('active') && !cards[2].classList.contains('active'), 'nästa station markerad');
+  assert(cards[3].textContent.includes('kvar'), 'avstånd i raden');
+  assert(d.body.classList.contains('journey-mode'), 'resläge');
+  assert(d.scrollingElement.scrollHeight <= r.w.innerHeight + 1, 'sidan scrollar inte – bara listan');
+});
+
+test('resvy: vid station visar panelen uppehåll och tid till avgång, bara den stationen markeras', async () => {
+  const fixes = buildJourney();
+  const at = fixes.find(f => f.dwellAt === 2).t + 20000;
+  const r = await runJourney(fixes, { trainNumber: '3344', drop: f => f.t > at, route: scheduleFor(fixes) });
+  const d = r.w.document;
+  assert(d.getElementById('nextPanel').classList.contains('at-station'), 'vid station');
+  assertEqual(d.getElementById('nextStop').textContent, 'Källby', 'stationen');
+  assertEqual(d.getElementById('nextSub1').textContent, 'uppehåll', 'uppehåll');
+  assert(/avgång/.test(d.getElementById('nextCountdownSub').textContent), 'tid till eller efter avgång');
+  const cards = d.querySelectorAll('#cards .card');
+  assert(cards[2].classList.contains('at-station'), 'Källby markerad');
+  assertEqual(d.querySelectorAll('#cards .card.active').length, 0, 'ingen annan markerad');
+});
+
+test('karta: Följ zoomar in kring tåget, Hela visar hela rutten, och valet sparas', async () => {
+  const r = await midJourney();
+  const d = r.w.document;
+  // Avståndet på skärmen mellan Källby och Blomberg: större när kartan zoomar in
+  const gap = () => {
+    const c = Array.from(d.querySelectorAll('#routeMap svg > circle')).map(e => [+e.getAttribute('cx'), +e.getAttribute('cy')]);
+    return Math.hypot(c[3][0] - c[2][0], c[3][1] - c[2][1]);
+  };
+  assertEqual(d.getElementById('mapFollow').getAttribute('aria-pressed'), 'true', 'Följ förvalt');
+  const zoomed = gap();
+  d.getElementById('mapWhole').click();
+  assert(gap() < zoomed * 0.8, `Hela visar mer av rutten (${Math.round(gap())} mot ${Math.round(zoomed)} px)`);
+  assert(JSON.parse(r.w.localStorage.getItem('railtimer_map_v1')).mode === 'all', 'valet sparas');
+  d.getElementById('mapHide').click();
+  assert(d.getElementById('routeMapContainer').classList.contains('collapsed'), 'kartan dold');
+  d.getElementById('mapShow').click();
+  assert(!d.getElementById('routeMapContainer').classList.contains('collapsed'), 'kartan visas igen');
+});
+
 window.prepareShot = async function (name) {
   if (name === 'installningar') {
     const w = await loadApp();
@@ -971,6 +1092,19 @@ window.prepareShot = async function (name) {
     const fixes = buildJourney();
     const call = twoStationCall(fixes);
     await runJourney(fixes, { drop: f => call.drop(f) || f.t > call.resume + 60000 });
+  } else if (name === 'resa' || name === 'resa-vid-station' || name === 'resa-liggande') {
+    // Mitt i en resa med tidtabell: på väg mot Blomberg (eller stående i Källby)
+    const frame = document.getElementById('app');
+    if (name === 'resa-liggande') { frame.style.width = '780px'; frame.style.height = '360px'; }
+    const fixes = buildJourney();
+    const stopT = name === 'resa-vid-station' ? fixes.find(f => f.dwellAt === 2).t + 20000 : fixes.find(f => f.leg === 2 && f.frac > 0.55).t;
+    const ov = fakeOverpass();
+    await runJourney(fixes, {
+      trainNumber: '3344',
+      drop: f => f.t > stopT,
+      route: scheduleFor(fixes),
+      afterStart: async rt => { rt.setRailFetchForTest(ov.fetch); await rt.loadRailGeometry(); }
+    });
   } else if (name === 'rapport') {
     const fixes = buildJourney();
     await runJourney(fixes, { drop: twoStationCall(fixes).drop });

@@ -18,6 +18,7 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 | `index.html` | Kopia av GPS-appen för GitHub Pages |
 | `Analys.html` | Analysverktyg för gång- och uppehållstider |
 | `sw.js` | Service Worker för PWA |
+| `railtimer-karta.js` | Kartans linje längs spåret (OpenStreetMap) |
 | `kinnekulle-gps.webmanifest` | PWA manifest |
 
 ## Viktiga konstanter (i koden)
@@ -565,3 +566,35 @@ Dataunderlag (`railtimer-data`, okt–nov): 12 körningar avbröts efter 6–10 
 - **Avgång från startstationen** (`processSpeedTriggers`, `idx===0`) kräver fart över 2 km/h i `START_DEPART_CONFIRM_MS` (8 s) i sträck. Faller farten under tröskeln börjar räkningen om. Avgångstid och -position tas från första positionen i rörelse (`station.startMoveSince`), så tiden blir densamma som förut vid en riktig avgång. `handleStationExit` använder samma tid om den finns. Övriga stationer är oförändrade.
 - **GPS-uppvärmning** (`startGpsWarmup`, `stopGpsWarmup`): medan startformuläret visas körs en egen `watchPosition` med hög noggrannhet. Under Start-knappen visas *GPS söker position*, *GPS låser in sig (±N m)* eller *GPS klar (±N m)* vid högst 15 m (`GPS_READY_ACCURACY_M`). Bevakningen stängs när appen går till bakgrunden och när resans egen bevakning har startat. Inte i testläge.
 - Tester: `start: några sekunders falsk fart …` och `start: avgången räknas från …` i `tests/replay.html`. Facit för vanlig resa är oförändrat.
+
+## Uppdatering (2026-11-25b): resvyn och kartan längs spåret
+
+André 2026-11-25: frontend mer kompakt och följsam, tänk över vad som är viktigast att visa. Kartan följde inte järnvägen utan gick fågelvägen.
+
+Logiken för ankomst/avgång är **oförändrad** (regressionsfacit `tests/golden-normal-run.json` passerar).
+
+### Resvyn
+- **En skärm utan sidscroll** (`body.journey-mode`): rubrik, panel, karta och stationslista. Bara stationslistan scrollar. Sidfoten och loggräknaren döljs under resan.
+- **Panelen** visar det viktigaste stort: nästa station och avstånd. Under den en rad med fyra värden: planerad tid, nedräkning till planerad tid (`countdown`, "kvar till plan" eller "efter plan" i gult/rött), avvikelse (`currentDelay`, senast registrerade tid mot tidtabell) och fart med GPS-noggrannhet. Vid station: uppehållets längd, planerad avgång och tid kvar till avgång. En timer (`startPanelTimer`) uppdaterar varje sekund även när GPS:en är tyst.
+- Förseningen i headern är borttagen; den finns i panelen (`#nextDelay`). `updateDelaySummary` finns inte längre.
+- **Stationslistan** har en rad per station: nummer, namn med status under (avstånd kvar, "står här · 0:20", "passeras", anteckning), ankomst och avgång. Faktisk tid med avvikelse under, annars tidtabellens tid nedtonad med "plan". Tryck på raden för knapparna och anteckningen som förut.
+- Står tåget vid en station är bara den markerad (orange), annars nästa station (grön).
+- Listan rullar (`scrollToNextStation`) bara när tåget kommer fram eller åker vidare, och bara listan – inte sidan – så att kartan står kvar.
+- Resmeddelanden (`#journeyMsg`) visas som toast längst ner och flyttar inte layouten.
+- **Liggande telefon och skärmar ≥ 820 px**: panel och karta till vänster, stationslistan till höger.
+
+### Kartan (`railtimer-karta.js`)
+- Spårets sträckning hämtas från **OpenStreetMap via Overpass API** (`overpass-api.de`, reserv `overpass.kumi.systems`) i en rektangel runt varje sträcka (minst 2 km marginal). Bangårds- och sidospår (`service=yard|siding|spur`) hämtas inte; övriga `service`-spår kostar fyra gånger mer så att huvudspåret väljs.
+- Vägen mellan två stationer = kortaste väg (A*) i spårnätet mellan noderna närmast stationerna (högst 1,5 km bort). Glapp på upp till 25 m mellan spår kopplas ihop. Blir vägen längre än 3 × fågelvägen + 5 km räknas den som fel och ritas rakt.
+- Resultatet förenklas (6 m) och sparas per sträcka i `localStorage` (`railtimer_rail_legs_v1`, högst 150 sträckor, ca 200 kB). Hämtas en gång och fungerar sedan offline. Nätfel sparas inte; en sträcka utan spår försöks igen efter ett dygn. Blir lagringen full sparas bara rutten som körs.
+- Hämtningen startar när resan startar eller återupptas (`loadRailGeometry`) och när nätet kommer tillbaka. Tills den är klar, eller om den misslyckas, ritas raka streckade linjer.
+- Den körda delen ritas från resans GPS-spår (`track.points`, positioner med noggrannhet sämre än 100 m hoppas över).
+- **Följ** (förvalt): föregående, nästa och nästnästa station och tåget. **Hela**: hela rutten. **✕** döljer kartan. Valet sparas (`railtimer_map_v1`).
+- Bakgrunden ritas om bara när utsnittet eller stationernas status ändras; vid varje position flyttas bara tågets markör och GPS-spåret förlängs.
+- Källan anges i kartans hörn (© OpenStreetMap), som licensen kräver.
+- Inte provat mot riktiga Overpass härifrån (utvecklingsmiljön når inte overpass-api.de). Testerna använder simulerat Overpass-svar.
+
+### Tester
+- `node --test "tests/*.test.js"` – även `tests/railtimer-karta.test.js` (graf, kortaste väg, glapp, förenkling, fråga, cache, nätfel).
+- `node tests/run-browser-tests.mjs karta` och `… resvy`.
+- Bilder: `--shot=resa`, `--shot=resa-vid-station`, `--shot=resa-liggande`.
