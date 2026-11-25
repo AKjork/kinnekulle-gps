@@ -1,0 +1,54 @@
+# Gemensam Västtrafik-token för appen (se tools/vasttrafik-token.mjs).
+# Hemligheterna VT_KEY och VT_SECRET (Klientidentifierare och Hemlighet från Västtrafiks utvecklarportal)
+# läggs in en gång i Settings → Secrets and variables → Actions. Ingen annan behöver fylla i något.
+name: Västtrafik-token
+
+on:
+  schedule:
+    - cron: '23 */3 * * *'   # var 3:e timme; nytt token först när det gamla har mindre än 12 h kvar
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vasttrafik-token.yml'
+      - 'tools/vasttrafik-token.mjs'
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: vasttrafik-token
+  cancel-in-progress: false
+
+jobs:
+  token:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hämta token
+        run: node tools/vasttrafik-token.mjs
+        env:
+          VT_KEY: ${{ secrets.VT_KEY }}
+          VT_SECRET: ${{ secrets.VT_SECRET }}
+          FORCE: ${{ github.event_name == 'schedule' && '0' || '1' }}
+      - name: Publicera vt-token.json
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vt-token.json 2>/dev/null || exit 0
+          if git diff --cached --quiet; then echo "Inget nytt token"; exit 0; fi
+          git commit -q -m "Västtrafik-token (automatiskt)"
+          for i in 1 2 3; do
+            if git pull -q --rebase origin main && git push -q origin HEAD:main; then
+              # GitHub Pages bygger om efter en push; begär en byggning också, ifall pushen från Actions inte räcker
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/pages/builds" >/dev/null 2>&1 || true
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
