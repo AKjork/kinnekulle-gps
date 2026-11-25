@@ -1997,6 +1997,68 @@ test('info: utan tågnummer förklarar fliken varför den är tom', async () => 
   assert(r.w.document.getElementById('infoPane').textContent.includes('Infon bygger på tågnumret'), 'förklaring');
 });
 
+test('uppdatering: Uppdatera app mitt i resan laddar om och fortsätter samma resa utan frågan', async () => {
+  const fixes = buildJourney();
+  const stopT = fixes.find(f => f.leg === 2 && f.frac > 0.55).t;
+  const r = await runJourney(fixes, { trainNumber: '3344', drop: f => f.t > stopT, route: scheduleFor(fixes) });
+  const times = rt => rt.state.route.map(s => [s.actualArrival, s.actualDeparture].map(t => t ? new Date(t).toISOString() : null).join('|'));
+  const before = times(r.rt);
+  const id = r.rt.state.journeyId;
+  const frame = document.getElementById('app');
+  const reload = async action => {
+    const loaded = new Promise(resolve => { frame.onload = resolve; });
+    action();
+    await loaded;
+    const w = frame.contentWindow;
+    for (let i = 0; i < 100 && !w.__railtimer; i++) await realSleep(20);
+    installClock(w, stopT + 5000);
+    return w;
+  };
+  let w = await reload(() => r.rt.applyUpdate());
+  w.__railtimer.checkForInterruptedJourney();
+  await realSleep(150);
+  assert(w.__railtimer.state.running, 'resan pågår');
+  assertEqual(w.__railtimer.state.journeyId, id, 'samma resa');
+  assert(!w.document.getElementById('resumeDialog'), 'ingen fråga om att återuppta');
+  assertEqual(times(w.__railtimer), before, 'tiderna finns kvar');
+  assert(w.document.getElementById('journeyMsg').textContent.includes('Appen uppdaterad'), 'meddelande om uppdateringen');
+  // En vanlig omstart frågar som förut
+  w.__railtimer.saveActiveJourney();
+  w = await reload(() => w.location.reload());
+  w.__railtimer.checkForInterruptedJourney();
+  assert(w.document.getElementById('resumeDialog'), 'vanlig omstart frågar Återuppta resa');
+});
+
+test('uppdatering: ny version laddas direkt vid start utan resa, men under resan bara med meddelande', async () => {
+  const version = v => async () => ({ ok: true, status: 200, json: async () => ({ version: v }) });
+  // Startformuläret, ingen resa: appen laddar om, en gång per version
+  let w = await loadApp();
+  await clearAppStorage(w);
+  w.sessionStorage.clear();
+  let reloads = 0;
+  w.__railtimer.setVersionForTest(version('2099-01-01a'), () => { reloads++; });
+  w.__railtimer.showView('setup');
+  assertEqual(await w.__railtimer.checkForNewVersion(true), '2099-01-01a', 'ny version hittad');
+  assertEqual(reloads, 1, 'laddar om direkt');
+  await w.__railtimer.checkForNewVersion(true);
+  assertEqual(reloads, 1, 'laddar inte om i en slinga för samma version');
+  assert(w.document.getElementById('btnUpdate').style.display !== 'none', 'Uppdatera app visas i stället');
+  // Samma version som appen: inget händer
+  w.__railtimer.setVersionForTest(version(w.__railtimer.appVersion));
+  assertEqual(await w.__railtimer.checkForNewVersion(true), null, 'samma version: inget händer');
+  assertEqual(reloads, 1, 'ingen omladdning');
+  // Under resan: ingen omladdning, men meddelande
+  const r = await midJourney();
+  w = r.w;
+  w.sessionStorage.clear();
+  reloads = 0;
+  w.__railtimer.setVersionForTest(version('2099-01-01b'), () => { reloads++; });
+  await w.__railtimer.checkForNewVersion(true);
+  assertEqual(reloads, 0, 'ingen omladdning under resan');
+  assert(/Ny version 2099-01-01b – ⋮ → Uppdatera app \(resan fortsätter\)/.test(w.document.getElementById('journeyMsg').textContent), w.document.getElementById('journeyMsg').textContent);
+  assert(w.document.getElementById('btnUpdate').style.display !== 'none', 'Uppdatera app i menyn');
+});
+
 function formatHm(t) {
   return new Date(Math.round(t / 60000) * 60000).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
 }

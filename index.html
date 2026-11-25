@@ -824,7 +824,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25m';
+  const APP_VERSION = '2026-11-25n'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -927,7 +927,6 @@
   let deferredInstallPrompt = null;
   let wakeLockSentinel = null;
   let keepScreenAwake = false;
-  let pendingServiceWorker = null;
   let updateTriggered = false;
   let expandedCards = new Set(); // Track which cards are expanded
   let renderedRouteKey = ''; // Vilken rutt stationskorten senast byggdes för
@@ -973,6 +972,10 @@
     checkForInterruptedJourney();
     removeOrphanTracks().then(()=>scheduleUpload());
     window.addEventListener('online', () => { if(!allStationsCache.length || stationsStale) refreshStations(); });
+    // Senaste versionen från GitHub Pages: kollas vid start, när appen blir synlig och när nätet kommer tillbaka
+    checkForNewVersion(true);
+    setInterval(()=>{ if(document.visibilityState!=='hidden') checkForNewVersion(false); }, VERSION_CHECK_MS);
+    window.addEventListener('online', () => { checkForNewVersion(false); });
     await stationsLoaded;
   }
 
@@ -988,7 +991,10 @@
       loadAllStations, stationNames: () => allStationsCache.map(s => s.name), checkForInterruptedJourney,
       removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog,
       setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; },
-      refreshInfo, updateInfo, setInfoTab, infoModel: () => infoState.model
+      refreshInfo, updateInfo, setInfoTab, infoModel: () => infoState.model,
+      applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
+      setVersionForTest: (fetchFn, reloadFn) => { versionFetchForTest = fetchFn; if(reloadFn) reloadPage = reloadFn; },
+      appVersion: APP_VERSION
     };
   }
 
@@ -1479,15 +1485,7 @@
     if(els.updateBtn){
       els.updateBtn.addEventListener('click', ()=> {
         closeAllMenus();
-        if(pendingServiceWorker){
-          updateTriggered=true;
-          els.updateBtn.disabled=true;
-          showHeaderStatus('Uppdaterar appen…', false);
-          pendingServiceWorker.postMessage({type:'SKIP_WAITING'});
-          pendingServiceWorker=null;
-        }else{
-          window.location.reload();
-        }
+        applyUpdate();
       });
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -4897,6 +4895,8 @@
     els.cards.innerHTML='';
     renderedRouteKey='';
     updateNextStopUI();
+    // En ny version som kom under resan tas i bruk nu, innan nästa resa
+    if(latestVersion && latestVersion!==APP_VERSION) checkForNewVersion(true);
   }
 
   function escapeHtml(str){
@@ -5193,6 +5193,7 @@
       scheduleUpload();
       if(currentView==='setup') startGpsWarmup();
       if(state.running && (!infoState.fetchedAt || Date.now()-infoState.fetchedAt>=INFO_REFRESH_MS)) refreshInfo();
+      if(Date.now()-versionCheckedAt>=60000) checkForNewVersion(true);
     }else if(document.visibilityState==='hidden'){
       stopGpsWarmup();
       onAppHidden();
@@ -5254,6 +5255,15 @@
     const journeyAge = Date.now() - new Date(saved.startedAt).getTime();
     if(journeyAge > 12 * 60 * 60 * 1000){
       discardActiveJourney(saved);
+      return;
+    }
+
+    // Appen laddades om för att uppdateras mitt i resan: fortsätt direkt, utan att fråga
+    if(takeResumeAfterUpdate(saved)){
+      resumeJourney(saved).then(()=>{
+        showJourneyMessage(`Appen uppdaterad till ${APP_VERSION} – resan fortsätter`, false);
+        setTimeout(()=>{ els.journeyMsg.style.display='none'; }, 5000);
+      });
       return;
     }
 
@@ -5365,16 +5375,20 @@
     }
     if(navigator.serviceWorker){ // saknas t.ex. i inbyggda webbläsare i appar och via http
       window.addEventListener('load', ()=>{
-        navigator.serviceWorker.register(`./sw.js?v=${APP_VERSION}`).then(reg=>{
+        // updateViaCache 'none': sw.js hämtas alltid från servern, aldrig ur webbläsarens cache
+        navigator.serviceWorker.register(`./sw.js?v=${APP_VERSION}`, { updateViaCache:'none' }).then(reg=>{
           monitorServiceWorker(reg);
         }).catch(err=>{
           console.warn('Service worker misslyckades', err);
         });
       });
+      // En ny service worker tar över direkt (skipWaiting); om sidan då är gammal avgör versionskollen
       navigator.serviceWorker.addEventListener('controllerchange', ()=>{
         if(updateTriggered){
           window.location.reload();
+          return;
         }
+        checkForNewVersion(false);
       });
     }
     window.addEventListener('beforeinstallprompt', event=>{
@@ -5411,28 +5425,12 @@
     }
   }
 
+  // Service workern sköter bara sparade kopior för offline. Ny version upptäcks med versionskollen (checkForNewVersion).
+  let swRegistration=null;
   function monitorServiceWorker(reg){
-    function listenForInstall(worker){
-      if(!worker) return;
-      worker.addEventListener('statechange', ()=>{
-        if(worker.state==='installed'){
-          if(navigator.serviceWorker.controller){
-            pendingServiceWorker=worker;
-            showUpdatePrompt();
-          }
-        }
-      });
-    }
-    if(reg.waiting && navigator.serviceWorker.controller){
-      pendingServiceWorker=reg.waiting;
-      showUpdatePrompt();
-    }
-    if(reg.installing){
-      listenForInstall(reg.installing);
-    }
-    reg.addEventListener('updatefound', ()=>{
-      listenForInstall(reg.installing);
-    });
+    swRegistration=reg;
+    // En äldre service worker som väntar (från versioner före 2026-11-25n) får ta över direkt
+    if(reg.waiting) reg.waiting.postMessage({type:'SKIP_WAITING'});
   }
 
   function hideInstallButton(){
@@ -5441,11 +5439,92 @@
     }
   }
 
-  function showUpdatePrompt(){
+  /* ── Uppdatering: appen ska köra senaste versionen (2026-11-25n) ──
+     version.json på GitHub Pages har den publicerade appversionen. Skiljer den sig från APP_VERSION är sidan
+     gammal (den sparade kopian visades, t.ex. med dålig täckning).
+     - Ingen resa pågår och startformuläret visas: appen laddas om direkt (en gång per version, så att den
+       aldrig laddar om i en slinga), efter pågående uppladdning. Gäller vid start och när appen blir synlig.
+     - Annars (resa, rapport, eller kollen var tiden): meddelande och ⋮ → Uppdatera app. Under en resa sparas
+       resan och appen fortsätter den direkt efter omladdningen, utan frågan Återuppta resa. */
+  const VERSION_URL='./version.json';
+  const VERSION_CHECK_MS=15*60*1000;
+  const SESSION_KEY_RESUME_AFTER_UPDATE='railtimer_resume_after_update'; // sessionStorage: resans id
+  const SESSION_KEY_RELOADED_FOR='railtimer_reloaded_for';               // sessionStorage: version vi laddat om för
+  let latestVersion=null;
+  let versionCheckedAt=0;
+  let versionPromptShown=null;
+  let versionFetchForTest=null;               // testerna: simulerad version.json
+  let reloadPage=()=>window.location.reload(); // testerna kan fånga omladdningen
+
+  function sessionGet(key){ try{ return sessionStorage.getItem(key); }catch(e){ return null; } }
+  function sessionSet(key, value){ try{ if(value==null) sessionStorage.removeItem(key); else sessionStorage.setItem(key, value); }catch(e){} }
+
+  // Publicerad version enligt version.json, eller null (offline, fel, samma version)
+  async function checkForNewVersion(mayReload){
+    if((TEST_MODE && !versionFetchForTest) || navigator.onLine===false) return null;
+    versionCheckedAt=Date.now();
+    if(swRegistration) swRegistration.update().catch(()=>{});
+    let version=null;
+    try{
+      const url=`${VERSION_URL}?t=${Date.now()}`;
+      const resp=versionFetchForTest ? await versionFetchForTest(url) : await fetchWithTimeout(url, { cache:'no-store' }, 8000);
+      if(!resp.ok) return null;
+      version=String(((await resp.json())||{}).version||'');
+    }catch(e){
+      return null;
+    }
+    if(!version || version===APP_VERSION) return null;
+    latestVersion=version;
+    if(mayReload && canReloadNow() && sessionGet(SESSION_KEY_RELOADED_FOR)!==version){
+      sessionSet(SESSION_KEY_RELOADED_FOR, version);
+      await Promise.race([whenUploadIdle(), new Promise(r=>setTimeout(r, 20000))]);
+      if(canReloadNow()){ reloadPage(); return version; }
+    }
+    showUpdatePrompt(version);
+    return version;
+  }
+
+  // Omladdning utan att störa: ingen resa, startformuläret visas och ingen frågeruta är öppen
+  function canReloadNow(){
+    return !state.running && currentView==='setup' && !document.getElementById('resumeDialog');
+  }
+
+  function showUpdatePrompt(version){
     if(!els.updateBtn) return;
     els.updateBtn.style.display='inline-block';
     els.updateBtn.disabled=false;
-    showHeaderStatus('Ny version finns – öppna ⋮ och välj Uppdatera app.', false);
+    if(versionPromptShown===version) return;
+    versionPromptShown=version;
+    const text = state.running
+      ? `Ny version ${version||''} – ⋮ → Uppdatera app (resan fortsätter)`
+      : `Ny version ${version||''} – ⋮ → Uppdatera app`;
+    showHeaderStatus(text.replace(/\s+/g,' '), false);
+    if(state.running){
+      showJourneyMessage(text.replace(/\s+/g,' '), false);
+      setTimeout(()=>{ if(els.journeyMsg.textContent.startsWith('Ny version')) els.journeyMsg.style.display='none'; }, 8000);
+    }
+  }
+
+  // ⋮ → Uppdatera app. Under en resa sparas resan och spåret först, och appen fortsätter resan efter omladdningen.
+  function applyUpdate(){
+    updateTriggered=true;
+    if(els.updateBtn) els.updateBtn.disabled=true;
+    showHeaderStatus('Uppdaterar appen…', false);
+    if(state.running){
+      saveActiveJourney();
+      sessionSet(SESSION_KEY_RESUME_AFTER_UPDATE, String(state.journeyId||''));
+      Promise.resolve(flushTrack()).catch(()=>{}).then(()=>reloadPage());
+      return;
+    }
+    reloadPage();
+  }
+
+  // Sant en gång om appen laddades om för en uppdatering mitt i just den här resan
+  function takeResumeAfterUpdate(saved){
+    const id=sessionGet(SESSION_KEY_RESUME_AFTER_UPDATE);
+    if(!id) return false;
+    sessionSet(SESSION_KEY_RESUME_AFTER_UPDATE, null);
+    return !!(saved && String(saved.journeyId||'')===id);
   }
 
   function showHeaderStatus(text, isError){

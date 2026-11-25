@@ -948,3 +948,26 @@ André 2026-11-25: gör om kilometrarna till järnvägens egna km-tal, han förs
   - Saknas km-tal står "Km från Herrljunga C" i kolumnerna och "21,4 km från Herrljunga C" i raderna, och raden säger varför.
 - **Inte provat mot Trafikverket:** varken schemaversion 1.5, fälten, WITHIN-filtret eller om bandelarnas km-tal längs Kinnekullebanan räcker. Kontrollera vid första öppningen att raden under linjebandet visar bandelar, och att km-talen vid stationerna stämmer med linjeboken.
 - Tester: `node --test "tests/*.test.js"` (152), nya *km-tal: …*, *parseCrossings: …* och *fetchRailCrossings: …*. `node tests/run-browser-tests.mjs` (95), nytt *analys: Broms och gas visar Trafikverkets km-tal från plankorsningarna*. Bilderna `--shot=broms-och-gas…` visar km-tal (simulerade plankorsningar).
+
+## Uppdatering (2026-11-25n): appen kör senaste versionen när den öppnas
+
+André 2026-11-25, under resan med 23334: infofliken syntes inte, eftersom telefonen visade den sparade kopian av appen. "Appen borde ju uppdateras och köra senaste versionen automatiskt när man öppnar den. Samt synka sig med GitHub." Appversion `2026-11-25n`.
+
+### Förut
+- Service workern visade den sparade kopian först och hämtade den nya i bakgrunden. En ny version syntes först vid nästa start, och en ny service worker väntade tills appen stängts helt eller ⋮ → Uppdatera app valdes.
+
+### Nu
+- **Nätet först** (`sw.js`): appens filer hämtas från GitHub Pages. Den sparade kopian används bara utan täckning, när nätet inte svarat inom 4 s (`NETWORK_TIMEOUT_MS`), eller när servern svarar med fel. Bara lyckade svar sparas, som förut.
+- **Ny service worker tar över direkt** (`skipWaiting` vid installation, `clients.claim` vid aktivering). Registreringen har `updateViaCache: 'none'`, så att `sw.js` aldrig läses ur webbläsarens cache. En äldre service worker som väntar får `SKIP_WAITING` (`monitorServiceWorker`).
+- **Versionskoll** (`checkForNewVersion`): `version.json` har den publicerade appversionen och hämtas förbi alla cachar (`?t=…`, `cache: 'no-store'`, service workern rör den inte). Den kollas vid start, när appen blir synlig igen (högst en gång per minut), när nätet kommer tillbaka, när en ny service worker tar över och var 15:e minut.
+  - Skiljer den sig från `APP_VERSION` och **ingen resa pågår, startformuläret visas och ingen frågeruta är öppen** (`canReloadNow`): appen laddar om direkt, efter pågående uppladdning (högst 20 s). Bara en gång per version (`sessionStorage` `railtimer_reloaded_for`), så att den aldrig laddar om i en slinga.
+  - Annars (resa, rapport, eller kollen var 15:e minut): meddelandet *Ny version … – ⋮ → Uppdatera app (resan fortsätter)* och knappen i menyn. Versionen tas i bruk vid *Starta ny mätning*.
+- **Uppdatera app mitt i resan** (`applyUpdate`): resan och GPS-spåret sparas, och efter omladdningen fortsätter appen samma resa direkt, utan frågan *Återuppta resa?*, med meddelandet *Appen uppdaterad till … – resan fortsätter* (`sessionStorage` `railtimer_resume_after_update` med resans id, `takeResumeAfterUpdate`). En vanlig omstart frågar som förut.
+- **Höj versionen på två ställen:** `APP_VERSION` i `index.html` och `version.json`. Testet *version.json har samma version som appen* i `tests/sw.test.js` slår fel annars.
+- **Synk med GitHub** var redan automatisk och är oförändrad: körningar som inte laddats upp skickas när appen startar, när den blir synlig, när nätet kommer tillbaka och efter varje resa – aldrig under en pågående resa. Kräver att uppladdningen är inställd (⋮ → Uppladdning eller inloggningslänken).
+- Övergången: telefoner som har en äldre version kör den gamla service workern tills den nya har installerats. Det sker vid första öppningen efter publiceringen; från nästa öppning gäller nätet först.
+
+### Tester
+- `node --test "tests/*.test.js"` (159), nya i `tests/sw.test.js`: med nät visas servern, utan nät och vid tidsgräns den sparade kopian, felsvar, `version.json` orörd, `skipWaiting`/`clients.claim` och gamla kopior bort, och samma version i `index.html` och `version.json`.
+- `node tests/run-browser-tests.mjs uppdatering` (2): *Uppdatera app mitt i resan laddar om och fortsätter samma resa utan frågan* (tiderna kvar, vanlig omstart frågar), och *ny version laddas direkt vid start utan resa, men under resan bara med meddelande* (en gång per version, samma version gör inget). Alla webbläsartester: 97.
+- Inte provat på en riktig telefon: att Safari och Chrome byter service worker som väntat. Kontrollera efter publiceringen att ⋮-menyn visar den nya versionen efter en omstart.
