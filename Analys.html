@@ -177,7 +177,7 @@
   @media print{
     @page{margin:12mm}
     body{background:#fff;color:#000}
-    header,.card,.tabs,.no-print,.tab-content:not(.active),#ttSummary,#trainsSummary,#segmentsSummary,#compareSummary{display:none !important}
+    header,.card,.tabs,.no-print,.tab-content:not(.active),#ttSummary,#trainsSummary,#segmentsSummary,#compareSummary,#motionSummary{display:none !important}
     main{max-width:none;padding:0}
     .print-header{display:block;margin-bottom:.5rem}
     .print-header h2{margin:0 0 .25rem;color:#000;font-size:1.1rem}
@@ -223,6 +223,124 @@
     .chart .grid{stroke:#ccc}.chart .zero{stroke:#666}
     .chart .axis-label,.chart .st-label{fill:#000}
     .balance div{background:#fff;border-color:#888;color:#000}.balance strong{color:#000}
+  }
+  /* Broms och gas: rött = bromsar, blått = gasar, grått = jämn fart (validerat för färgblindhet mot mörk och vit bakgrund) */
+  :root{--brake:#e66767;--gas:#3987e5;--even:#383835}
+  .mz-route{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:.4rem;align-items:end}
+  .mz-route select{min-width:9.5rem;width:100%}
+  .mz-swap{font-size:1.15rem;line-height:1;padding:.35rem .65rem;min-height:2.1rem}
+  @media (max-width:640px){ .mz-route{width:100%} .mz-route select{min-width:0} }
+  .mz-legend{display:flex;gap:1rem;flex-wrap:wrap;align-items:center;font-size:.75rem;color:var(--ink-dim);margin:.25rem 0 .75rem}
+  .mz-legend .key{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:.35rem}
+  .key.brake{background:var(--brake)} .key.gas{background:var(--gas)} .key.even{background:var(--even)}
+  .key.fade{background:linear-gradient(90deg,rgba(230,103,103,.15),var(--brake));width:28px}
+  .h-broms{fill:var(--brake)} .h-gas{fill:var(--gas)} .h-jamn{fill:var(--even)}
+  .band-broms{fill:var(--brake);opacity:.13} .band-gas{fill:var(--gas);opacity:.13}
+  .mz-overview{overflow-x:auto;background:var(--bg);border:1px solid var(--b);border-radius:10px;padding:.5rem .25rem .25rem;margin:.25rem 0 1rem;-webkit-overflow-scrolling:touch}
+  .mz-overview svg{display:block;height:auto}
+  .mz-overview .st-tick{stroke:var(--b-light);stroke-width:1}
+  .mz-overview .st-tick.stop{stroke:var(--ink-dim)}
+  .mz-overview .st-name{fill:var(--ink-dim);font-size:11px;cursor:pointer}
+  .mz-overview .st-name.stop{fill:var(--ink)}
+  .mz-overview .km{fill:var(--mut);font-size:10px}
+  .mz-overview .track{fill:var(--card-bg)}
+  .mz-list{position:relative;border:1px solid var(--b);border-radius:10px;background:var(--card-bg);overflow:hidden}
+  .mz-axis,.mz-row{display:grid;grid-template-columns:minmax(0,1fr);gap:.35rem;padding:.6rem .75rem .6rem 2.1rem;position:relative}
+  .mz-axis{padding-top:.4rem;padding-bottom:.2rem;font-size:.7rem;color:var(--mut);border-bottom:1px solid var(--b);background:var(--bg)}
+  .mz-axis .mz-scale{position:relative;display:block;height:1.1rem;font-variant-numeric:tabular-nums}
+  .mz-axis .mz-scale span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
+  .mz-axis .mz-scale span:first-child{transform:none}
+  .mz-axis .mz-scale span:last-child{transform:translateX(-100%)}
+  .mz-axis .mz-scale span:nth-child(4){color:var(--ink-dim)}
+  .mz-row > span{display:block}
+  .mz-row > .mz-head,.mz-row > .mz-nums{display:flex}
+  .mz-bar{overflow:hidden}
+  .mz-row{width:100%;text-align:left;border:none;border-radius:0;background:transparent;color:var(--ink);font-size:inherit;padding-top:.65rem;padding-bottom:.65rem;cursor:pointer}
+  .mz-row + .mz-row,.mz-detail + .mz-row{border-top:1px solid var(--b)}
+  .mz-row:hover:not(:disabled){background:var(--bg)}
+  .mz-row.open{background:var(--pri-glow)}
+  .mz-row.pass{cursor:default;padding-top:.35rem;padding-bottom:.35rem;color:var(--mut)}
+  .mz-row.pass:hover{background:transparent}
+  /* Linjen: lodrät linje med en punkt per station */
+  .mz-row::before{content:'';position:absolute;left:.95rem;top:0;bottom:0;width:2px;background:var(--b-light)}
+  .mz-row::after{content:'';position:absolute;left:calc(.95rem - 5px);top:1.05rem;width:8px;height:8px;border-radius:50%;background:var(--ink);border:2px solid var(--card-bg)}
+  .mz-row.pass::after{width:6px;height:6px;left:calc(.95rem - 4px);top:.7rem;background:var(--card-bg);border:2px solid var(--b-light)}
+  .mz-row.first::before{top:1.2rem} .mz-row.last::before{bottom:auto;height:1.2rem}
+  .mz-head{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap}
+  .mz-name{font-weight:600;font-size:.95rem}
+  .mz-row.pass .mz-name{font-weight:400;font-size:.85rem}
+  .mz-sub{color:var(--mut);font-size:.75rem;font-variant-numeric:tabular-nums}
+  .mz-bar{display:block;width:100%;height:16px;border-radius:4px}
+  .mz-bar .bg{fill:var(--bg)}
+  .mz-bar .mid{stroke:var(--ink);stroke-width:2}
+  .mz-bar .stopat{fill:var(--ink)}
+  .mz-nums{display:flex;gap:.4rem 1rem;flex-wrap:wrap;font-size:.8rem;color:var(--ink-dim);font-variant-numeric:tabular-nums}
+  .mz-nums strong{color:var(--ink);font-weight:600}
+  .mz-nums .key{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:.3rem;vertical-align:-1px}
+  .mz-few{color:var(--warn);font-size:.75rem}
+  .mz-detail{padding:.25rem .75rem 1rem 2.1rem;position:relative;background:var(--bg-solid)}
+  .mz-detail::before{content:'';position:absolute;left:.95rem;top:0;bottom:0;width:2px;background:var(--b-light)}
+  .mz-detail .balance{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .mz-detail .balance span{display:block;font-size:.7rem;color:var(--mut)}
+  #motionZones td{white-space:nowrap}
+  @media (min-width:900px){ .mz-detail .balance{grid-template-columns:repeat(4,minmax(0,1fr))} }
+  .mz-chart{position:relative}
+  .mz-chart .run{fill:none;stroke:rgba(154,160,166,.35);stroke-width:1.25}
+  .mz-chart .median{fill:none;stroke:var(--ink);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  .mz-chart .station{stroke:var(--ink-dim);stroke-width:1;stroke-dasharray:4 4}
+  .mz-chart .cross{stroke:var(--ink-dim);stroke-width:1;display:none}
+  .mz-chart .hover{fill:transparent;cursor:crosshair;touch-action:pan-y}
+  .mz-tip{position:absolute;pointer-events:none;background:var(--bg-solid);border:1px solid var(--b-light);border-radius:6px;padding:.35rem .5rem;font-size:.75rem;color:var(--ink);white-space:nowrap;display:none;z-index:2;font-variant-numeric:tabular-nums}
+  .mz-tip b{font-weight:600}
+  .mz-map{position:relative;height:300px;border-radius:8px;overflow:hidden;border:1px solid var(--b);background:#1f2329;margin:.5rem 0 1rem;break-inside:avoid}
+  .mz-map .tiles img{position:absolute;width:256px;height:256px;filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.5);user-select:none;-webkit-user-drag:none}
+  .mz-map svg{position:absolute;left:0;top:0}
+  .mz-map .attr{position:absolute;right:4px;bottom:3px;font-size:10px;color:var(--ink-dim);background:rgba(13,15,18,.7);padding:0 4px;border-radius:3px}
+  .mz-map .attr a{color:inherit}
+  .mz-map .base{fill:none;stroke:rgba(232,234,237,.35);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+  .mz-map .seg{fill:none;stroke-width:6;stroke-linecap:round}
+  .mz-map .seg.broms{stroke:var(--brake)} .mz-map .seg.gas{stroke:var(--gas)}
+  .mz-map .st{fill:var(--ink);stroke:var(--bg-solid);stroke-width:3}
+  .mz-map .lbl{fill:var(--ink);font-size:12px;font-weight:600;paint-order:stroke;stroke:var(--bg-solid);stroke-width:3px}
+  .mz-zone-kind{white-space:nowrap}
+  .mz-zone-kind .key{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:.35rem;vertical-align:-1px}
+  td a{color:var(--blue)}
+  @media (min-width:900px){
+    .mz-axis,.mz-row{grid-template-columns:13rem minmax(0,1fr) 19rem;align-items:center;column-gap:1rem}
+    .mz-axis > :first-child{grid-column:2}
+    .mz-row .mz-nums{justify-content:flex-start}
+    .mz-row.pass{grid-template-columns:13rem}
+    .mz-row .mz-sub{flex-basis:100%}
+  }
+  @media (max-width:640px){
+    .tabs{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .tab{white-space:nowrap;flex:none}
+  }
+  @media print{
+    :root{--brake:#d03b3b;--gas:#2a78d6;--even:#d9d9d6}
+    /* Utskriften i svart på vitt: fliken får ljusa värden för de mörka färgerna */
+    #motionReport{--ink:#000;--ink-dim:#222;--mut:#444;--b:#bbb;--b-light:#999;--bg:#fff;--bg-solid:#fff;--card-bg:#fff;--pri-glow:#f0f0f0}
+    .mz-list,.mz-overview{background:#fff;border-color:#888}
+    .mz-overview{overflow:visible}
+    .mz-overview svg{width:100% !important}
+    .mz-axis{background:#fff;color:#000}
+    .mz-row,.mz-row.pass,.mz-row.open{background:#fff !important}
+    .mz-row,.mz-name,.mz-sub,.mz-nums,.mz-nums strong{color:#000 !important}
+    .mz-row{break-inside:avoid}
+    .mz-row::before{background:#888} .mz-row::after{background:#000;border-color:#fff}
+    .mz-bar .bg{fill:#f0efec} .mz-bar .mid{stroke:#000} .mz-bar .stopat{fill:#000}
+    .mz-overview .st-name,.mz-overview .st-name.stop,.mz-overview .km{fill:#000}
+    .mz-overview .track{fill:#f0efec}
+    .mz-detail{background:#fff} .mz-detail::before{background:#888}
+    .mz-chart .median{stroke:#000} .mz-chart .run{stroke:rgba(0,0,0,.25)}
+    .mz-map{background:#f4f3ef}
+    .mz-map .tiles img{filter:none}
+    .mz-map .base{stroke:rgba(0,0,0,.35)}
+    .mz-map .attr{background:rgba(255,255,255,.8);color:#000}
+    .mz-map .lbl{fill:#000;stroke:#fff}
+    .mz-map .st{fill:#000;stroke:#fff}
+    .mz-list,.mz-overview,.mz-bar,.mz-map,.key{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    td a{color:#000;text-decoration:none}
   }
   .gh-settings{margin-top:.75rem}
   .gh-settings summary{cursor:pointer;color:var(--ink-dim);font-size:.85rem}
@@ -353,6 +471,7 @@
     <button class="tab" data-tab="segments">Sträckor</button>
     <button class="tab" data-tab="timetable">Tidtabell</button>
     <button class="tab" data-tab="compare">Jämför perioder</button>
+    <button class="tab" data-tab="motion">Broms och gas</button>
   </div>
 
   <div id="tabTrains" class="tab-content active">
@@ -481,6 +600,37 @@
       </div>
     </div>
   </div>
+  <div id="tabMotion" class="tab-content">
+    <div class="report" id="motionReport">
+      <div class="print-header"></div>
+      <p class="meta" id="motionSummary">Ladda data för att se analys.</p>
+      <div id="motionContent" style="display:none">
+        <div class="report-actions no-print">
+          <div class="mz-route" role="group" aria-label="Sträcka och färdriktning">
+            <div class="filter-group"><label for="motionFrom">Från</label><select id="motionFrom"></select></div>
+            <button type="button" id="btnMotionSwap" class="ghost mz-swap" title="Byt riktning" aria-label="Byt riktning">⇄</button>
+            <div class="filter-group"><label for="motionTo">Till</label><select id="motionTo"></select></div>
+          </div>
+          <button type="button" id="btnMotionWhole" class="ghost">Hela linjen</button>
+          <button id="btnMotionCsv" class="ghost">Exportera till Excel</button>
+          <button id="btnMotionPrint" class="ghost">Skriv ut / PDF</button>
+        </div>
+        <div class="mz-legend">
+          <span><span class="key brake"></span>Bromsar</span>
+          <span><span class="key gas"></span>Gasar</span>
+          <span><span class="key even"></span>Jämn fart</span>
+          <span><span class="key fade"></span>Starkare färg = fler körningar</span>
+        </div>
+        <h3>Hela linjen</h3>
+        <div id="motionOverview" class="mz-overview"></div>
+        <h3 id="motionListTitle">Vid uppehållen</h3>
+        <div id="motionList" class="mz-list"></div>
+        <h3 id="motionTableTitle">Lista för halkbekämpningen</h3>
+        <div id="motionTable"></div>
+        <p class="meta no-print">Räknat ur GPS-spåren (en punkt i sekunden). Tåget <strong>bromsar</strong> när farten minskar med minst 0,15 m/s² och <strong>gasar</strong> när den ökar med minst 0,15 m/s²; däremellan är farten jämn (rullning och lutning). Vid varje station räknas bara körningar som stannade där. Avstånden är meter före och efter stationens mittpunkt (Trafikverkets koordinat) i färdriktningen, i steg om 50 m. En <strong>zon</strong> är där minst hälften av körningarna bromsar eller gasar. <strong>Inbromsning</strong> och <strong>gas</strong> räknar ihop zoner i steg, till exempel inför en bangård, så länge tåget inte gör tvärtom däremellan. Km räknas längs spåret från linjens ände. Välj sträcka med <strong>Från</strong> och <strong>Till</strong> (alla körningar som går där räknas, även de som bara går en del av sträckan); ⇄ byter riktning. Station 1 och 2 i filtret väljer också sträckan. Klicka på en station för fartprofil, karta och koordinater.</p>
+      </div>
+    </div>
+  </div>
 </main>
 
 <script src="railtimer-github.js"></script>
@@ -512,6 +662,15 @@
   let openTrain = '';            // tåget vars kort visas i Per tåg
   let openSegment = '';          // sträckan vars mätningar visas i Sträckor
   let lastCompare = null;        // senaste jämförelsen (Jämför perioder)
+  let motionMap = new Map();     // körnings-id → AN.motionPoints (Broms och gas), räknas med spåren
+  let motionDir = 1;             // Broms och gas: färdriktningen, 1 = stigande km (följer Från → Till)
+  let motionFrom = '';           // vald sträcka Från → Till (stationsnamn); tomt = hela linjen
+  let motionTo = '';
+  let motionFilterRoute = '';    // Station 1 och 2 i filtret som senast valde sträckan
+  let openMotion = '';           // stationen vars fartprofil och karta visas (namn|riktning)
+  let lastMotion = null;         // senaste Broms och gas
+  let motionDirty = true;        // urvalet har ändrats sedan Broms och gas räknades
+  let tileUrl = TEST_MODE ? '' : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'; // testerna når inte nätet
 
   // Elements
   const els = {
@@ -577,6 +736,28 @@
     if(btn) openProposal(btn.dataset.proposal);
   });
 
+  document.getElementById('btnMotionCsv').addEventListener('click', exportMotionCsv);
+  document.getElementById('btnMotionPrint').addEventListener('click', printMotion);
+  document.getElementById('motionFrom').addEventListener('change', e => setMotionRoute(e.target.value, null));
+  document.getElementById('motionTo').addEventListener('change', e => setMotionRoute(null, e.target.value));
+  document.getElementById('btnMotionSwap').addEventListener('click', () => setMotionRoute(motionTo, motionFrom));
+  document.getElementById('btnMotionWhole').addEventListener('click', () => {
+    if(!lastMotion) return;
+    const L = motionRange(lastMotion).L;
+    const first = L.stations[0].name, last = L.stations[L.stations.length - 1].name;
+    setMotionRoute(...(motionDir > 0 ? [first, last] : [last, first]));
+  });
+  // Station i listan, i linjebandet eller i tabellen: visa fartprofil och karta
+  ['motionList', 'motionOverview', 'motionTable'].forEach(id => document.getElementById(id).addEventListener('click', e => {
+    if(e.target.closest('a, #motionDetail')) return;
+    const el = e.target.closest('[data-motion-key]');
+    if(el) openMotionStation(el.dataset.motionKey);
+  }));
+  let motionResize = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(motionResize);
+    motionResize = setTimeout(() => { if(openMotion && document.getElementById('motionDetail')) renderMotionDetail(); }, 200);
+  });
   document.getElementById('btnTrainsCsv').addEventListener('click', exportTrainsCsv);
   document.getElementById('btnTrainsPrint').addEventListener('click', printTrains);
   document.getElementById('trainsTable').addEventListener('click', e => {
@@ -621,6 +802,7 @@
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       tab.classList.add('active');
       document.getElementById('tab' + capitalize(tab.dataset.tab)).classList.add('active');
+      if(tab.dataset.tab === 'motion' && motionDirty) renderMotion();
     });
   });
 
@@ -881,11 +1063,15 @@
     renderSegments();
     renderTimetable();
     renderCompare();
+    // Broms och gas räknas bara när fliken visas (tar en stund med många spår)
+    motionDirty = true;
+    if(document.getElementById('tabMotion').classList.contains('active')) renderMotion();
   }
 
   // Spåren analyseras en gång per inläsning (inte vid varje filterändring)
   function refreshTrackInfo(){
     trackInfo = AN.analyzeTracks(allLogs, allTracks);
+    motionMap = AN.motionTracks(allLogs, allTracks);
   }
 
   function updateTrackLine(){
@@ -908,6 +1094,9 @@
     document.getElementById('ttContent').style.display = 'none';
     document.getElementById('compareSummary').textContent = 'Ladda data för att se analys.';
     document.getElementById('compareContent').style.display = 'none';
+    lastMotion = null;
+    document.getElementById('motionSummary').textContent = 'Ladda data för att se analys.';
+    document.getElementById('motionContent').style.display = 'none';
   }
 
   // ── Gemensamt för Per tåg, Sträckor och Tidtabell ──
@@ -1967,6 +2156,526 @@
     if(lastCompare) printReport('compareReport', COMPARE_TITLE, compareMeta(lastCompare));
   }
 
+  // ── Broms och gas ──
+
+  const MOTION_TITLE = 'RailTimer – Broms och gas vid uppehållen';
+  const MZ_RANGE = 3000;                        // stationsraderna: 3 km före till 3 km efter
+
+  function fmtM(v){ return Math.round(Math.abs(v)).toLocaleString('sv-SE') + ' m'; }
+  function fmtNum(v){ return Math.round(Math.abs(v)).toLocaleString('sv-SE'); }
+  function fmtKm(v, d){ return AN.formatMinutes(v, d == null ? 1 : d); }
+  function fmtPos(s){ return Math.abs(s) < 1 ? 'stationen' : fmtM(s) + (s < 0 ? ' före' : ' efter'); }
+  function fmtRange(z){ return 'från ' + fmtPos(z.from) + ' till ' + fmtPos(z.to); }
+  function fmtSpeed(v){ return v == null ? '–' : Math.round(v) + ' km/h'; }
+  function pct(v){ return Math.round(v * 100) + ' %'; }
+  function fmtCoord(p){ return p && p.lat != null && isFinite(p.lat) ? p.lat.toFixed(5) + ', ' + p.lon.toFixed(5) : '–'; }
+  function mapLink(p){
+    if(!p || p.lat == null || !isFinite(p.lat)) return '–';
+    return `<a href="https://www.google.com/maps/search/?api=1&query=${p.lat.toFixed(5)},${p.lon.toFixed(5)}" target="_blank" rel="noopener" title="Öppna i kartan">${esc(fmtCoord(p))}</a>`;
+  }
+  // Inbromsningen: "från 950 m före"; slutar den en bit före stationen: "1 850–250 m före"
+  function brakeText(a){
+    if(a.to <= 0) return Math.abs(a.to) < 100 ? 'från ' + fmtM(a.from) + ' före' : fmtNum(a.from) + '–' + fmtM(a.to) + ' före';
+    return fmtM(a.from) + ' före – ' + fmtM(a.to) + ' efter';
+  }
+  function gasText(d){
+    if(d.from >= 0) return d.from < 100 ? 'till ' + fmtM(d.to) + ' efter' : fmtNum(d.from) + '–' + fmtM(d.to) + ' efter';
+    return fmtM(d.from) + ' före – ' + fmtM(d.to) + ' efter';
+  }
+  function passText(n){ return n + (n === 1 ? ' passage' : ' passager'); }
+  function mainLine(z){ return z.lines.slice().sort((a, b) => b.length - a.length)[0]; }
+
+  // Färg för ett längdsteg: det körningarna oftast gör, starkare ju fler som gör det. null = för få körningar
+  function heatOf(b, minRuns){
+    if(!b || b.n < minRuns) return null;
+    const sb = b.broms / b.n, sg = b.gas / b.n;
+    const kind = sb >= sg ? 'broms' : 'gas';
+    const share = Math.max(sb, sg);
+    if(share < 0.15) return { kind: 'jamn', alpha: 1, share };
+    return { kind, alpha: (0.25 + 0.75 * Math.min(1, (share - 0.15) / 0.6)).toFixed(2), share };
+  }
+
+  /* Urvalet: filtrets körningar (tåg, fordon, datum, tid, dag). Sträckan väljs i vyn och tar inte bort körningar:
+     alla som går någon del av sträckan räknas, och körningarna skärs inte av, så att inbromsningen in mot första
+     stationen kommer med. */
+  function motionData(){
+    const filter = currentFilter();
+    const runs = allLogs.filter(log => AN.runMatches(log, filter));
+    const z = AN.motionZones(runs, motionMap);
+    const tracked = runs.filter(r => motionMap.has(String(r.id)));
+    return Object.assign(z, { filter, selected: runs.length, period: AN.period(tracked) });
+  }
+
+  function motionLineOf(z, name){ return name ? z.lines.find(L => L.stations.some(s => s.name === name)) : null; }
+
+  /* Vald sträcka Från → Till på samma linje. Färdriktningen följer valet (1 = stigande km).
+     Utan giltigt val: hela den längsta linjen, i den riktning som senast valdes. */
+  function motionRange(z){
+    let L = motionLineOf(z, motionFrom);
+    if(!L || motionLineOf(z, motionTo) !== L || motionFrom === motionTo){
+      L = mainLine(z);
+      const first = L.stations[0].name, last = L.stations[L.stations.length - 1].name;
+      [motionFrom, motionTo] = motionDir > 0 ? [first, last] : [last, first];
+    }
+    const from = L.stations.find(s => s.name === motionFrom);
+    const to = L.stations.find(s => s.name === motionTo);
+    if(to.km !== from.km) motionDir = to.km > from.km ? 1 : -1;
+    const lo = Math.min(from.km, to.km), hi = Math.max(from.km, to.km);
+    return { L, from, to, dir: motionDir, lo, hi,
+      whole: lo <= L.stations[0].km + 1e-9 && hi >= L.stations[L.stations.length - 1].km - 1e-9 };
+  }
+  // "Håkantorp → Gårdsjö" i vald riktning, "Gårdsjö → Håkantorp" i den andra
+  function routeText(r, dir){ return (dir == null || dir === r.dir) ? r.from.name + ' → ' + r.to.name : r.to.name + ' → ' + r.from.name; }
+
+  // Stationerna på sträckan i färdriktningen
+  function lineOrder(r, dir){
+    const list = r.L.stations.filter(s => s.km >= r.lo - 1e-9 && s.km <= r.hi + 1e-9);
+    return dir > 0 ? list : list.slice().reverse();
+  }
+
+  /* Byter Från och/eller Till (null = oförändrad). Hamnar andra änden på en annan linje eller på samma station
+     väljs den ände av linjen som ligger längst bort. Öppen station följer med till den nya riktningen. */
+  function setMotionRoute(from, to){
+    const z = lastMotion;
+    if(!z) return;
+    if(from != null) motionFrom = from;
+    if(to != null) motionTo = to;
+    const changed = from != null ? motionFrom : motionTo;
+    const other = from != null ? motionTo : motionFrom;
+    const L = motionLineOf(z, changed);
+    if(L && (motionLineOf(z, other) !== L || other === changed)){
+      const st = L.stations.find(s => s.name === changed);
+      const first = L.stations[0], last = L.stations[L.stations.length - 1];
+      const far = Math.abs(first.km - st.km) >= Math.abs(last.km - st.km) ? first : last;
+      if(from != null) motionTo = far.name; else motionFrom = far.name;
+    }
+    const before = motionDir;
+    motionRange(z);
+    if(openMotion && motionDir !== before) openMotion = openMotion.replace(/\|-?1$/, '|' + motionDir);
+    renderMotionView();
+  }
+
+  function renderMotion(){
+    const summary = document.getElementById('motionSummary');
+    const content = document.getElementById('motionContent');
+    lastMotion = null;
+    motionDirty = false;
+    if(!allLogs.length){ summary.textContent = 'Ladda data för att se analys.'; content.style.display = 'none'; return; }
+    // Station 1 och 2 i filtret väljer sträckan när de ändras
+    const gf = validStations.has(els.filterFrom.value) ? els.filterFrom.value : '';
+    const gt = validStations.has(els.filterTo.value) ? els.filterTo.value : '';
+    const routeKey = gf && gt && gf !== gt ? gf + '|' + gt : '';
+    if(routeKey !== motionFilterRoute){
+      motionFilterRoute = routeKey;
+      if(routeKey){ motionFrom = gf; motionTo = gt; }
+    }
+    const z = motionData();
+    if(!z.runCount || !z.lines.length){
+      summary.textContent = motionMap.size ? 'Inga körningar med GPS-spår i urvalet.'
+        : trackStatus ? 'GPS-spåren: ' + trackStatus + '.' : 'Inga GPS-spår inlästa. Hämta från GitHub, eller importera spåren (gps-spar/…) tillsammans med körningarna.';
+      content.style.display = 'none';
+      return;
+    }
+    lastMotion = z;
+    content.style.display = '';
+    renderMotionView();
+  }
+
+  function renderMotionView(){
+    const z = lastMotion;
+    if(!z) return;
+    const r = motionRange(z);
+    // Från och Till: stationerna i linjens ordning (en grupp per linje när det finns flera)
+    const options = selected => z.lines.map(L => {
+      const opts = L.stations.map(s => `<option value="${esc(s.name)}"${s.name === selected ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
+      return z.lines.length > 1 ? `<optgroup label="${esc(L.stations[0].name + ' – ' + L.stations[L.stations.length - 1].name)}">${opts}</optgroup>` : opts;
+    }).join('');
+    document.getElementById('motionFrom').innerHTML = options(motionFrom);
+    document.getElementById('motionTo').innerHTML = options(motionTo);
+    document.getElementById('btnMotionWhole').style.display = r.whole ? 'none' : '';
+    const route = routeText(r);
+    const stopCount = z.stations.filter(s => s.line === r.L.index && s.dir === r.dir && s.n > 0 && s.km >= r.lo - 1e-9 && s.km <= r.hi + 1e-9).length;
+    document.getElementById('motionSummary').textContent =
+      `${z.runCount} körningar med GPS-spår (${periodText(z.period)}) · ${route}, ${fmtKm(r.hi - r.lo, r.hi - r.lo < 10 ? 1 : 0)} km · ` +
+      `${stopCount} stationer med uppehåll` + (z.filter.train ? ` · tåg ${z.filter.train}` : '');
+    document.getElementById('motionOverview').innerHTML = overviewHtml(z, r);
+    document.getElementById('motionListTitle').textContent = 'Vid uppehållen ' + route;
+    document.getElementById('motionList').innerHTML = stationListHtml(z, r);
+    document.getElementById('motionTableTitle').textContent = 'Lista för halkbekämpningen, ' + route;
+    document.getElementById('motionTable').innerHTML = motionTableHtml(z, r);
+    renderMotionDetail();
+  }
+
+  /* Hela linjen: ett band i färdriktningen (vänster → höger) med var körningarna bromsar och gasar, i km längs spåret.
+     Bredden följer linjens längd (6 px/km); på mobilen rullas bandet i sidled. */
+  function overviewHtml(z, r){
+    const L = r.L;
+    const dir = r.dir;
+    const d = L.dirs.find(x => x.dir === dir);
+    const stations = lineOrder(r, dir);
+    if(stations.length < 2) return '';
+    const kmA = Math.min(stations[0].km, stations[stations.length - 1].km);
+    const kmB = Math.max(stations[0].km, stations[stations.length - 1].km);
+    const span = Math.max(0.5, kmB - kmA);
+    const P = 18;
+    const W = Math.max(640, Math.round(span * 6) + 2 * P);
+    const X = km => P + (dir > 0 ? km - kmA : kmB - km) / span * (W - 2 * P);
+    const minRuns = Math.min(AN.ZONE_MIN_RUNS, z.runCount);
+    const stopNames = new Set(z.stations.filter(s => s.line === L.index && s.dir === dir && s.n > 0).map(s => s.name));
+    // Namnen i upp till fem rader ovanför bandet, så att närliggande stationer inte skriver över varandra
+    const lanes = [];
+    const labels = stations.map(st => {
+      const x = X(st.km);
+      const w = st.name.length * 6.4 + 8;
+      const end = x + w > W - 2;          // sista namnen skrivs till vänster om strecket, så att de inte klipps
+      const start = end ? x - w : x;
+      let lane = lanes.findIndex(e => e < start - 2);
+      if(lane === -1){ lane = lanes.length < 5 ? lanes.length : lanes.indexOf(Math.min(...lanes)); }
+      lanes[lane] = end ? x : x + w;
+      return { st, x, lane, end };
+    });
+    const nLanes = Math.max(1, lanes.length);
+    const trackY = 14 + nLanes * 15;
+    const trackH = 18;
+    const H = trackY + trackH + 40;
+    let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" role="img" aria-label="${esc('Broms och gas längs linjen ' + routeText(r))}">`;
+    svg += `<rect class="track" x="${P}" y="${trackY}" width="${W - 2 * P}" height="${trackH}" rx="4"/>`;
+    for(const b of d.bins){
+      const km1 = b.from / 1000, km2 = (b.from + AN.LINE_BIN_M) / 1000;
+      if(km2 < kmA || km1 > kmB) continue;
+      const c = heatOf(b, minRuns);
+      if(!c) continue;
+      const x1 = X(Math.max(kmA, km1)), x2 = X(Math.min(kmB, km2));
+      svg += `<rect class="h-${c.kind}" x="${Math.min(x1, x2).toFixed(1)}" y="${trackY}" width="${(Math.abs(x2 - x1) + 0.3).toFixed(2)}" height="${trackH}"${c.kind === 'jamn' ? '' : ` fill-opacity="${c.alpha}"`}/>`;
+    }
+    for(const { st, x, lane, end } of labels){
+      const stop = stopNames.has(st.name);
+      const ly = trackY - 6 - lane * 15;
+      svg += `<line class="st-tick${stop ? ' stop' : ''}" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${ly + 3}" y2="${trackY + trackH + 4}"/>`;
+      svg += `<text class="st-name${stop ? ' stop' : ''}" x="${(end ? x - 3 : x + 3).toFixed(1)}" y="${ly}"${end ? ' text-anchor="end"' : ''}${stop ? ` data-motion-key="${esc(st.name + '|' + dir)}"` : ''}><title>${esc(st.name + ' · km ' + fmtKm(st.km))}</title>${esc(st.name)}</text>`;
+    }
+    const step = span > 60 ? 10 : span > 20 ? 5 : 1;
+    for(let k = Math.ceil(kmA / step) * step; k <= kmB + 1e-9; k += step){
+      svg += `<text class="km" x="${X(k).toFixed(1)}" y="${trackY + trackH + 16}" text-anchor="middle">${fmtKm(k, 0)}</text>`;
+    }
+    svg += `<text class="km" x="${P}" y="${H - 6}">km från ${esc(L.stations[0].name)} · färdriktning → mot ${esc(r.to.name)}</text>`;
+    return svg + '</svg>';
+  }
+
+  // Liten stapel per station: 3 km före till 3 km efter, samma skala för alla stationer
+  function miniBar(g){
+    const R = MZ_RANGE, W = 600, H = 16;
+    const x = s => (Math.max(-R, Math.min(R, s)) + R) / (2 * R) * W;
+    const minRuns = Math.min(AN.ZONE_MIN_RUNS, g.n);
+    let svg = `<svg class="mz-bar" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><rect class="bg" x="0" y="0" width="${W}" height="${H}"/>`;
+    for(const b of g.bins){
+      if(b.from + AN.ZONE_BIN_M <= -R || b.from >= R) continue;
+      const c = heatOf(b, minRuns);
+      if(!c) continue;
+      const x1 = x(b.from), x2 = x(b.from + AN.ZONE_BIN_M);
+      svg += `<rect class="h-${c.kind}" x="${x1.toFixed(1)}" y="0" width="${(x2 - x1 + 0.4).toFixed(1)}" height="${H}"${c.kind === 'jamn' ? '' : ` fill-opacity="${c.alpha}"`}/>`;
+    }
+    svg += `<line class="mid" x1="${x(0)}" x2="${x(0)}" y1="0" y2="${H}" vector-effect="non-scaling-stroke"/>`;
+    return svg + '</svg>';
+  }
+
+  function zoneSummary(g){
+    const a = g.approach, d = g.departure;
+    return `<span><span class="key brake"></span>Bromsar ${a ? '<strong>' + esc(brakeText(a)) + '</strong>' : '–'}</span>` +
+      `<span><span class="key gas"></span>Gasar ${d ? '<strong>' + esc(gasText(d)) + '</strong>' : '–'}</span>`;
+  }
+
+  function stationListHtml(z, r){
+    const dir = r.dir;
+    const order = lineOrder(r, dir);
+    const byKey = new Map(z.stations.filter(s => s.line === r.L.index).map(s => [s.key, s]));
+    let html = '';
+    const ticks = [-3, -2, -1, 0, 1, 2, 3].map(k => `<span style="left:${(k + 3) / 6 * 100}%">${k === 0 ? 'stationen' : (k < 0 ? '−' : '+') + Math.abs(k) + (Math.abs(k) === 3 ? ' km' : '')}</span>`).join('');
+    html += `<div class="mz-axis" aria-hidden="true"><span class="mz-scale">${ticks}</span></div>`;
+    order.forEach((st, i) => {
+      const g = byKey.get(st.name + '|' + dir);
+      const cls = (i === 0 ? ' first' : '') + (i === order.length - 1 ? ' last' : '');
+      const km = 'km ' + fmtKm(st.km);
+      if(!g || !g.n){
+        const pass = g ? g.passages : 0;
+        html += `<div class="mz-row pass${cls}"><span class="mz-head"><span class="mz-name">${esc(st.name)}</span>` +
+          `<span class="mz-sub">${km} · ${pass ? 'passeras (' + pass + (pass === 1 ? ' körning)' : ' körningar)') : 'inga uppehåll i spåren'}</span></span></div>`;
+        return;
+      }
+      const open = g.key === openMotion;
+      html += `<button type="button" class="mz-row${cls}${open ? ' open' : ''}" data-motion-key="${esc(g.key)}" aria-expanded="${open}">` +
+        `<span class="mz-head"><span class="mz-name">${esc(st.name)}</span><span class="mz-sub">${km} · ${g.n} uppehåll` +
+        `${g.passages ? ' · ' + passText(g.passages) : ''}</span>${g.n < AN.ZONE_MIN_RUNS ? '<span class="mz-few">få körningar</span>' : ''}</span>` +
+        miniBar(g) + `<span class="mz-nums">${zoneSummary(g)}</span></button>`;
+      if(open) html += '<div class="mz-detail" id="motionDetail"></div>';
+    });
+    return html;
+  }
+
+  // Lista per station i vald riktning: inbromsning och gas med koordinater (det halkbekämpningen behöver)
+  function motionTableHtml(z, r){
+    const rows = [];
+    {
+      for(const st of lineOrder(r, r.dir)){
+        const g = z.stations.find(s => s.key === st.name + '|' + r.dir && s.line === r.L.index);
+        if(!g || !g.n) continue;
+        const a = g.approach, d = g.departure;
+        rows.push(`<tr data-motion-key="${esc(g.key)}"><td>${esc(g.name)}</td><td class="num">${fmtKm(g.km)}</td><td class="num">${g.n}</td>` +
+          (a ? `<td>${esc(brakeText(a))}</td><td class="num">${fmtM(a.length)}</td><td class="num">${fmtKm(a.km1)}–${fmtKm(a.km2)}</td><td class="num">${fmtSpeed(a.vFrom)}</td><td>${mapLink(a.start)}</td>`
+            : '<td>–</td><td></td><td></td><td></td><td></td>') +
+          (d ? `<td>${esc(gasText(d))}</td><td class="num">${fmtM(d.length)}</td><td class="num">${fmtKm(d.km1)}–${fmtKm(d.km2)}</td><td>${mapLink(d.end)}</td>`
+            : '<td>–</td><td></td><td></td><td></td>') + '</tr>');
+      }
+    }
+    return '<div class="table-wrap"><table id="motionTableEl" class="clickable"><thead><tr><th>Station</th><th class="num">Km</th><th class="num" title="Körningar som stannade">Uppehåll</th>' +
+      '<th>Bromsar</th><th class="num">Längd</th><th class="num">Km</th><th class="num" title="Fart när inbromsningen börjar (median)">Fart in</th><th title="Där inbromsningen börjar">Börjar bromsa</th>' +
+      '<th>Gasar</th><th class="num">Längd</th><th class="num">Km</th><th title="Där gasen slutar">Slutar gasa</th></tr></thead><tbody>' +
+      (rows.length ? rows.join('') : '<tr><td colspan="12" class="empty">Inga uppehåll i urvalet</td></tr>') + '</tbody></table></div>';
+  }
+
+  function renderMotionDetail(){
+    const el = document.getElementById('motionDetail');
+    if(!el || !lastMotion) return;
+    const g = lastMotion.stations.find(s => s.key === openMotion);
+    if(!g){ el.remove(); return; }
+    el.innerHTML = motionDetailHtml(g);
+    drawMotionMap(el.querySelector('.mz-map'), g);
+    bindMotionHover(el.querySelector('.mz-chart'), g);
+  }
+
+  function motionDetailHtml(g){
+    const a = g.approach, d = g.departure;
+    const dates = g.runs.map(r => r.date).filter(Boolean).sort();
+    const tile = (label, value, sub) => `<div>${esc(label)}<strong>${esc(value)}</strong><span>${esc(sub)}</span></div>`;
+    let html = '<div class="balance">' +
+      tile('Inbromsning', a ? fmtM(a.length) : '–', a ? `${brakeText(a)} · från ${fmtSpeed(a.vFrom)}${a.steps > 1 ? ' · i ' + a.steps + ' steg' : ''}` : 'ingen tydlig inbromsning') +
+      tile('Gas', d ? fmtM(d.length) : '–', d ? `${gasText(d)} · till ${fmtSpeed(d.vTo)}${d.steps > 1 ? ' · i ' + d.steps + ' steg' : ''}` : 'ingen tydlig gas') +
+      tile('Stannar', g.stopAt == null || Math.abs(g.stopAt) < 1 ? 'vid mitten' : fmtPos(g.stopAt), 'median, från stationens mittpunkt') +
+      tile('Underlag', g.n + ' uppehåll', (dates.length ? (dates[0] === dates[dates.length - 1] ? dates[0] : dates[0] + ' – ' + dates[dates.length - 1]) : '') + (g.passages ? ` · ${passText(g.passages)} räknas inte` : '')) +
+      '</div>';
+    const box = document.getElementById('motionDetail');
+    html += motionChartHtml(g, box ? box.clientWidth - 70 : 900);
+    html += `<div class="mz-map" role="img" aria-label="${esc('Karta över ' + g.name + ' med var tågen bromsar och gasar')}"></div>`;
+    const zones = g.zones.filter(x => x.own);
+    html += '<h3>Zoner vid ' + esc(g.name) + '</h3><div class="table-wrap"><table id="motionZones"><thead><tr><th>Zon</th><th>Var</th><th class="num">Längd</th>' +
+      '<th class="num" title="Andel av körningarna som bromsar eller gasar där (medel över zonen)">Andel</th><th class="num">Fart</th><th class="num">Km</th><th>Start</th><th>Slut</th></tr></thead><tbody>';
+    html += zones.length ? zones.map(x => `<tr><td class="mz-zone-kind"><span class="key ${x.kind === 'broms' ? 'brake' : 'gas'}"></span>${x.kind === 'broms' ? 'Bromsar' : 'Gasar'}</td>` +
+      `<td>${esc(fmtRange(x))}</td><td class="num">${fmtM(x.length)}</td><td class="num">${pct(x.share)}</td>` +
+      `<td class="num">${Math.round(x.vFrom || 0)}→${Math.round(x.vTo || 0)} km/h</td><td class="num">${fmtKm(x.km1)}–${fmtKm(x.km2)}</td>` +
+      `<td>${mapLink(x.start)}</td><td>${mapLink(x.end)}</td></tr>`).join('')
+      : '<tr><td colspan="8" class="empty">Inga zoner där minst hälften av körningarna bromsar eller gasar</td></tr>';
+    return html + '</tbody></table></div>';
+  }
+
+  /* Fartprofil vid stationen: fart mot meter från stationen i färdriktningen. Grå linje per körning, median i vitt,
+     zonerna som fält och under diagrammet ett band med andelen som bromsar/gasar. Pekaren visar värdena. */
+  function motionChartHtml(g, width){
+    // Ritas i skärmens bredd (högst 900), så att texten blir lika stor på mobilen
+    const W = Math.round(Math.max(320, Math.min(900, width || 900))), H = W < 600 ? 260 : 290, L = 40, R = 30, T = 20, B = 62;
+    const plotB = H - B;
+    const froms = g.bins.map(b => b.from);
+    if(!froms.length) return '';
+    const lo = Math.max(-AN.ZONE_WINDOW_M, Math.floor(Math.min(...froms) / 500) * 500);
+    const hi = Math.min(AN.ZONE_WINDOW_M, Math.ceil((Math.max(...froms) + AN.ZONE_BIN_M) / 500) * 500);
+    const maxV = Math.max(20, ...g.runs.flatMap(r => r.profile.map(p => p.v)));
+    const vTop = Math.ceil(maxV / 20) * 20;
+    const x = s => L + (Math.max(lo, Math.min(hi, s)) - lo) / (hi - lo) * (W - L - R);
+    const y = v => T + (vTop - v) / vTop * (plotB - T);
+    const minRuns = Math.min(AN.ZONE_MIN_RUNS, g.n);
+    let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc('Fartprofil vid ' + g.name)}" data-lo="${lo}" data-hi="${hi}" data-l="${L}" data-r="${R}" data-w="${W}">`;
+    for(const z of g.zones) svg += `<rect class="band-${z.kind}" x="${x(z.from).toFixed(1)}" y="${T}" width="${(x(z.to) - x(z.from)).toFixed(1)}" height="${plotB - T}"/>`;
+    for(let v = 0; v <= vTop; v += 20){
+      svg += `<line class="${v === 0 ? 'zero' : 'grid'}" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis-label" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+    }
+    for(const r of g.runs){
+      const pts = r.profile.filter(p => p.s >= lo && p.s <= hi).map(p => `${x(p.s).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+      if(pts) svg += `<polyline class="run" points="${pts}"><title>${esc(r.date + ' · tåg ' + (r.train || '–'))}</title></polyline>`;
+    }
+    const med = g.bins.filter(b => b.n >= minRuns && b.v.median != null).map(b => `${x(b.from + AN.ZONE_BIN_M / 2).toFixed(1)},${y(b.v.median).toFixed(1)}`).join(' ');
+    if(med) svg += `<polyline class="median" points="${med}"/>`;
+    svg += `<line class="station" x1="${x(0)}" x2="${x(0)}" y1="${T - 6}" y2="${plotB}"/><text class="st-label" x="${x(0) + 4}" y="${T - 8}">${esc(g.name)}</text>`;
+    svg += `<text class="axis-label" x="${L}" y="${T - 8}" text-anchor="end">km/h</text>`;
+    const stripY = plotB + 8;
+    for(const b of g.bins){
+      const c = heatOf(b, minRuns);
+      if(!c || b.from < lo || b.from >= hi) continue;
+      svg += `<rect class="h-${c.kind}" x="${x(b.from).toFixed(1)}" y="${stripY}" width="${(x(b.from + AN.ZONE_BIN_M) - x(b.from) + 0.3).toFixed(1)}" height="10"${c.kind === 'jamn' ? '' : ` fill-opacity="${c.alpha}"`}/>`;
+    }
+    const step = (hi - lo) / (W - L - R) * 70 > 1000 ? 2000 : (hi - lo) / (W - L - R) * 70 > 500 ? 1000 : 500;
+    for(let s = Math.ceil(lo / step) * step; s <= hi; s += step){
+      svg += `<text class="axis-label" x="${x(s)}" y="${stripY + 26}" text-anchor="middle">${s === 0 ? '0' : (s < 0 ? '−' : '+') + fmtNum(s)}</text>`;
+    }
+    svg += `<text class="axis-label" x="${W - R}" y="${H - 6}" text-anchor="end">${W < 600 ? 'm från stationen · färdriktning →' : 'meter från stationens mittpunkt · färdriktning →'}</text>`;
+    svg += `<line class="cross" x1="0" x2="0" y1="${T}" y2="${stripY + 10}"/><rect class="hover" x="${L}" y="${T}" width="${W - L - R}" height="${stripY + 10 - T}"/>`;
+    svg += '</svg>';
+    return `<div class="chart mz-chart">${svg}<div class="mz-tip"></div><div class="legend"><span><span class="key line" style="background:var(--ink)"></span>Median</span>` +
+      `<span><span class="key run"></span>Körning</span><span><span class="key brake" style="height:10px;width:10px"></span>Bromsar</span><span><span class="key gas" style="height:10px;width:10px"></span>Gasar</span></div></div>`;
+  }
+
+  function bindMotionHover(box, g){
+    if(!box) return;
+    const svg = box.querySelector('svg');
+    const hit = box.querySelector('.hover');
+    const cross = box.querySelector('.cross');
+    const tip = box.querySelector('.mz-tip');
+    const lo = Number(svg.dataset.lo), hi = Number(svg.dataset.hi), L = Number(svg.dataset.l), R = Number(svg.dataset.r), W = Number(svg.dataset.w);
+    const show = ev => {
+      const rect = svg.getBoundingClientRect();
+      const px = (ev.clientX - rect.left) / rect.width * W;
+      const s = lo + (px - L) / (W - L - R) * (hi - lo);
+      const b = g.bins.find(x => s >= x.from && s < x.from + AN.ZONE_BIN_M);
+      if(!b){ tip.style.display = 'none'; cross.style.display = 'none'; return; }
+      cross.setAttribute('x1', px); cross.setAttribute('x2', px);
+      cross.style.display = 'block';
+      tip.innerHTML = `<b>${esc(fmtPos(b.from + AN.ZONE_BIN_M / 2))}</b> · ${fmtSpeed(b.v.median)}<br>` +
+        `Bromsar ${b.broms} av ${b.n} · gasar ${b.gas} av ${b.n}`;
+      tip.style.display = 'block';
+      const bx = ev.clientX - box.getBoundingClientRect().left;
+      tip.style.left = Math.max(0, Math.min(box.clientWidth - tip.offsetWidth, bx + 12)) + 'px';
+      tip.style.top = '8px';
+    };
+    hit.addEventListener('pointermove', show);
+    hit.addEventListener('pointerdown', show);
+    hit.addEventListener('pointerleave', () => { tip.style.display = 'none'; cross.style.display = 'none'; });
+  }
+
+  /* Karta: OpenStreetMaps kartbilder (mörkt filter på skärmen) och linjen färgad efter vad tågen gör.
+     Linjen går genom medianläget för varje längdsteg. Utan nät visas bara linjen. */
+  function drawMotionMap(el, g){
+    if(!el) return;
+    const pts = g.bins.filter(b => b.lat != null && isFinite(b.lat) && Math.abs(b.from) <= AN.ZONE_WINDOW_M);
+    if(pts.length < 2){ el.style.display = 'none'; return; }
+    const W = el.clientWidth || 600, H = el.clientHeight || 300;
+    const merc = (lat, lon, z) => {
+      const size = 256 * Math.pow(2, z);
+      const r = lat * Math.PI / 180;
+      return { x: (lon + 180) / 360 * size, y: (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * size };
+    };
+    const lats = pts.map(p => p.lat).concat(g.lat), lons = pts.map(p => p.lon).concat(g.lon);
+    const n = { lat: Math.max(...lats), lon: Math.min(...lons) }, s = { lat: Math.min(...lats), lon: Math.max(...lons) };
+    let z = 17;
+    for(; z > 6; z--){
+      const a = merc(n.lat, n.lon, z), b = merc(s.lat, s.lon, z);
+      if(b.x - a.x <= W - 48 && b.y - a.y <= H - 48) break;
+    }
+    const c = merc((n.lat + s.lat) / 2, (n.lon + s.lon) / 2, z);
+    const ox = c.x - W / 2, oy = c.y - H / 2;
+    const P = (lat, lon) => { const m = merc(lat, lon, z); return { x: m.x - ox, y: m.y - oy }; };
+    let tiles = '';
+    if(tileUrl){
+      const count = Math.pow(2, z);
+      for(let tx = Math.floor(ox / 256); tx <= Math.floor((ox + W) / 256); tx++){
+        for(let ty = Math.floor(oy / 256); ty <= Math.floor((oy + H) / 256); ty++){
+          if(ty < 0 || ty >= count) continue;
+          const url = tileUrl.replace('{z}', z).replace('{x}', ((tx % count) + count) % count).replace('{y}', ty);
+          tiles += `<img src="${esc(url)}" style="left:${Math.round(tx * 256 - ox)}px;top:${Math.round(ty * 256 - oy)}px" alt="" draggable="false">`;
+        }
+      }
+    }
+    const minRuns = Math.min(AN.ZONE_MIN_RUNS, g.n);
+    const xy = pts.map(b => Object.assign(P(b.lat, b.lon), { b }));
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">`;
+    svg += `<polyline class="base" points="${xy.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ')}"/>`;
+    for(let k = 0; k + 1 < xy.length; k++){
+      const a = xy[k], b = xy[k + 1];
+      if(b.b.from - a.b.from > AN.ZONE_BIN_M * 2) continue;
+      const h = heatOf(a.b, minRuns);
+      if(!h || h.kind === 'jamn') continue;
+      svg += `<line class="seg ${h.kind}" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" stroke-opacity="${h.alpha}"/>`;
+    }
+    const st = P(g.lat, g.lon);
+    svg += `<circle class="st" cx="${st.x.toFixed(1)}" cy="${st.y.toFixed(1)}" r="6"/>`;
+    /* Etiketter på sidan bort från stationen, till andra sidan när de annars hamnar utanför kartan,
+       och en rad längre ner när de skulle skriva över en tidigare etikett */
+    const placed = [];
+    const label = (p, text, dy, weight) => {
+      const w = text.length * 6.5;
+      let left = p !== st && p.x < st.x;
+      if(left && p.x - 10 - w < 0) left = false;
+      if(!left && p.x + 10 + w > W) left = true;
+      const x = left ? p.x - 10 : p.x + 10;
+      const x1 = left ? x - w : x, x2 = left ? x : x + w;
+      let y = p.y + dy;
+      for(let k = 0; k < 4 && placed.some(b => x1 < b.x2 && x2 > b.x1 && Math.abs(y - b.y) < 15); k++) y += 16;
+      placed.push({ x1, x2, y });
+      return `<text class="lbl" x="${x.toFixed(1)}" y="${y.toFixed(1)}"${left ? ' text-anchor="end"' : ''}${weight ? '' : ' style="font-weight:400"'}>${esc(text)}</text>`;
+    };
+    // Punkterna först och etiketterna sist, så att ingen punkt hamnar över en text
+    let labels = label(st, g.name, -10, true);
+    for(const [zone, at, text] of [[g.approach, 'start', 'börjar bromsa'], [g.departure, 'end', 'slutar gasa']]){
+      if(!zone || !zone[at]) continue;
+      const p = P(zone[at].lat, zone[at].lon);
+      svg += `<circle class="st" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4"/>`;
+      labels += label(p, text + ' ' + fmtPos(at === 'start' ? zone.from : zone.to), 18, false);
+    }
+    svg += labels;
+    svg += '</svg>';
+    el.innerHTML = `<div class="tiles">${tiles}</div>${svg}<div class="attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div>`;
+  }
+
+  function openMotionStation(key){
+    openMotion = openMotion === key ? '' : key;
+    renderMotionView();
+    if(!openMotion) return;
+    const row = document.querySelector(`#motionList .mz-row[data-motion-key="${CSS.escape(key)}"]`);
+    if(row && row.scrollIntoView) row.scrollIntoView({ block: 'start', behavior: TEST_MODE ? 'auto' : 'smooth' });
+  }
+
+  function motionMeta(z){
+    const r = motionRange(z);
+    const L = r.L;
+    return [
+      ['Bygger på', `${z.runCount} körningar med GPS-spår (av ${z.selected} i urvalet)`],
+      ['Period', periodText(z.period)],
+      ['Sträcka', `${routeText(r)}, ${fmtKm(r.hi - r.lo, r.hi - r.lo < 10 ? 1 : 0)} km. Km räknas längs spåret från ${L.stations[0].name} (linjen ${L.stations[0].name} – ${L.stations[L.stations.length - 1].name}).`],
+      ['Urval', describeFilter()],
+      ['Så räknas det', 'Bromsar/gasar = farten minskar/ökar med minst 0,15 m/s². Zon = minst hälften av körningarna som stannade. Meter före/efter stationens mittpunkt i färdriktningen.'],
+      ['Skapad', nowText()]
+    ];
+  }
+
+  function exportMotionCsv(){
+    const z = lastMotion;
+    if(!z) return null;
+    const coord = p => p && p.lat != null && isFinite(p.lat) ? [p.lat.toFixed(5).replace('.', ','), p.lon.toFixed(5).replace('.', ',')] : ['', ''];
+    const summary = [], zones = [];
+    const r = motionRange(z);
+    {
+      // Båda riktningarna på vald sträcka, vald riktning först
+      for(const dir of [r.dir, -r.dir]){
+        for(const st of lineOrder(r, dir)){
+          const g = z.stations.find(s => s.key === st.name + '|' + dir && s.line === r.L.index);
+          if(!g || !g.n) continue;
+          const a = g.approach, d = g.departure;
+          summary.push([routeText(r, dir), g.name, g.km, g.n, g.passages, g.stopAt == null ? null : Math.round(g.stopAt),
+            a ? a.from : null, a ? a.to : null, a ? a.length : null, a ? Math.round(a.vFrom) : null, ...coord(a && a.start),
+            d ? d.from : null, d ? d.to : null, d ? d.length : null, d ? Math.round(d.vTo) : null, ...coord(d && d.end)]);
+          for(const x of g.zones.filter(q => q.own)){
+            zones.push([routeText(r, dir), g.name, x.kind === 'broms' ? 'Bromsar' : 'Gasar', x.from, x.to, x.length, Math.round(x.share * 100),
+              x.vFrom == null ? null : Math.round(x.vFrom), x.vTo == null ? null : Math.round(x.vTo), x.km1, x.km2, ...coord(x.start), ...coord(x.end)]);
+          }
+        }
+      }
+    }
+    const text = AN.csvDocument(MOTION_TITLE, motionMeta(z), [{
+      title: 'Uppehåll: inbromsning och gas (meter från stationens mittpunkt, negativt = före)',
+      header: ['Riktning', 'Station', 'Km', 'Uppehåll', 'Passager', 'Stannar (m)', 'Bromsar från (m)', 'Bromsar till (m)', 'Bromssträcka (m)', 'Fart in (km/h)',
+        'Börjar bromsa lat', 'Börjar bromsa lon', 'Gasar från (m)', 'Gasar till (m)', 'Gassträcka (m)', 'Fart ut (km/h)', 'Slutar gasa lat', 'Slutar gasa lon'],
+      rows: summary
+    }, {
+      title: 'Alla zoner',
+      header: ['Riktning', 'Station', 'Zon', 'Från (m)', 'Till (m)', 'Längd (m)', 'Andel körningar (%)', 'Fart start (km/h)', 'Fart slut (km/h)', 'Km start', 'Km slut',
+        'Start lat', 'Start lon', 'Slut lat', 'Slut lon'],
+      rows: zones
+    }]);
+    downloadText('broms-och-gas_' + AN.localDate(new Date()) + '.csv', text);
+    return text;
+  }
+
+  function printMotion(){
+    if(lastMotion) printReport('motionReport', MOTION_TITLE, motionMeta(lastMotion));
+  }
+
   function fillActivePrintHeader(){
     const active = document.querySelector('.tab-content.active');
     if(!active) return;
@@ -1979,6 +2688,9 @@
     }else if(active.id === 'tabCompare'){
       if(lastCompare) preparePrint('compareReport', COMPARE_TITLE, compareMeta(lastCompare));
       else preparePrint('compareReport', COMPARE_TITLE, [['Urval', describeFilter()], ['Resultat', 'Båda perioderna behöver körningar.']]);
+    }else if(active.id === 'tabMotion'){
+      if(lastMotion) preparePrint('motionReport', MOTION_TITLE, motionMeta(lastMotion));
+      else preparePrint('motionReport', MOTION_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga körningar med GPS-spår i urvalet.']]);
     }else if(active.id === 'tabTimetable'){
       if(lastTimetable) preparePrint('ttReport', timetableTitle(lastTimetable), ttMeta(lastTimetable));
       else preparePrint('ttReport', TIMETABLE_TITLE, [['Urval', describeFilter()], ['Resultat', 'Inga tåg med tidtabell i urvalet.']]);
@@ -2014,7 +2726,14 @@
         document.getElementById('cmpBFrom').value = p.b.from; document.getElementById('cmpBTo').value = p.b.to;
         renderCompare();
       },
-      exportCompareCsv
+      exportCompareCsv,
+      getMotion: () => lastMotion,
+      showMotion(key){ openMotion = ''; openMotionStation(key); },
+      setMotionDir(dir){ if(dir !== motionDir) setMotionRoute(motionTo, motionFrom); },
+      setMotionRoute,
+      setTileUrl(url){ tileUrl = url; },
+      exportMotionCsv,
+      prepareMotionPrint: () => lastMotion && preparePrint('motionReport', MOTION_TITLE, motionMeta(lastMotion))
     };
   }
 

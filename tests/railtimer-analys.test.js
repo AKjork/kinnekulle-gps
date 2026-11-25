@@ -648,3 +648,162 @@ test('defaultPeriods: B = sista 30 dagarna, A = före', () => {
   const runs = [run('q1', [stop('A', { dep: [7, 0, 0, 1] })]), run('q2', [stop('A', { dep: [7, 0, 0, 31] })])];
   assert.deepEqual(AN.defaultPeriods(runs, 30), { a: { from: '2026-10-01', to: '2026-10-01' }, b: { from: '2026-10-02', to: '2026-10-31' } });
 });
+
+// ── Broms och gas ──
+
+const M_PER_DEG_LAT = 111195;
+
+/* Simulerad körning rakt norrut: stationer [{ name, x (m), stop }], i den ordning tåget kör (x upp eller ner).
+   Tåget står 20 s vid start, gasar med acc till vmax, bromsar med dec så att det står vid nästa stopp, står dwell s.
+   Ger körningen (stationer med koordinater och tider) och spåret (1 punkt/s). Stillastående har GPS-brus ±3 m. */
+function simulateRun(id, stations, opts) {
+  const o = Object.assign({ vmax: 20, acc: 0.4, dec: 0.5, dwell: 30, day: 15, hour: 7 }, opts || {});
+  const t0 = new Date(2026, 9, o.day, o.hour, 0, 0);
+  const sign = Math.sign(stations[stations.length - 1].x - stations[0].x);
+  const times = stations.map(() => ({ arr: null, dep: null }));
+  const points = [];
+  const dt = 0.05;
+  let t = 0, x = stations[0].x, v = 0, next = 1, standUntil = 20, nextOut = 0, k = 0, stopping = false;
+  times[0].arr = 0;
+  const target = () => { let j = next; while (j < stations.length - 1 && !stations[j].stop) j++; return j; };
+  for (let guard = 0; guard < 400000; guard++) {
+    if (t >= nextOut - 1e-9) {
+      const noise = v === 0 ? (k % 2 ? 3 : -3) : 0;
+      points.push([Math.round(t * 1000), 58 + (x + noise) / M_PER_DEG_LAT, 13, 4, Math.round(v * 100) / 100, null, 0]);
+      k++;
+      nextOut += 1;
+    }
+    if (t < standUntil) {
+      t += dt;
+      if (t >= standUntil && times[next - 1].dep == null) times[next - 1].dep = standUntil;
+      continue;
+    }
+    if (next >= stations.length) { if (t > standUntil + 20) break; t += dt; continue; }
+    const j = target();
+    const remaining = Math.abs(stations[j].x - x);
+    // Hastighetsbegränsning { from, to, v }: tåget bromsar till v före och håller högst v inom
+    let cap = o.vmax;
+    let brakeTo = null;
+    if (o.limit) {
+      const entry = (sign > 0 ? o.limit.from : o.limit.to) - x;
+      const exit = (sign > 0 ? o.limit.to : o.limit.from) - x;
+      if (entry * sign <= 0 && exit * sign > 0) cap = o.limit.v;
+      else if (entry * sign > 0 && v > o.limit.v && entry * sign <= (v * v - o.limit.v ** 2) / (2 * o.dec) + 0.05) brakeTo = o.limit.v;
+    }
+    // Inbromsningen till stopp fortsätter tills tåget står (annars kryper det fram i diskretiseringen)
+    if (stopping || remaining <= v * v / (2 * o.dec) + 0.05) { stopping = true; v = Math.max(0, v - o.dec * dt); }
+    else if (brakeTo != null) v = Math.max(brakeTo, v - o.dec * dt);
+    else if (v > cap) v = Math.max(cap, v - o.dec * dt);
+    else v = Math.min(cap, v + o.acc * dt);
+    const before = x;
+    x += sign * v * dt;
+    t += dt;
+    // Passage: stationer utan stopp som passerades
+    while (next < j && Math.sign(stations[next].x - before) !== Math.sign(stations[next].x - x)) { times[next].arr = t; times[next].dep = t; next++; }
+    if (stopping && v === 0) {
+      stopping = false;
+      x = stations[j].x;
+      times[j].arr = t;
+      next = j + 1;
+      standUntil = next >= stations.length ? t : t + o.dwell;
+      if (next >= stations.length) { standUntil = t; times[j].dep = null; }
+    }
+  }
+  const iso = s => (s == null ? null : new Date(t0.getTime() + s * 1000).toISOString());
+  const r = run(id, stations.map((s, i) => Object.assign(stop(s.name, {}), {
+    actualArrival: i === 0 ? null : iso(times[i].arr),
+    actualDeparture: i === stations.length - 1 ? null : iso(times[i].dep),
+    arrivalSource: 'gps', departSource: s.stop || i === 0 || i === stations.length - 1 ? 'gps' : 'gps-pass',
+    shouldStop: !!s.stop || i === 0 || i === stations.length - 1,
+    lat: 58 + s.x / M_PER_DEG_LAT, lon: 13, radius: 200
+  })), { startedAt: t0.toISOString() });
+  const track = { format: 1, runId: id, trainNumber: '3344', t0: t0.toISOString(), fields: ['t_ms', 'lat', 'lon', 'acc_m', 'speed_ms', 'heading_deg', 'fixAge_ms'], points };
+  return { run: r, track };
+}
+
+const ABC = [{ name: 'A', x: 0, stop: true }, { name: 'B', x: 3000, stop: true }, { name: 'C', x: 6000, stop: true }];
+const within = (v, lo, hi, label) => assert.ok(v >= lo && v <= hi, `${label}: ${v} utanför ${lo}…${hi}`);
+
+test('motionPoints: broms, gas, jämn fart och stillastående; GPS-brus vid stillastående ger ingen sträcka', () => {
+  const { track } = simulateRun('m1', ABC);
+  const pts = AN.motionPoints(track);
+  const at = (from, to) => pts.filter(p => p.d >= from && p.d <= to);
+  // gasar 0–500 m, jämn fart 20 m/s, bromsar 2 600–3 000 m (v²/2a = 400 m)
+  assert.ok(at(100, 400).every(p => p.action === 'gas'), 'gas efter start');
+  assert.ok(at(1000, 2400).every(p => p.action === 'jamn'), 'jämn fart');
+  assert.ok(at(2700, 2950).every(p => p.action === 'broms'), 'broms före B');
+  assert.ok(pts.filter(p => p.action === 'still').length >= 60, 'stillastående vid A, B och C');
+  within(pts[pts.length - 1].d, 5950, 6050, 'hela sträckan trots brus');
+  const a = pts.filter(p => p.action === 'broms').map(p => p.a);
+  within(Math.min(...a), -0.55, -0.45, 'inbromsning');
+});
+
+test('stationAnchor: läget vid stationen interpoleras mellan punkterna', () => {
+  const { run: r, track } = simulateRun('m2', ABC);
+  const pts = AN.motionPoints(track);
+  const b = AN.stationAnchor(r.stops[1], pts);
+  within(b.d, 2990, 3010, 'B');
+  assert.equal(AN.stationAnchor(Object.assign({}, r.stops[1], { lat: 58.2 }), pts), null, 'för långt bort');
+});
+
+test('motionZones: inbromsning och gas vid uppehållet, i båda riktningarna, och linjen med km', () => {
+  const back = ABC.slice().reverse();
+  const sims = [
+    simulateRun('z1', ABC, { day: 1 }), simulateRun('z2', ABC, { day: 2 }), simulateRun('z3', ABC, { day: 3 }),
+    simulateRun('z4', [ABC[0], Object.assign({}, ABC[1], { stop: false }), ABC[2]], { day: 4 }),
+    simulateRun('z5', back, { day: 5 }), simulateRun('z6', back, { day: 6 }), simulateRun('z7', back, { day: 7, dec: 0.8 }),
+    // Utan tågnummer: bara start och slut. Ger ingen genväg A–C i linjen.
+    (() => { const s = simulateRun('z8', ABC, { day: 8 }); s.run.stops.splice(1, 1); return s; })()
+  ];
+  const runs = sims.map(s => s.run);
+  const z = AN.motionZones(runs, AN.motionTracks(runs, sims.map(s => s.track)));
+  assert.equal(z.runCount, 8);
+  assert.equal(z.lines.length, 1);
+  assert.deepEqual(z.lines[0].stations.map(s => s.name), ['A', 'B', 'C'], 'linjen i ordning, söderut först');
+  within(z.lines[0].stations[1].km, 2.99, 3.01, 'B km');
+
+  const b = z.stations.find(s => s.key === 'B|1');
+  assert.equal(b.n, 3, 'tre körningar stannade');
+  assert.equal(b.passages, 1, 'en passerade');
+  assert.equal(b.toward, 'C');
+  within(b.approach.from, -450, -350, 'inbromsningen börjar ca 400 m före');
+  within(b.approach.to, -50, 50, 'och slutar vid stationen');
+  within(b.approach.vFrom, 66, 74, 'fart när inbromsningen börjar');
+  within(b.departure.from, -50, 50, 'gasen börjar vid stationen');
+  within(b.departure.to, 450, 600, 'och slutar ca 500 m efter');
+  within(b.approach.km1, 2.54, 2.66, 'km där inbromsningen börjar');
+  within(b.approach.start.lat, 58 + 2550 / M_PER_DEG_LAT, 58 + 2650 / M_PER_DEG_LAT, 'koordinat där inbromsningen börjar');
+  assert.equal(b.runs.length, 3);
+  assert.ok(b.runs[0].profile.length > 50, 'fartprofil per körning');
+
+  const bBack = z.stations.find(s => s.key === 'B|-1');
+  assert.equal(bBack.n, 3);
+  assert.equal(bBack.toward, 'A');
+  // Andra hållet: km minskar i färdriktningen
+  within(bBack.approach.km1, 3.25, 3.45, 'inbromsningen börjar norr om B');
+  const a = z.stations.find(s => s.key === 'A|1');
+  assert.equal(a.approach, null, 'ingen inbromsning vid start');
+  within(a.departure.to, 450, 600, 'gas från start');
+  // Linjen: andel som bromsar ca 300 m före B söderifrån
+  const lb = z.lines[0].dirs.find(d => d.dir === 1).bins.find(x => x.from === 2700);
+  assert.equal(lb.n, 5, 'alla körningar söderifrån (även passagen och den utan mellanstation)');
+  assert.equal(lb.broms, 4, 'alla utom passagen bromsar');
+});
+
+test('motionZones: inbromsning i steg räknas ihop när tåget inte gasar emellan', () => {
+  const zonesWith = limit => {
+    const sims = [1, 2, 3].map(day => simulateRun('s' + day, ABC, { day, limit }));
+    const runs = sims.map(s => s.run);
+    return AN.motionZones(runs, AN.motionTracks(runs, sims.map(s => s.track))).stations.find(s => s.key === 'B|1');
+  };
+  // 20 → 10 m/s från 1 700 m (300 m broms), rullar till 2 900 m, bromsar till stopp vid 3 000 m
+  const staged = zonesWith({ from: 2000, to: 3000, v: 10 });
+  assert.equal(staged.approach.steps, 2, 'två steg');
+  within(staged.approach.from, -1350, -1250, 'inbromsningen börjar vid första steget');
+  assert.equal(staged.zones.filter(x => x.kind === 'broms' && x.to <= 100).length, 2, 'båda stegen finns som zoner före B');
+  // Begränsningen slutar 500 m före: tåget gasar emellan, så bara sista inbromsningen hör till stoppet
+  const between = zonesWith({ from: 2000, to: 2500, v: 10 });
+  assert.equal(between.approach.steps, 1, 'ett steg');
+  within(between.approach.from, -500, -100, 'bara sista inbromsningen');
+  assert.ok(between.zones.some(x => x.kind === 'gas' && x.to < 0), 'gasen emellan');
+});

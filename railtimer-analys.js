@@ -1207,6 +1207,430 @@
     return out.sort((a, b) => b.minutes - a.minutes || String(b.start).localeCompare(String(a.start)));
   }
 
+  // ── Broms och gas (GPS-spår) ──
+  /* Var tågen bromsar och gasar, i meter före och efter varje uppehåll och i km längs linjen.
+     Accelerationen räknas ur GPS-farten, utjämnad över ±2 s. I datan 2026-11-25 (51 spår, 1 punkt/s) ligger jämn fart
+     (rullning, lutning) inom ±0,1 m/s², inbromsning kring −0,5 m/s² och gas 0,2–0,5 m/s². */
+  const MOTION_ACCEL = 0.15;     // m/s²: från så här mycket räknas det som broms respektive gas
+  const MOTION_SMOOTH = 2;       // punkter före och efter när farten jämnas ut
+  const ZONE_BIN_M = 50;         // längdsteg vid stationerna
+  const LINE_BIN_M = 100;        // längdsteg längs linjen
+  const ZONE_WINDOW_M = 4000;    // så långt före och efter stationen räknas
+  const ZONE_SHARE = 0.5;        // zon: minst hälften av körningarna bromsar (gasar) i längdsteget …
+  const ZONE_MIN_RUNS = 3;       // … och minst så många körningar har passerat där
+  const ZONE_GAP_M = 150;        // kortare glapp inom en zon slås ihop
+  const ZONE_MIN_M = 100;        // kortare zoner räknas inte
+  const ZONE_CHAIN_M = 1000;     // inbromsning (gas) i steg: zoner med kortare glapp hör till samma inbromsning
+  const ANCHOR_MAX_M = 400;      // spåret ska passera så här nära stationens koordinat
+  const ACTIONS = ['broms', 'gas', 'jamn', 'still'];
+
+  function lowerBoundT(pts, t) {
+    let lo = 0, hi = pts.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (pts[mid].t < t) lo = mid + 1; else hi = mid; }
+    return lo;
+  }
+  // Sträckan d växer aldrig bakåt, så även den kan sökas binärt
+  function lowerBoundD(pts, d) {
+    let lo = 0, hi = pts.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (pts[mid].d < d) lo = mid + 1; else hi = mid; }
+    return lo;
+  }
+
+  /* Spårets punkter med sträcka d (m från spårets början), utjämnad fart v (km/h), acceleration a (m/s²) och
+     vad tåget gör: 'broms', 'gas', 'jamn' (jämn fart) eller 'still' (under 2 km/h). GPS-brus när tåget står still
+     räknas inte som sträcka. */
+  function motionPoints(track) {
+    const p = trackPoints(track).filter(q => q.acc == null || q.acc <= MAX_TRACK_ACC_M);
+    const n = p.length;
+    const smooth = p.map((q, k) => {
+      let sum = 0, c = 0;
+      for (let j = Math.max(0, k - MOTION_SMOOTH); j <= Math.min(n - 1, k + MOTION_SMOOTH); j++) {
+        if (p[j].speed == null || Math.abs(p[j].t - q.t) > (MOTION_SMOOTH + 0.5) * 1000) continue;
+        sum += p[j].speed;
+        c++;
+      }
+      return c ? sum / c : null;
+    });
+    const out = [];
+    let d = 0;
+    for (let k = 0; k < n; k++) {
+      const q = p[k];
+      if (k > 0) {
+        const prev = p[k - 1];
+        const step = distanceM(prev, q);
+        const moving = prev.speed != null || q.speed != null
+          ? Math.max(prev.speed || 0, q.speed || 0) >= STILL_SPEED_MS
+          : step / Math.max(0.5, (q.t - prev.t) / 1000) >= STILL_SPEED_MS;
+        if (moving) d += step;
+      }
+      let a = null;
+      if (k > 0 && k < n - 1 && smooth[k - 1] != null && smooth[k + 1] != null) {
+        const dt = (p[k + 1].t - p[k - 1].t) / 1000;
+        if (dt > 0 && dt <= 4) a = (smooth[k + 1] - smooth[k - 1]) / dt;
+      }
+      const v = smooth[k] != null ? smooth[k] : q.speed;
+      const action = v != null && v < STILL_SPEED_MS ? 'still'
+        : a == null ? null : a <= -MOTION_ACCEL ? 'broms' : a >= MOTION_ACCEL ? 'gas' : 'jamn';
+      out.push({ t: q.t, lat: q.lat, lon: q.lon, d, v: v == null ? null : v * 3.6, a, action });
+    }
+    return out;
+  }
+
+  // Körnings-id → motionPoints för alla spår som hör till en körning i `runs` (räknas en gång per inläsning)
+  function motionTracks(runs, tracks) {
+    const ids = new Set((runs || []).map(r => String(r.id)));
+    const out = new Map();
+    for (const track of tracks || []) {
+      if (track && ids.has(String(track.runId))) out.set(String(track.runId), motionPoints(track));
+    }
+    return out;
+  }
+
+  /* Var i spåret tåget är vid stationen: punkten närmast stationens koordinat (högst ANCHOR_MAX_M bort), med
+     sträckan interpolerad mot grannpunkterna. Sökningen gäller tiden runt ankomst och avgång (±10 min). */
+  function stationAnchor(stop, pts) {
+    if (!stop || stop.lat == null || stop.lon == null || !pts || !pts.length) return null;
+    const target = { lat: Number(stop.lat), lon: Number(stop.lon) };
+    if (!isFinite(target.lat) || !isFinite(target.lon)) return null;
+    const arr = toDate(stop.actualArrival);
+    const dep = toDate(stop.actualDeparture);
+    const t1 = arr || dep ? (arr || dep).getTime() - 600000 : -Infinity;
+    const t2 = dep || arr ? (dep || arr).getTime() + 600000 : Infinity;
+    let best = -1;
+    let bestDist = Infinity;
+    for (let k = t1 === -Infinity ? 0 : lowerBoundT(pts, t1); k < pts.length && pts[k].t <= t2; k++) {
+      const dist = distanceM(pts[k], target);
+      if (dist < bestDist) { bestDist = dist; best = k; }
+    }
+    if (best < 0 || bestDist > ANCHOR_MAX_M) return null;
+    const cos = Math.cos(target.lat * Math.PI / 180);
+    const xy = q => ({ x: (q.lon - target.lon) * 111320 * cos, y: (q.lat - target.lat) * 110574 });
+    let d = pts[best].d;
+    let off = bestDist;
+    for (const [i, j] of [[best - 1, best], [best, best + 1]]) {
+      if (i < 0 || j >= pts.length) continue;
+      const A = xy(pts[i]);
+      const B = xy(pts[j]);
+      const len2 = (B.x - A.x) ** 2 + (B.y - A.y) ** 2;
+      if (len2 < 1) continue;
+      const f = Math.max(0, Math.min(1, -(A.x * (B.x - A.x) + A.y * (B.y - A.y)) / len2));
+      const o = Math.hypot(A.x + f * (B.x - A.x), A.y + f * (B.y - A.y));
+      if (o < off) { off = o; d = pts[i].d + f * (pts[j].d - pts[i].d); }
+    }
+    return { k: best, d, offset: off };
+  }
+
+  /* Linjerna som körningarna går på: stationerna i ordning med km från linjens ena ände (den sydligaste).
+     Avståndet mellan grannstationer är medianen av spårens sträcka. Kanter som hoppar över stationer (körningar
+     utan tågnummer har bara start och slut) tas bort när vägen via stationerna är lika lång. Grenar blir egna linjer. */
+  function lineAxis(entries, minRuns) {
+    const count = new Map();
+    const pos = new Map();
+    for (const e of entries) {
+      const seen = new Set();
+      e.run.stops.forEach((s, i) => {
+        if (!e.anchors[i] || seen.has(s.name)) return;
+        seen.add(s.name);
+        count.set(s.name, (count.get(s.name) || 0) + 1);
+        if (!pos.has(s.name)) pos.set(s.name, { lat: [], lon: [] });
+        pos.get(s.name).lat.push(Number(s.lat));
+        pos.get(s.name).lon.push(Number(s.lon));
+      });
+    }
+    const keep = new Set([...count].filter(([, c]) => c >= minRuns).map(([name]) => name));
+    const lens = new Map();
+    for (const e of entries) {
+      const seq = e.run.stops.map((s, i) => ({ name: s.name, a: e.anchors[i] })).filter(x => x.a && keep.has(x.name));
+      for (let k = 0; k + 1 < seq.length; k++) {
+        const a = seq[k];
+        const b = seq[k + 1];
+        const len = Math.abs(b.a.d - a.a.d);
+        if (a.name === b.name || len < 50) continue;
+        const key = a.name < b.name ? a.name + '\u0000' + b.name : b.name + '\u0000' + a.name;
+        if (!lens.has(key)) lens.set(key, []);
+        lens.get(key).push(len);
+      }
+    }
+    const adj = new Map([...keep].map(n => [n, new Map()]));
+    const edges = [...lens].map(([key, l]) => { const [a, b] = key.split('\u0000'); return { a, b, w: stats(l).median }; });
+    for (const e of edges) { adj.get(e.a).set(e.b, e.w); adj.get(e.b).set(e.a, e.w); }
+    // Kortaste väg från `from` utan den direkta kanten from–skip (Dijkstra, få stationer)
+    const dijkstra = (from, nodes, skip) => {
+      const dist = new Map([[from, 0]]);
+      const prev = new Map();
+      const done = new Set();
+      for (;;) {
+        let u = null;
+        for (const [n, dn] of dist) if (!done.has(n) && (u == null || dn < dist.get(u))) u = n;
+        if (u == null) break;
+        done.add(u);
+        for (const [v, w] of adj.get(u)) {
+          if (!nodes.has(v) || (u === from && v === skip)) continue;
+          const nd = dist.get(u) + w;
+          if (!dist.has(v) || nd < dist.get(v)) { dist.set(v, nd); prev.set(v, u); }
+        }
+      }
+      return { dist, prev };
+    };
+    edges.sort((x, y) => y.w - x.w);
+    for (const e of edges) {
+      const alt = dijkstra(e.a, keep, e.b).dist.get(e.b);
+      if (alt != null && alt <= e.w * 1.05) { adj.get(e.a).delete(e.b); adj.get(e.b).delete(e.a); }
+    }
+    const lines = [];
+    const at = new Map();
+    const remaining = new Set([...keep].sort());
+    const median = name => { const p = pos.get(name); return { lat: stats(p.lat).median, lon: stats(p.lon).median }; };
+    while (remaining.size) {
+      const start = remaining.values().next().value;
+      const farthest = from => {
+        const r = dijkstra(from, remaining, null);
+        let far = from;
+        for (const [n, dn] of r.dist) if (dn > r.dist.get(far) || (dn === r.dist.get(far) && n < far)) far = n;
+        return { far, r };
+      };
+      const a = farthest(start).far;
+      const { far: b, r } = farthest(a);
+      let path = [b];
+      while (path[0] !== a) path.unshift(r.prev.get(path[0]));
+      if (median(path[path.length - 1]).lat < median(path[0]).lat) path = path.reverse();
+      let km = 0;
+      const stations = path.map((name, k) => {
+        if (k > 0) km += adj.get(path[k - 1]).get(name) / 1000;
+        return Object.assign({ name, km }, median(name));
+      });
+      const index = lines.length;
+      lines.push({ index, length: km * 1000, stations });
+      stations.forEach(s => { at.set(s.name, { line: index, km: s.km }); remaining.delete(s.name); });
+    }
+    return { lines, at };
+  }
+
+  // Zoner där minst ZONE_SHARE av körningarna gör `kind`, med korta glapp ihopslagna
+  function findZones(bins, kind, minRuns, binM) {
+    const zones = [];
+    for (const b of bins) {
+      if (!(b.n >= minRuns && b[kind] / b.n >= ZONE_SHARE)) continue;
+      const last = zones[zones.length - 1];
+      if (last && b.from - last.to <= ZONE_GAP_M) { last.to = b.from + binM; last.bins.push(b); }
+      else zones.push({ kind, from: b.from, to: b.from + binM, bins: [b] });
+    }
+    return zones.filter(z => z.to - z.from >= ZONE_MIN_M).map(z => {
+      const first = z.bins[0];
+      const last = z.bins[z.bins.length - 1];
+      return {
+        kind, from: z.from, to: z.to, length: z.to - z.from,
+        share: z.bins.reduce((s, b) => s + b[kind] / b.n, 0) / z.bins.length,
+        runs: Math.max(...z.bins.map(b => b.n)),
+        vFrom: first.v.median, vTo: last.v.median,
+        start: { lat: first.lat, lon: first.lon }, end: { lat: last.lat, lon: last.lon }
+      };
+    });
+  }
+
+  /* Inbromsningen fram till stoppet (backwards) eller gasen därifrån, från zonen `pick`. Bromsar tåget i steg
+     (till exempel inför en bangård) räknas stegen dit, så länge glappet är högst ZONE_CHAIN_M och tåget inte gasar
+     däremellan. steps = antal zoner. */
+  function chainZones(zones, pick, backwards) {
+    if (!pick) return null;
+    const list = zones.slice().sort((a, b) => a.from - b.from);
+    let k = list.indexOf(pick);
+    const out = Object.assign({}, pick, { steps: 1 });
+    for (;;) {
+      k += backwards ? -1 : 1;
+      const next = list[k];
+      if (!next) break;
+      if (next.kind !== pick.kind) break;
+      if ((backwards ? out.from - next.to : next.from - out.to) > ZONE_CHAIN_M) break;
+      if (backwards) { out.from = next.from; out.vFrom = next.vFrom; out.start = next.start; }
+      else { out.to = next.to; out.vTo = next.vTo; out.end = next.end; }
+      out.share = Math.min(out.share, next.share);
+      out.steps++;
+    }
+    out.length = out.to - out.from;
+    return out;
+  }
+
+  function newBin(from) { return { from, n: 0, broms: 0, gas: 0, jamn: 0, still: 0, v: [], lat: [], lon: [] }; }
+
+  // En körnings punkter i ett längdsteg → vad tåget mest gjorde där (en röst per körning och längdsteg)
+  function vote(binMap, key, p) {
+    let b = binMap.get(key);
+    if (!b) { b = { c: { broms: 0, gas: 0, jamn: 0, still: 0 }, v: [], lat: p.lat, lon: p.lon }; binMap.set(key, b); }
+    b.c[p.action]++;
+    if (p.v != null) b.v.push(p.v);
+  }
+  function addVotes(target, binMap, binM) {
+    for (const [key, b] of binMap) {
+      const action = ACTIONS.reduce((best, x) => (b.c[x] > b.c[best] ? x : best), ACTIONS[0]);
+      if (!target.has(key)) target.set(key, newBin(key * binM));
+      const t = target.get(key);
+      t.n++;
+      t[action]++;
+      if (b.v.length) t.v.push(stats(b.v).median);
+      t.lat.push(b.lat);
+      t.lon.push(b.lon);
+    }
+  }
+  function finishBins(target) {
+    return [...target.values()].sort((a, b) => a.from - b.from).map(b => Object.assign(b, {
+      v: stats(b.v), lat: stats(b.lat).median, lon: stats(b.lon).median
+    }));
+  }
+
+  /* Broms och gas vid uppehållen och längs linjen. motion: körnings-id → motionPoints (motionTracks).
+     Per station och riktning räknas bara körningar som stannade där (GPS-spåret under 2 km/h inom ANCHOR_MAX_M).
+     Avstånd s är meter från stationens koordinat i färdriktningen: negativt före, positivt efter.
+     Ger { runCount, lines: [{ index, length, stations, dirs: [{ dir, from, toward, bins }] }],
+           stations: [{ key, name, line, km, dir, from, toward, n, passages, stopAt, bins, zones, approach, departure, runs }] } */
+  function motionZones(runs, motion) {
+    const entries = [];
+    for (const run of runs || []) {
+      const pts = motion && motion.get(String(run.id));
+      if (!pts || pts.length < 10 || !Array.isArray(run.stops)) continue;
+      entries.push({ run, pts, anchors: run.stops.map(s => stationAnchor(s, pts)) });
+    }
+    const empty = { runCount: entries.length, lines: [], stations: [] };
+    if (!entries.length) return empty;
+    const minRuns = Math.min(ZONE_MIN_RUNS, entries.length);
+    const axis = lineAxis(entries, minRuns);
+    const groups = new Map();
+    const lineBins = new Map();
+    for (const e of entries) {
+      const info = runInfo(e.run);
+      const stops = e.run.stops;
+      const { pts } = e;
+      // Stannade tåget vid stationen? (GPS under 2 km/h nära stationen) och var
+      const stopped = stops.map((s, i) => {
+        const an = e.anchors[i];
+        if (!an) return null;
+        let first = null;
+        for (let k = lowerBoundD(pts, an.d - ANCHOR_MAX_M); k < pts.length; k++) {
+          const sd = pts[k].d - an.d;
+          if (sd > ANCHOR_MAX_M) break;
+          if (sd >= -ANCHOR_MAX_M && pts[k].action === 'still') { first = sd; break; }
+        }
+        // Mätningen avslutades i samma stund som tåget kom fram (slutstationen): appens ankomst räcker om farten var låg
+        const arr = toDate(s.actualArrival);
+        if (first == null && arr && stopType(s) === 'stopp') {
+          const k = Math.min(pts.length - 1, lowerBoundT(pts, arr.getTime()));
+          if (pts[k].v != null && pts[k].v < 10 && Math.abs(pts[k].d - an.d) <= ANCHOR_MAX_M) first = pts[k].d - an.d;
+        }
+        return first;
+      });
+      // Körningens läge på linjen: km mellan stationerna i körningen, i spårets ordning
+      const marks = stops.map((s, i) => ({ s, an: e.anchors[i], at: axis.at.get(s.name) })).filter(x => x.an && x.at);
+      const lineOf = new Map();
+      for (const m of marks) {
+        if (!lineOf.has(m.at.line)) lineOf.set(m.at.line, []);
+        lineOf.get(m.at.line).push({ d: m.an.d, km: m.at.km });
+      }
+      for (const [line, list] of lineOf) {
+        list.sort((a, b) => a.d - b.d);
+        if (list.length < 2) continue;
+        const segs = [];
+        for (let k = 0; k + 1 < list.length; k++) if (list[k + 1].d - list[k].d > 1 && list[k + 1].km !== list[k].km) segs.push([list[k], list[k + 1]]);
+        if (!segs.length) continue;
+        const L = axis.lines[line];
+        const bins = { 1: new Map(), '-1': new Map() };
+        let j = 0;
+        for (const p of pts) {
+          if (!p.action || p.d < segs[0][0].d - ANCHOR_MAX_M || p.d > segs[segs.length - 1][1].d + ANCHOR_MAX_M) continue;
+          while (j < segs.length - 1 && p.d > segs[j][1].d) j++;
+          const [a, b] = segs[j];
+          const dir = b.km > a.km ? 1 : -1;
+          const km = a.km + (p.d - a.d) / (b.d - a.d) * (b.km - a.km);
+          if (km < 0 || km * 1000 > L.length) continue;
+          vote(bins[dir], Math.floor(km * 1000 / LINE_BIN_M), p);
+        }
+        for (const dir of [1, -1]) {
+          const key = line + '|' + dir;
+          if (!lineBins.has(key)) lineBins.set(key, new Map());
+          addVotes(lineBins.get(key), bins[dir], LINE_BIN_M);
+        }
+      }
+      // Per uppehåll: fönstret går från föregående till nästa station där tåget stannade (högst ZONE_WINDOW_M)
+      stops.forEach((s, i) => {
+        const an = e.anchors[i];
+        const at = axis.at.get(s.name);
+        if (!an || !at) return;
+        let dir = 0;
+        for (let k = i + 1; k < stops.length && !dir; k++) {
+          const o = axis.at.get(stops[k].name);
+          if (e.anchors[k] && o && o.line === at.line && o.km !== at.km) dir = o.km > at.km ? 1 : -1;
+        }
+        for (let k = i - 1; k >= 0 && !dir; k--) {
+          const o = axis.at.get(stops[k].name);
+          if (e.anchors[k] && o && o.line === at.line && o.km !== at.km) dir = o.km < at.km ? 1 : -1;
+        }
+        if (!dir) return;
+        const L = axis.lines[at.line];
+        const key = s.name + '|' + dir;
+        if (!groups.has(key)) {
+          const ends = dir > 0 ? [L.stations[0], L.stations[L.stations.length - 1]] : [L.stations[L.stations.length - 1], L.stations[0]];
+          const st = L.stations.find(x => x.name === s.name);
+          groups.set(key, { key, name: s.name, line: at.line, km: at.km, dir, from: ends[0].name, toward: ends[1].name,
+            lat: st.lat, lon: st.lon, n: 0, passages: 0, stopAt: [], reachBefore: [], reachAfter: [], bins: new Map(), runs: [] });
+        }
+        const g = groups.get(key);
+        if (stopped[i] == null) { g.passages++; return; }
+        // Körningens första station är start, utom när körningen är avskuren (cutStart)
+        let lo = i === 0 && !e.run.cutStart ? -ANCHOR_MAX_M : -ZONE_WINDOW_M;
+        let hi = i === stops.length - 1 ? ANCHOR_MAX_M : ZONE_WINDOW_M;
+        for (let k = i - 1; k >= 0; k--) if (e.anchors[k] && stopped[k] != null) { lo = Math.max(lo, e.anchors[k].d - an.d); break; }
+        for (let k = i + 1; k < stops.length; k++) if (e.anchors[k] && stopped[k] != null) { hi = Math.min(hi, e.anchors[k].d - an.d); break; }
+        const binMap = new Map();
+        const profile = [];
+        let lastS = null;
+        for (let k = lowerBoundD(pts, an.d + lo); k < pts.length; k++) {
+          const p = pts[k];
+          const sd = p.d - an.d;
+          if (sd > hi) break;
+          if (p.action) vote(binMap, Math.floor(sd / ZONE_BIN_M), p);
+          if (p.v != null && (lastS == null || Math.abs(sd - lastS) >= 15)) { profile.push({ s: Math.round(sd), v: Math.round(p.v * 10) / 10 }); lastS = sd; }
+        }
+        addVotes(g.bins, binMap, ZONE_BIN_M);
+        g.reachBefore.push(-lo);
+        g.reachAfter.push(hi);
+        g.n++;
+        g.stopAt.push(stopped[i]);
+        g.runs.push({ runId: info.runId, date: info.date, weekday: info.weekday, train: info.trainNumber, profile });
+      });
+    }
+    // Stationer där alla körningar passerade är med (n = 0, inga zoner), så att linjen blir hel
+    const stations = [...groups.values()].map(g => {
+      const bins = finishBins(g.bins);
+      if (!g.n) return Object.assign({}, g, { stopAt: null, bins, zones: [], approach: null, departure: null });
+      const zr = Math.min(ZONE_MIN_RUNS, g.n);
+      const zones = findZones(bins, 'broms', zr, ZONE_BIN_M).concat(findZones(bins, 'gas', zr, ZONE_BIN_M)).sort((a, b) => a.from - b.from);
+      const stopAt = stats(g.stopAt).median;
+      const brakes = zones.filter(z => z.kind === 'broms' && z.from < stopAt + 50 && z.to >= stopAt - ANCHOR_MAX_M);
+      const gases = zones.filter(z => z.kind === 'gas' && z.to > stopAt - 50 && z.from <= stopAt + ANCHOR_MAX_M);
+      const approach = chainZones(zones.filter(z => z.to <= stopAt + ANCHOR_MAX_M), brakes.sort((a, b) => b.to - a.to)[0], true);
+      const departure = chainZones(zones.filter(z => z.from >= stopAt - ANCHOR_MAX_M), gases.sort((a, b) => a.from - b.from)[0], false);
+      const withKm = z => z && Object.assign(z, { km1: g.km + g.dir * z.from / 1000, km2: g.km + g.dir * z.to / 1000 });
+      zones.forEach(withKm);
+      // own: zonen ligger närmare den här stationen än grannstationen där tåget stannar (annars hör den till grannen),
+      // och högst ZONE_WINDOW_M / 2 bort. Zoner längre ut syns längs linjen.
+      const half = list => stats(list).median / 2;
+      const before = half(g.reachBefore);
+      const after = half(g.reachAfter);
+      for (const z of zones) { const mid = (z.from + z.to) / 2; z.own = mid >= -before && mid <= after; }
+      if (approach) approach.own = true;
+      if (departure) departure.own = true;
+      return Object.assign({}, g, { stopAt, bins, zones, approach: withKm(approach), departure: withKm(departure) });
+    }).sort((a, b) => a.line - b.line || a.dir - b.dir || a.dir * (a.km - b.km));
+    const lines = axis.lines.map(L => Object.assign({}, L, {
+      dirs: [1, -1].map(dir => ({
+        dir,
+        from: dir > 0 ? L.stations[0].name : L.stations[L.stations.length - 1].name,
+        toward: dir > 0 ? L.stations[L.stations.length - 1].name : L.stations[0].name,
+        bins: finishBins(lineBins.get(L.index + '|' + dir) || new Map())
+      }))
+    }));
+    return { runCount: entries.length, lines, stations };
+  }
+
   // ── Jämför perioder ──
 
   function inPeriod(run, p) {
@@ -1331,6 +1755,8 @@
     routeBetween, proposeNewTimetable,
     delayBreakdown, delayBalance, delayProfile,
     trackPoints, analyzeTrack, analyzeTracks, unplannedStops, distanceM,
+    MOTION_ACCEL, ZONE_BIN_M, LINE_BIN_M, ZONE_WINDOW_M, ZONE_SHARE, ZONE_MIN_RUNS,
+    motionPoints, motionTracks, stationAnchor, motionZones,
     comparePeriods, defaultPeriods,
     stats, directedRuns, sliceRuns,
     formatMinutes, csvDocument

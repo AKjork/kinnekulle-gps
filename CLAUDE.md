@@ -668,3 +668,43 @@ Dataunderlag: 2 av 255 avgångar från mellanstationer i spåren registrerades c
 - `node --test "tests/*.test.js"` (99): service workern sparar inte felsvar och hämtar med `cache: 'reload'`.
 - `node tests/run-browser-tests.mjs` (67), nya: `avgång:`, `lagring:`, `stationer:`, `startformulär:`, `tidtabell:`, `mittpunkt:`, `GPS-spår: Kasta bort …` och `CSV:`. `tidtabell: svarar inte …` tar 10 s.
 
+## Uppdatering (2026-11-25e): Broms och gas (Analys.html)
+
+André 2026-11-25: visa var tågen bromsar och gasar i förhållande till uppehållen, i meter och km, så att halkbekämpningen vet var de ska lägga arbetet på hösten. Använd appens GPS-data. Om det faktiskt är halt behöver inte bedömas.
+
+Dataunderlag (`railtimer-data`, 51 spår okt–nov 2026, 1 punkt/s, noggrannhet i median 4 m): accelerationen ur GPS-farten delar sig tydligt. Jämn fart (rullning, lutning) ligger inom ±0,1 m/s², inbromsning kring −0,5 och gas 0,2–0,5 m/s². Vid de flesta stationer bromsar tågen 450–1 100 m före och gasar till 700–1 500 m efter. Vid Vedum och Vara (140 km/h) är det 1 500–2 500 m, och vid Mariestad och Lyrestad bromsar tågen i steg från ca 1 900 m före.
+
+### Beräkningen (`railtimer-analys.js`)
+- `motionPoints(track)`: farten jämnas ut över ±2 punkter, accelerationen är farten 1 s efter minus 1 s före. Varje punkt får sträcka `d` (GPS-brus vid stillastående räknas inte), fart `v` (km/h), `a` (m/s²) och `action`: `broms` (a ≤ −0,15), `gas` (a ≥ 0,15), `jamn` eller `still` (under 2 km/h). `motionTracks(runs, tracks)` räknas en gång per inläsning, som `analyzeTracks`.
+- `stationAnchor(stop, pts)`: läget i spåret vid stationens koordinat. Punkten närmast koordinaten används, högst 400 m bort och inom ±10 min från ankomst/avgång, interpolerad mot grannpunkterna.
+- `motionZones(runs, motion)`:
+  - **Linjen** (`lineAxis`): stationerna i ordning med km längs spåret från den sydligaste änden. Avståndet mellan grannstationer är spårens median. Stationer med färre än 3 körningar tas inte med. Kanter som hoppar över stationer (körningar utan tågnummer) tas bort när vägen via stationerna är lika lång (±5 %). Grenar blir egna linjer.
+  - **Per station och färdriktning** räknas bara körningar som stannade: under 2 km/h inom 400 m. Slutar mätningen samtidigt som tåget kommer fram, räcker appens ankomst om farten var under 10 km/h.
+  - Fönstret går från föregående till nästa uppehåll, högst 4 km. Vid körningens start är det 400 m, utom när körningen är avskuren (`cutStart`).
+  - Avstånden räknas i steg om 50 m. Varje körning röstar per steg på det den mest gjorde. En **zon** är där minst hälften av körningarna bromsar (gasar) och minst 3 har passerat, eller alla när färre än 3 stannade. Glapp upp till 150 m slås ihop och zoner under 100 m tas bort.
+  - **Inbromsningen** (`approach`) är zonen som slutar vid stoppet plus tidigare steg med högst 1 000 m glapp utan gas emellan, med `steps`. **Gasen** (`departure`) räknas likadant framåt.
+  - `own`: zonen ligger närmare stationen än grannuppehållet och högst 2 km bort. Längre ut syns den längs linjen.
+  - Varje zon har km längs linjen (`km1`, `km2`), farten och medianläget (lat/lon) i start och slut.
+  - Linjen får även andelen som bromsar och gasar per 100 m och riktning, från alla körningar inklusive passager.
+
+### Fliken Broms och gas
+- **Sträcka och riktning** (André 2026-11-25: välja till exempel Håkantorp–Gårdsjö och se båda hållen): *Från* och *Till* i fliken, med linjens stationer i ordning, och ⇄ som byter riktning (Från och Till byter plats). Förvalt är hela linjen, och *Hela linjen* återställer. Allt i fliken gäller vald sträcka och riktning, och färdriktningen går alltid åt höger. Väljs samma station i båda, eller en station på en annan linje, blir den andra änden linjens ände längst bort (`setMotionRoute`). Färdriktningen följer valet (`motionRange`: 1 = stigande km). Öppen station följer med vid riktningsbyte.
+- **Hela linjen**: ett band i km, 6 px/km, som rullas i sidled på mobilen. Rött betyder bromsar och blått gasar, med starkare färg när fler körningar gör det. Grått betyder jämn fart. Stationsnamnen ligger i upp till fem rader, och ett klick öppnar stationen.
+- **Vid uppehållen**: en rad per station längs en lodrät linje. Varje rad har en stapel från 3 km före till 3 km efter, med samma skala för alla stationer, och texten *Bromsar från 950 m före · Gasar till 1 100 m efter*. Stationer utan uppehåll visas nedtonade. Med färre än 3 uppehåll står det *få körningar*.
+- **Klick på en station** visar:
+  - rutor med inbromsning, gas, var tåget stannar och underlaget;
+  - fartprofilen: en linje per körning, median, zonerna och ett band med andelen. Pekaren visar meter, fart och hur många av körningarna som bromsar och gasar. Diagrammet ritas i skärmens bredd;
+  - en karta med OpenStreetMaps kartbilder (mörkt filter på skärmen) och linjen färgad efter vad tågen gör, med *börjar bromsa* och *slutar gasa* utmärkta;
+  - zonerna med koordinater som länkar till Google Maps.
+- **Lista för halkbekämpningen**: per station visas var inbromsningen börjar och var gasen slutar, i meter, km och koordinater.
+- **Export**: Excel för båda riktningarna, med uppehållen och alla zoner och koordinater med decimalkomma. **Skriv ut / PDF** blir svart på vitt (egna färgvärden för `#motionReport` i utskrift).
+- **Alla körningar som går någon del av sträckan räknas**, och körningarna skärs inte av, så att inbromsningen in mot första stationen kommer med. Station 1 och 2 i filtret väljer sträckan när de ändras, men tar inte bort körningar.
+- Export till Excel gäller vald sträcka i båda riktningarna (vald riktning först), med riktningen skriven som "Håkantorp → Gårdsjö".
+- Fliken räknas bara när den visas (`motionDirty`), eftersom det tar ca 0,2 s med 50 spår.
+- Färgerna (`--brake` #e66767, `--gas` #3987e5, i utskrift #d03b3b och #2a78d6) går att skilja åt vid färgblindhet, både mot mörk och mot vit bakgrund.
+- Kartbilderna från `tile.openstreetmap.org` är inte provade härifrån, eftersom utvecklingsmiljön inte når dem. I testläge hämtas inga kartbilder (`setTileUrl`).
+
+### Tester
+- `node --test "tests/*.test.js"` (103), med en simulerad körning (`simulateRun`: gas 0,4 m/s², broms 0,5 m/s², stopp, hastighetsbegränsning). Testerna täcker broms, gas och brus, stationens läge, zonerna i båda riktningarna, linjens km utan genvägar och inbromsning i steg med och utan gas emellan.
+- `node tests/run-browser-tests.mjs` (68), nytt: *analys: Broms och gas visar var tågen bromsar och gasar vid uppehållen*. Testet täcker sträcka, byt riktning, körningar som bara går en del av sträckan (Källby → Blomberg), Station 1 och 2, Hela linjen, export och utskrift.
+- Bilder: `--shot=broms-och-gas`, `--shot=broms-och-gas-mobil` och `--shot=broms-och-gas-utskrift`.
