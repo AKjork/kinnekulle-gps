@@ -104,6 +104,43 @@
     return new TextDecoder().decode(bytes);
   }
 
+  // ── Inloggningslänk ──
+  /* Repo och token i länkens #-del (…#rt=…). Webbläsaren skickar aldrig #-delen till servern. Länken sparas som
+     bokmärke och fyller i inställningarna igen när webbläsarens data har rensats. Kodningen är base64url, inte
+     kryptering: länken ger samma åtkomst som token. */
+  const LINK_PARAM = 'rt';
+
+  function toBase64Url(text) { return encodeBase64(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+  function fromBase64Url(text) {
+    const s = String(text).replace(/-/g, '+').replace(/_/g, '/');
+    return decodeBase64(s + '==='.slice((s.length + 3) % 4));
+  }
+
+  // Länken till sidan pageUrl med inställningarna { repo, token, branch }. null utan giltigt repo och token.
+  function loginLink(settings, pageUrl) {
+    const repo = settings && parseRepo(settings.repo);
+    const token = settings && settings.token ? String(settings.token).trim() : '';
+    if (!repo || !token) return null;
+    const data = { r: `${repo.owner}/${repo.repo}`, t: token };
+    if (settings.branch && settings.branch !== 'main') data.b = String(settings.branch);
+    return `${String(pageUrl || '').split('#')[0]}#${LINK_PARAM}=${toBase64Url(JSON.stringify(data))}`;
+  }
+
+  // Inställningarna ur en inloggningslänk (hela länken eller bara #-delen). null när den saknas eller är trasig.
+  function settingsFromLink(text) {
+    const m = String(text || '').trim().match(/[#&]rt=([A-Za-z0-9_-]+)/);
+    if (!m) return null;
+    try {
+      const d = JSON.parse(fromBase64Url(m[1]));
+      const repo = d && parseRepo(d.r);
+      const token = d && typeof d.t === 'string' ? d.t.trim() : '';
+      if (!repo || !token || /\s/.test(token)) return null;
+      return { repo: `${repo.owner}/${repo.repo}`, token, branch: typeof d.b === 'string' && d.b ? d.b : 'main' };
+    } catch (e) {
+      return null;
+    }
+  }
+
   // ── Klient ──
 
   function encodePath(path) {
@@ -436,7 +473,7 @@
   return {
     API, IMPORT_CHUNK, MIN_WRITE_INTERVAL_MS, DEFAULT_REPO, MESSAGES, GitHubError,
     parseRepo, localDate, runPath, trackPath, importPath, runCommitMessage, trackCommitMessage,
-    encodeBase64, decodeBase64, createClient, testAccess,
+    encodeBase64, decodeBase64, createClient, testAccess, LINK_PARAM, loginLink, settingsFromLink,
     normalizeState, planUpload, runUploadPass, mergeRuns, loadRunsFromRepo, loadTracksFromRepo
   };
 });

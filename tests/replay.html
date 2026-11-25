@@ -567,6 +567,31 @@ test('uppladdning: inställningsvyn testar anslutningen och sparar repo och toke
   assert(fake.files.has('.railtimer/anslutning.json'), 'anslutningsfilen skrevs');
 });
 
+test('uppladdning: inloggningslänken sparar repo och token igen, öppnad eller inklistrad', async () => {
+  let w = await loadApp();
+  await clearAppStorage(w);
+  w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'github_pat_app', branch: 'main' }));
+  const link = await w.__railtimer.copyLoginLink();
+  assert(/index\.html\?test=1&n=\d+#rt=[A-Za-z0-9_-]+$/.test(link), 'länken: ' + link);
+  // Rensad webbläsare: länken öppnas
+  w.localStorage.clear();
+  const frame = document.getElementById('app');
+  await new Promise(resolve => { frame.onload = resolve; frame.src = link.replace(/n=\d+/, 'n=' + (Date.now() + 1)); }); // ny sida, inte bara ny #-del
+  w = frame.contentWindow;
+  for (let i = 0; i < 100 && !w.__railtimer; i++) await realSleep(20);
+  assertEqual(JSON.parse(w.localStorage.getItem('railtimer_github_v1')), { repo: 'AKjork/railtimer-data', token: 'github_pat_app', branch: 'main' }, 'sparad igen');
+  assertEqual(w.location.hash, '', 'länkens #-del tas bort ur adressfältet');
+  // Inklistrad i fältet Token i inställningarna
+  await clearAppStorage(w);
+  const fake = browserFakeGitHub(w);
+  w.__railtimer.setFetchForTest(fake.fetch);
+  w.__railtimer.showUploadSettings();
+  w.document.getElementById('ghToken').value = link;
+  await w.__railtimer.saveAndTestGithub();
+  assertEqual(JSON.parse(w.localStorage.getItem('railtimer_github_v1')).token, 'github_pat_app', 'inklistrad länk');
+  assertEqual(w.document.getElementById('ghTestResult').textContent, 'Ansluten – repot är privat och token kan skriva.', 'testad');
+});
+
 // ── Task 8: analysverktyget hämtar från GitHub ──
 
 async function loadAnalys() {
@@ -1146,6 +1171,45 @@ test('analys: en token som webbläsaren fyllt i används direkt när inga instä
   await w.__analys.loadFromGithub();
   assertEqual(w.__analys.getLogs().length, 8, 'körningarna hämtas');
   assertEqual(JSON.parse(w.localStorage.getItem('railtimer_github_v1')).token, 'test-token', 'token sparad');
+});
+
+test('analys: inloggningslänken fyller i repo och token igen när webbläsaren har rensat dem', async () => {
+  let w = await loadAnalys();
+  w.localStorage.clear();
+  w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'github_pat_länk', branch: 'main' }));
+  w.document.getElementById('btnLoginLink').click();
+  const link = w.document.getElementById('loginLink').value;
+  assert(/Analys\.html\?test=1&n=\d+#rt=[A-Za-z0-9_-]+$/.test(link), 'länken: ' + link);
+  assert(w.document.getElementById('loginLinkBox').style.display === '', 'länken visas');
+  // Rensad webbläsare: länken öppnas
+  w.localStorage.clear();
+  const frame = document.getElementById('app');
+  await new Promise(resolve => { frame.onload = resolve; frame.src = link.replace(/n=\d+/, 'n=' + (Date.now() + 1)); }); // ny sida, inte bara ny #-del
+  w = frame.contentWindow;
+  for (let i = 0; i < 100 && !w.__analys; i++) await realSleep(20);
+  assertEqual(JSON.parse(w.localStorage.getItem('railtimer_github_v1')), { repo: 'AKjork/railtimer-data', token: 'github_pat_länk', branch: 'main' }, 'sparad igen');
+  assertEqual(w.location.hash, '', 'länkens #-del tas bort ur adressfältet');
+  assertEqual(w.document.getElementById('loadStatus').textContent, 'Inloggad med länken.', 'meddelande');
+  // Länken öppnad medan sidan redan är öppen (bara #-delen byts)
+  w.localStorage.clear();
+  w.location.hash = link.split('#')[1];
+  for (let i = 0; i < 50 && !w.localStorage.getItem('railtimer_github_v1'); i++) await realSleep(20);
+  assertEqual(JSON.parse(w.localStorage.getItem('railtimer_github_v1')).token, 'github_pat_länk', 'utan omladdning');
+  assertEqual(w.location.hash, '', '#-delen borta igen');
+  // Inklistrad i fältet Token och Hämta från GitHub
+  w.localStorage.clear();
+  await new Promise(resolve => { const req = w.indexedDB.deleteDatabase('railtimer-analys'); req.onsuccess = req.onerror = req.onblocked = () => resolve(); });
+  const fake = browserFakeGitHub(w);
+  trainRuns().forEach(r => fake.put('korningar/2026/' + r.id + '.json', JSON.stringify(r)));
+  w.__analys.setFetchForTest(fake.fetch);
+  w.document.getElementById('ghToken').value = link;
+  await w.__analys.loadFromGithub();
+  assertEqual(JSON.parse(w.localStorage.getItem('railtimer_github_v1')).token, 'github_pat_länk', 'inklistrad länk');
+  assertEqual(w.__analys.getLogs().length, 8, 'körningarna hämtas');
+  // Utan sparad token: ingen länk
+  w.localStorage.clear();
+  w.document.getElementById('btnLoginLink').click();
+  assertEqual(w.document.getElementById('loginLinkStatus').textContent, 'Spara repo och token först.', 'utan token');
 });
 
 test('analys: Tidtabell visar varifrån gångtiden kommer och kan ta tågets egna', async () => {

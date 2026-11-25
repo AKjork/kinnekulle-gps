@@ -752,6 +752,10 @@
       <button id="btnGhUploadNow" class="ghost">Ladda upp nu</button>
     </div>
     <p id="ghTestResult" class="meta" role="status" aria-live="polite"></p>
+    <div class="settings-actions">
+      <button id="btnGhLink" class="ghost">Kopiera inloggningslänk</button>
+    </div>
+    <p class="hint">Slipp skriva in token igen: spara inloggningslänken i Anteckningar eller som bokmärke. Försvinner token (till exempel när webbläsarens data rensats) trycker du på länken eller klistrar in den i fältet Token. Länken ger samma åtkomst som token, så dela den inte.</p>
     <div id="uploadStatus" class="upload-status"></div>
     <div class="settings-actions">
       <button id="btnGhRemove" class="danger">Ta bort token</button>
@@ -773,7 +777,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25h';
+  const APP_VERSION = '2026-11-25i';
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -896,6 +900,7 @@
   let audioCtx = null;
 
   async function init(){
+    const linked=consumeLoginLink();
     updateLogCount();
     bindEvents();
     if(!TEST_MODE) setupPWA();
@@ -909,6 +914,11 @@
       exposeTestHooks();
       return;
     }
+    if(linked) showHeaderStatus('GitHub-inloggning sparad', false);
+    // Länken öppnad medan appen redan är öppen: bara #-delen byts, sidan laddas inte om
+    window.addEventListener('hashchange', () => {
+      if(consumeLoginLink()){ showHeaderStatus('GitHub-inloggning sparad', false); scheduleUpload(); }
+    });
     // Återuppta resa och uppladdning väntar inte på stationslistan (den kan ta tid med dålig täckning)
     const stationsLoaded=loadAllStations();
     getUserLocation();
@@ -927,7 +937,7 @@
       getTrack: runId => TrackStore.get(runId),
       setFetchForTest: fn => { testFetch = fn; },
       setRailFetchForTest: fn => { railFetchForTest = fn; }, loadRailGeometry, renderRouteMap,
-      scheduleUpload, whenUploadIdle, showUploadSettings, saveAndTestGithub,
+      scheduleUpload, whenUploadIdle, showUploadSettings, saveAndTestGithub, consumeLoginLink, copyLoginLink,
       loadAllStations, stationNames: () => allStationsCache.map(s => s.name), checkForInterruptedJourney,
       removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog,
       setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; }
@@ -1459,6 +1469,7 @@
     document.getElementById('btnGhSave').addEventListener('click', saveAndTestGithub);
     document.getElementById('btnGhUploadNow').addEventListener('click', uploadNow);
     document.getElementById('btnGhRemove').addEventListener('click', removeGithubToken);
+    document.getElementById('btnGhLink').addEventListener('click', copyLoginLink);
     document.getElementById('btnCloseSettings').addEventListener('click', closeOverlay);
     window.addEventListener('online', () => { scheduleUpload(); });
     document.getElementById('statsVehicleFilter').addEventListener('change', renderStatistics);
@@ -3168,9 +3179,12 @@
     const repo=GH.parseRepo(document.getElementById('ghRepo').value || GH.DEFAULT_REPO);
     if(!repo){ setGhResult('Ange repot som ägare/namn, t.ex. AKjork/railtimer-data.', true); return; }
     const existing=loadGithubSettings();
-    const token=document.getElementById('ghToken').value.trim() || (existing && existing.token) || '';
+    // En inloggningslänk inklistrad i fältet Token ger både repo och token
+    const linked=GH.settingsFromLink(document.getElementById('ghToken').value);
+    const token=linked ? linked.token : (document.getElementById('ghToken').value.trim() || (existing && existing.token) || '');
     if(!token){ setGhResult('Klistra in din token.', true); return; }
-    const settings={ repo:`${repo.owner}/${repo.repo}`, token, branch:'main' };
+    const settings=linked || { repo:`${repo.owner}/${repo.repo}`, token, branch:'main' };
+    if(linked) document.getElementById('ghRepo').value=linked.repo;
     setGhResult('Testar anslutningen…', false);
     try{
       const info=await GH.testAccess(githubClient(settings), deviceLabel());
@@ -3195,6 +3209,33 @@
     else if(result.error) setGhResult(result.error.message, result.error.kind!=='network');
     else if(result.skippedUntil) setGhResult(`GitHub begränsar – nästa försök ${formatClock(result.skippedUntil)}.`, false);
     else setGhResult(`Klart: ${result.importedRuns+result.uploadedRuns} körningar och ${result.uploadedTracks} spår uppladdade.`, false);
+  }
+
+  /* Inloggningslänk (…index.html#rt=…, railtimer-github.js): inställningarna sparas och #-delen tas bort ur
+     adressfältet direkt. Ger inställningarna eller null. */
+  function consumeLoginLink(){
+    const settings=GH && GH.settingsFromLink(location.hash);
+    if(!settings) return null;
+    try{ localStorage.setItem(STORAGE_KEY_GITHUB, JSON.stringify(settings)); }catch(e){ return null; }
+    try{ history.replaceState(null, '', location.pathname+location.search); }catch(e){ location.hash=''; }
+    return settings;
+  }
+
+  // Kopierar inloggningslänken till appen (delningsmenyn om kopieringen inte går)
+  async function copyLoginLink(){
+    const s=loadGithubSettings();
+    const link=s && GH && GH.loginLink(s, location.href);
+    if(!link){ setGhResult('Spara repo och token först.', true); return null; }
+    try{
+      await navigator.clipboard.writeText(link);
+      setGhResult('Inloggningslänken är kopierad. Spara den i Anteckningar eller som bokmärke.', false);
+    }catch(e){
+      try{
+        if(!navigator.share) throw e;
+        await navigator.share({ title:'RailTimer – inloggning', url:link });
+      }catch(e2){ setGhResult('Kunde inte kopiera länken.', true); }
+    }
+    return link;
   }
 
   function removeGithubToken(){

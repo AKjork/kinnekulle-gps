@@ -811,3 +811,18 @@ Tågnummer (förifyllt från senaste körningen) och datum. Sidan visar:
 - Alla webbläsartester: 83.
 - `tidtabell: hela vägen …` (2026-11-25g) kontrollerar nu appversionens form i stället för en viss version. Förut slog det fel vid varje höjning.
 - Bilder: `--shot=rapport-trafikverket` och `--shot=trafikverket-data`.
+
+## Uppdatering (2026-11-25i): inloggningslänk för GitHub
+
+André 2026-11-25: det är jobbigt att lägga in token igen varje gång webbläsarens data har rensats. Appversion `2026-11-25i`.
+
+- **Inloggningslänk** (`railtimer-github.js`: `loginLink`, `settingsFromLink`, `LINK_PARAM`): repo, token och gren (bara om den inte är `main`) läggs som base64url-kodad JSON i länkens #-del, till exempel `…/Analys.html#rt=…`. Webbläsaren skickar aldrig #-delen till servern. Kodningen är inte kryptering: länken ger samma åtkomst som token.
+- **Analys.html**: under GitHub-inställningar finns *Slipp skriva in token igen* med knappen *Skapa inloggningslänk*. Den sparar först en ifylld token och visar sedan länken med *Kopiera* och *Dela*; Dela visas bara när `navigator.share` finns.
+  - Öppnas sidan med länken (`consumeLoginLink`) sparas inställningarna, #-delen tas bort ur adressfältet (`history.replaceState`) och mätningarna hämtas. Det gäller även när länken öppnas medan sidan redan är öppen (`hashchange`).
+  - En länk som klistras in i fältet Token fungerar också, med *Spara* eller *Hämta från GitHub*, även när inställningar redan finns.
+- **Appen (index.html)**: *Kopiera inloggningslänk* i Uppladdning. Går det inte att kopiera öppnas delningsmenyn i stället.
+  - Länken (`…/index.html#rt=…`) sparar inställningarna vid start, eller när den öppnas medan appen är öppen, och visar *GitHub-inloggning sparad*.
+  - En länk inklistrad i fältet Token används av *Spara och testa*.
+- Appen och analysverktyget delar `railtimer_github_v1` (samma ursprung), så en länk till någon av sidorna loggar in båda i samma webbläsare. En app som lagts till på hemskärmen har egen lagring på iPhone; där klistrar man in länken i fältet Token.
+- Den gamla texten om att låta webbläsaren spara token som lösenord är borttagen ur analysverktyget. Formuläret har kvar `autocomplete` username/current-password.
+- Tester: `node --test "tests/*.test.js"` (126), *inloggningslänk: …* i `tests/railtimer-github.test.js`. `node tests/run-browser-tests.mjs` (85), *uppladdning: inloggningslänken …* och *analys: inloggningslänken …*.

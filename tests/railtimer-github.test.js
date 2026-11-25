@@ -361,3 +361,22 @@ test('loadTracksFromRepo: spåren hämtas en gång och läses sedan från cachen
   assert.equal(second.newFiles, 0, 'från cachen');
   assert.equal(second.tracks.length, 1);
 });
+
+test('inloggningslänk: repo och token fram och tillbaka i #-delen', () => {
+  const link = GH.loginLink({ repo: 'AKjork/railtimer-data', token: 'github_pat_11ABC_xyz', branch: 'main' }, 'https://akjork.github.io/kinnekulle-gps/Analys.html#gammal');
+  assert.match(link, /^https:\/\/akjork\.github\.io\/kinnekulle-gps\/Analys\.html#rt=[A-Za-z0-9_-]+$/);
+  assert.ok(!link.includes('github_pat'), 'token står inte i klartext');
+  assert.deepEqual(GH.settingsFromLink(link), { repo: 'AKjork/railtimer-data', token: 'github_pat_11ABC_xyz', branch: 'main' });
+  assert.deepEqual(GH.settingsFromLink('#' + link.split('#')[1]), GH.settingsFromLink(link), 'bara #-delen');
+  assert.deepEqual(GH.settingsFromLink('  ' + link + '\n'), GH.settingsFromLink(link), 'inklistrad med mellanslag');
+  const branch = GH.loginLink({ repo: 'https://github.com/AKjork/railtimer-data.git', token: 't', branch: 'test' }, 'https://x/index.html');
+  assert.deepEqual(GH.settingsFromLink(branch), { repo: 'AKjork/railtimer-data', token: 't', branch: 'test' });
+});
+
+test('inloggningslänk: trasig eller saknad länk och saknad token ger null', () => {
+  assert.equal(GH.loginLink({ repo: 'AKjork/railtimer-data', token: '' }, 'https://x/'), null);
+  assert.equal(GH.loginLink({ repo: 'inte ett repo', token: 't' }, 'https://x/'), null);
+  for (const text of ['', 'github_pat_abc', 'https://x/Analys.html', '#rt=', '#rt=!!!', '#rt=e30', '#rt=' + Buffer.from('{"r":"a/b","t":"x y"}').toString('base64url')]) {
+    assert.equal(GH.settingsFromLink(text), null, JSON.stringify(text));
+  }
+});

@@ -344,6 +344,8 @@
   }
   .gh-settings{margin-top:.75rem}
   .gh-settings summary{cursor:pointer;color:var(--ink-dim);font-size:.85rem}
+  .gh-link{border-top:1px solid var(--b);margin-top:.75rem;padding-top:.25rem}
+  #loginLink{width:100%;font-family:ui-monospace,Menlo,monospace;font-size:.75rem}
 </style>
 </head>
 <body>
@@ -383,7 +385,22 @@
           <button id="btnSaveGithub" type="submit" class="ghost">Spara</button>
         </div>
       </form>
-      <p class="meta">Token sparas i den här webbläsaren. Låt webbläsaren spara den som lösenord när den frågar – då fylls den i igen om webbläsaren har rensat sparade data, till exempel i ett privat fönster eller när den rensar vid stängning. Samma token som i appen fungerar.</p>
+      <p class="meta">Token sparas i den här webbläsaren. Samma token som i appen fungerar.</p>
+      <div class="gh-link">
+        <h3>Slipp skriva in token igen</h3>
+        <p class="meta">Skapa en inloggningslänk och spara den i Anteckningar (knappen Dela) eller som bokmärke. Har webbläsaren rensat sina data trycker du på länken: repo och token fylls i och mätningarna hämtas. Du kan också klistra in länken i fältet Token. Länken ger samma åtkomst som token, så dela den inte.</p>
+        <div class="filters">
+          <button id="btnLoginLink" type="button" class="ghost">Skapa inloggningslänk</button>
+        </div>
+        <div id="loginLinkBox" style="display:none">
+          <input type="text" id="loginLink" readonly aria-label="Inloggningslänk" spellcheck="false">
+          <div class="filters" style="margin-top:.5rem">
+            <button id="btnCopyLink" type="button" class="ghost">Kopiera</button>
+            <button id="btnShareLink" type="button" class="ghost">Dela</button>
+          </div>
+        </div>
+        <p id="loginLinkStatus" class="meta" role="status" aria-live="polite"></p>
+      </div>
     </details>
   </div>
 
@@ -698,6 +715,9 @@
   // Event listeners
   document.getElementById('btnLoadGithub').addEventListener('click', loadFromGithub);
   document.getElementById('ghForm').addEventListener('submit', e => { e.preventDefault(); saveGithubSettings(); });
+  document.getElementById('btnLoginLink').addEventListener('click', showLoginLink);
+  document.getElementById('btnCopyLink').addEventListener('click', copyLoginLink);
+  document.getElementById('btnShareLink').addEventListener('click', shareLoginLink);
   els.btnLoadLocal.addEventListener('click', loadFromLocalStorage);
   els.fileInput.addEventListener('change', loadFromFile);
   els.btnClearFilters.addEventListener('click', clearFilters);
@@ -820,17 +840,74 @@
   }
 
   function saveGithubSettings(){
+    // En inloggningslänk inklistrad i fältet Token ger både repo och token
+    const linked = RailTimerGitHub.settingsFromLink(document.getElementById('ghToken').value);
+    if(linked){
+      storeGithubSettings(linked);
+      document.getElementById('ghToken').value = '';
+      document.getElementById('ghRepo').value = linked.repo;
+      document.getElementById('ghSettings').open = false;
+      els.loadStatus.textContent = 'Inloggad med länken.';
+      return;
+    }
     const repo = RailTimerGitHub.parseRepo(document.getElementById('ghRepo').value || RailTimerGitHub.DEFAULT_REPO);
     if(!repo){ els.loadStatus.textContent = 'Ange repot som ägare/namn, t.ex. AKjork/railtimer-data.'; return; }
     const existing = loadGithubSettings();
     const token = document.getElementById('ghToken').value.trim() || (existing && existing.token) || '';
     if(!token){ els.loadStatus.textContent = 'Klistra in din token.'; return; }
-    localStorage.setItem(GH_KEY, JSON.stringify({ repo: `${repo.owner}/${repo.repo}`, token, branch: 'main' }));
-    // Be webbläsaren att inte rensa sparade data vid lagringsbrist (rensning vid stängning stoppas inte av det här)
-    try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); }catch(e){ /* utan stöd */ }
+    storeGithubSettings({ repo: `${repo.owner}/${repo.repo}`, token, branch: 'main' });
     document.getElementById('ghToken').value = '';
     document.getElementById('ghSettings').open = false;
     els.loadStatus.textContent = 'GitHub-inställningarna är sparade.';
+  }
+
+  function storeGithubSettings(settings){
+    localStorage.setItem(GH_KEY, JSON.stringify(settings));
+    // Be webbläsaren att inte rensa sparade data vid lagringsbrist (rensning vid stängning stoppas inte av det här)
+    try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); }catch(e){ /* utan stöd */ }
+  }
+
+  /* Inloggningslänk (…Analys.html#rt=…): inställningarna sparas och #-delen tas bort ur adressfältet direkt.
+     Ger inställningarna eller null. */
+  function consumeLoginLink(){
+    const settings = RailTimerGitHub.settingsFromLink(location.hash);
+    if(!settings) return null;
+    try{ storeGithubSettings(settings); }catch(e){ return null; }
+    try{ history.replaceState(null, '', location.pathname + location.search); }catch(e){ location.hash = ''; }
+    return settings;
+  }
+
+  function setLinkStatus(text){ document.getElementById('loginLinkStatus').textContent = text; }
+
+  // Visar inloggningslänken för de sparade inställningarna (en ifylld token sparas först)
+  function showLoginLink(){
+    if(document.getElementById('ghToken').value.trim()) saveGithubSettings();
+    document.getElementById('ghSettings').open = true;
+    const s = loadGithubSettings();
+    const link = s && RailTimerGitHub.loginLink(s, location.href);
+    if(!link){ document.getElementById('loginLinkBox').style.display = 'none'; setLinkStatus('Spara repo och token först.'); return null; }
+    document.getElementById('loginLink').value = link;
+    document.getElementById('loginLinkBox').style.display = '';
+    document.getElementById('btnShareLink').style.display = navigator.share ? '' : 'none';
+    setLinkStatus('Spara länken i Anteckningar eller som bokmärke. Tryck på den när token har försvunnit.');
+    return link;
+  }
+
+  async function copyLoginLink(){
+    const input = document.getElementById('loginLink');
+    try{
+      await navigator.clipboard.writeText(input.value);
+      setLinkStatus('Länken är kopierad.');
+    }catch(e){
+      input.focus();
+      input.select();
+      setLinkStatus('Markerad – kopiera den.');
+    }
+  }
+
+  async function shareLoginLink(){
+    try{ await navigator.share({ title: 'RailTimer Tidsanalys – inloggning', url: document.getElementById('loginLink').value }); }
+    catch(e){ /* avbruten */ }
   }
 
   // Redan hämtade filer sparas per sha i IndexedDB, så att bara nya filer hämtas
@@ -876,7 +953,9 @@
 
   async function loadFromGithub(){
     // En token som webbläsaren fyllt i (eller som skrivits in) men inte sparats används direkt
-    if(!loadGithubSettings() && document.getElementById('ghToken').value.trim()) saveGithubSettings();
+    // (även en inklistrad inloggningslänk när inställningar redan finns)
+    const typed = document.getElementById('ghToken').value.trim();
+    if(typed && (!loadGithubSettings() || RailTimerGitHub.settingsFromLink(typed))) saveGithubSettings();
     const s = loadGithubSettings();
     if(!s){
       document.getElementById('ghRepo').value = RailTimerGitHub.DEFAULT_REPO;
@@ -2720,6 +2799,8 @@
       setFetchForTest: fn => { testFetch = fn; },
       loadFromGithub,
       getLogs: () => allLogs,
+      consumeLoginLink,
+      showLoginLink,
       setFilters(values){
         for(const [id, value] of Object.entries(values)) document.getElementById(id).value = value;
         runAnalysis();
@@ -2755,6 +2836,15 @@
 
   // Initialize
   showEmpty();
+  // Öppnad med inloggningslänken: inställningarna sparas och mätningarna hämtas. Länken kan också öppnas
+  // medan sidan redan är öppen; då byts bara #-delen och sidan laddas inte om.
+  function onLoginLink(){
+    if(!consumeLoginLink()) return;
+    els.loadStatus.textContent = 'Inloggad med länken.';
+    if(!TEST_MODE) loadFromGithub();
+  }
+  onLoginLink();
+  window.addEventListener('hashchange', onLoginLink);
 
 })();
 </script>
