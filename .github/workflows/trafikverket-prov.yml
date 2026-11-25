@@ -1,0 +1,30 @@
+# Prov mot Trafikverkets riktiga API (utvecklingsmiljön når det inte). Ett teststeg: skriptet frågar, skriver ut
+# svaret i körningens logg och sammanfattning och avslutas. Inget publiceras och inget svarar på frågor härifrån.
+# Körs när skriptet ändras, eller för hand: Actions → Trafikverket-prov → Run workflow (valfria tågnummer).
+name: Trafikverket-prov
+
+on:
+  workflow_dispatch:
+    inputs:
+      numbers:
+        description: 'Tågnummer att fråga (mellanslag emellan); tomt = skriptets lista'
+        required: false
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/trafikverket-prov.yml'
+      - 'tools/trafikverket-tagnummer.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  tagnummer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Operativt och annonserat tågnummer
+        run: node tools/trafikverket-tagnummer.mjs
+        env:
+          NUMBERS: ${{ github.event.inputs.numbers }}
