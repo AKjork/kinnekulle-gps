@@ -42,7 +42,7 @@ function setup(rows, opts) {
     line, trains, ourKey: our.key, known, now: o.now != null ? o.now : at('10:55'),
     knownDouble: o.knownDouble, knownMeetPlaces: o.knownMeet, history: o.history, routeNames: ROUTE, opts: o.opts,
     messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos,
-    buses: o.buses, names: o.names, connMode: o.connMode, connAlerts: o.connAlerts, marked: o.marked
+    buses: o.buses, names: o.names, connMode: o.connMode, connAlerts: o.connAlerts, marked: o.marked, posAt: o.posAt
   });
 }
 // Ungefärliga lägen längs linjen (norr → söder)
@@ -713,4 +713,90 @@ test('loggen över Trafikverkets svar: bara ändringar, mötande tågs position 
   I.trvLogTrains(small, trains1, keys, at('11:01'), { trvLogMax: 5 });
   assert.equal(small.rows.length, 5);
   assert.equal(I.trvLogOut(small).full, true);
+});
+
+/* Gångprofiler. Sträckan Lidköping → Järpås rakt norrut, 6 km. Ett spår per körning, en punkt i sekunden:
+   jämn fart från avgång till ankomst (tiden i sekunder). */
+const A0 = { lat: 58.40, lon: 13.00 }, LEG_M = 6000;
+const latAt = m => A0.lat + m / 110540;
+function legRun(id, depMs, runSec, opt) {
+  const o = opt || {};
+  const arr = depMs + runSec * 1000;
+  const run = { id, stops: [
+    { name: 'Lidköping', actualArrival: null, actualDeparture: new Date(depMs).toISOString() },
+    { name: 'Järpås', actualArrival: new Date(arr).toISOString(), actualDeparture: new Date(arr + (o.dwellSec != null ? o.dwellSec : 40) * 1000).toISOString(),
+      excludeInboundRun: !!o.exclude },
+    { name: 'Vara', actualArrival: new Date(arr + 600000).toISOString(), actualDeparture: null }
+  ] };
+  const points = [];
+  for (let s = -5; s <= runSec + 5; s++) {
+    if (o.gapFrom != null && s > o.gapFrom && s < o.gapFrom + 60) continue;
+    const m = clampN(s / runSec, 0, 1) * LEG_M;
+    points.push([s * 1000 + 5000, latAt(m), A0.lon, 5]);
+  }
+  return { run, track: { runId: id, t0: new Date(depMs - 5000).toISOString(), fields: ['t_ms', 'lat', 'lon', 'acc_m'], points } };
+}
+const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function buildProfiles(list) {
+  const b = I.profileBuilder();
+  for (const x of list) b.add(x.run, x.track);
+  return b.result();
+}
+
+test('gångprofil: tid kvar till nästa station från där vi är, median av tidigare spår', () => {
+  const dep = at('10:00');
+  const list = [legRun('a', dep, 600), legRun('b', dep + 86400000, 620), legRun('c', dep + 2 * 86400000, 640)];
+  const p = buildProfiles(list);
+  const prof = p.get('lidköping>järpås|ss');
+  assert.ok(prof, 'profil för Lidköping → Järpås, stannade i båda');
+  assert.equal(prof.n, 3);
+  assert.equal(prof.legSec, 620);
+  assert.ok(prof.pts.length >= 55 && prof.pts.length <= 65, 'en punkt ungefär var 100:e meter: ' + prof.pts.length);
+  // Halvvägs: hälften kvar, median 310 s
+  const half = I.remainingFrom(prof, { lat: latAt(3000), lon: A0.lon });
+  assert.ok(Math.abs(half.sec - 310) <= 2, 'halvvägs: ' + half.sec);
+  assert.ok(half.distM < 5);
+  assert.equal(I.remainingFrom(prof, { lat: latAt(3000), lon: A0.lon + 0.01 }), null, '580 m vid sidan: ingen tid');
+  // Beräknad ankomst: positionens tid + tid kvar, aldrig före nu
+  const e = I.positionEstimate(p, { from: 'Lidköping', to: 'Järpås', stopA: true, stopB: true, pos: { lat: latAt(4500), lon: A0.lon }, at: at('11:00'), now: at('11:00') + 10000 });
+  assert.ok(Math.abs(e.t - (at('11:00') + 155000)) <= 2000, 'tre fjärdedelar: 155 s kvar');
+  assert.equal(e.exact, true);
+  assert.equal(I.positionEstimate(p, { from: 'Lidköping', to: 'Järpås', stopA: true, stopB: false, pos: { lat: latAt(4500), lon: A0.lon }, at: 0, now: 0 }), null,
+    'inget för passage i Järpås när spåren stannade där');
+  // Stannade inte i Lidköping: den andra profilen bara efter första fjärdedelen av sträckan
+  const near = I.positionEstimate(p, { from: 'Lidköping', to: 'Järpås', stopA: false, stopB: true, pos: { lat: latAt(500), lon: A0.lon }, at: 0, now: 0 });
+  const far = I.positionEstimate(p, { from: 'Lidköping', to: 'Järpås', stopA: false, stopB: true, pos: { lat: latAt(4500), lon: A0.lon }, at: 0, now: 0 });
+  assert.equal(near, null);
+  assert.equal(far.exact, false);
+});
+
+test('gångprofil: minst 3 spår, undantagna sträckor räknas inte, och ett spår med glapp blir inte referenslinje', () => {
+  const dep = at('10:00');
+  assert.equal(buildProfiles([legRun('a', dep, 600), legRun('b', dep + 86400000, 620)]).size, 0, 'två spår räcker inte');
+  const excl = buildProfiles([legRun('a', dep, 600), legRun('b', dep + 86400000, 620), legRun('c', dep + 2 * 86400000, 640, { exclude: true })]);
+  assert.equal(excl.get('lidköping>järpås|ss'), undefined, 'föraren undantog sträckan i en av dem');
+  // Det nyaste spåret har ett glapp på 60 s (ca 600 m): referenslinjen tas från nästa, men glappspåret räknas ändå
+  const gap = buildProfiles([legRun('g', dep + 3 * 86400000, 600, { gapFrom: 200 }), legRun('a', dep, 600), legRun('b', dep + 86400000, 620), legRun('c', dep + 2 * 86400000, 640)]);
+  const prof = gap.get('lidköping>järpås|ss');
+  assert.equal(prof.n, 4);
+  const steps = prof.pts.slice(1).map((q, k) => I.haversine(prof.pts[k][0], prof.pts[k][1], q[0], q[1]));
+  assert.ok(Math.max(...steps) < 150, 'inga långa hopp i referenslinjen: ' + Math.round(Math.max(...steps)));
+  // Passage i Järpås (uppehåll under 8 s) är en egen profil
+  const pass = buildProfiles([legRun('a', dep, 600, { dwellSec: 3 }), legRun('b', dep + 86400000, 620, { dwellSec: 2 }), legRun('c', dep + 2 * 86400000, 640, { dwellSec: 4 })]);
+  assert.ok(pass.get('lidköping>järpås|sp'));
+});
+
+test('prognos från där vi är: ankomsten till nästa station räknas från positionen, och resten efter den', () => {
+  // Åkte från Lidköping 11:00. Enligt gångprofilen är vi framme i Järpås 11:12 i stället för 11:10
+  const m = setup([], { now: at('11:05'), known: { Lkp: { dep: at('11:00') } }, posAt: { sig: 'Jp', t: at('11:12') } });
+  assert.deepEqual(m.posAt, { sig: 'Jp', t: at('11:12') });
+  assert.equal(m.preds[1].arr, at('11:12'));
+  // 30 s uppehåll i Järpås, sedan planerade gångtider (9 min): Vara 11:21:30, Vedum 11:31, Herrljunga 11:40:30
+  assert.equal(m.end.predArr, at('11:40') + 30000);
+  const none = setup([], { now: at('11:05'), known: { Lkp: { dep: at('11:00') } } });
+  assert.equal(none.end.predArr, at('11:40'), 'utan positionen: enligt planen');
+  // Gäller inte en plats vi redan nått
+  const old = setup([], { now: at('11:12'), known: { Lkp: { dep: at('11:00') }, Jp: { arr: at('11:10') } }, posAt: { sig: 'Jp', t: at('11:15') } });
+  assert.equal(old.posAt, null);
+  assert.equal(old.preds[1].arr, at('11:10'));
 });

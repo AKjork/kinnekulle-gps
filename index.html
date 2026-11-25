@@ -1008,7 +1008,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25zc'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25zd'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1164,6 +1164,7 @@
     checkForInterruptedJourney();
     showTourInForm();
     // Dagens tur: första tåget som inte körts i dag fylls i när stationerna och körningarna finns
+    loadLegProfilesFromDevice();
     Promise.all([loadRepoRunsFromDevice(), stationsLoaded.catch(()=>{})]).then(()=>{
       prefillVehicleType(); renderTourSuggest();
       if(!document.getElementById('resumeDialog') && currentView==='setup') prefillFromTour();
@@ -1191,6 +1192,7 @@
       removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog,
       setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; },
       refreshInfo, updateInfo, setInfoTab, startInfo, infoModel: () => infoState.model,
+      nextArrivalEstimate, updateNextStopUI, legProfilesInfo: () => legProfilesInfo,
       purpose, setPurpose, loadInfoTrips, tourRuns,
       refreshBuses, connSettings, saveConnSettings, markedConnections, toggleConnMark, infoLogEntry, showVtSettings, showVtStatus, saveAndTestVt, removeVtSettings, busTargets, vtState: () => ({ buses: infoState.buses, error: infoState.vtError, at: infoState.vtFetchedAt }),
       applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
@@ -3205,6 +3207,14 @@
     const planned=pArr||planDep(st);
     const plannedLabel=!st.shouldStop ? 'passage plan' : (pArr || !planned ? 'ankomst plan' : 'avgång plan');
     setPanelCell(els.nextValue2, els.nextSub2, planned?formatClock(planned):'–', plannedLabel);
+    // Från var vi är (tidigare GPS-spår): tid kvar till beräknad ankomst, gul eller röd när den är efter planen
+    const est=nextArrivalEstimate();
+    if(est){
+      const late=planned ? (est.t-new Date(planned).getTime())/1000 : 0;
+      setPanelCell(cd, cdSub, formatShortDuration((est.t-Date.now())/1000), `beräknat ${formatClock(est.t)}`,
+        late>300 ? 'dl-very-late' : (late>60 ? 'dl-late' : ''));
+      return;
+    }
     const c=countdown(planned);
     setPanelCell(cd, cdSub, c?c.text:'–', c?c.sub:'till plan', c?c.cls:'');
   }
@@ -3771,13 +3781,15 @@
       try{
         const lp=state.lastPosition;
         const ourPos = lp && state.lastFixTime && Date.now()-state.lastFixTime<60000 ? { lat:lp.coords.latitude, lon:lp.coords.longitude } : null;
+        const est=nextArrivalEstimate();
         model=INFO.compute({
           line:infoState.line, trains:infoState.trains, ourKey:infoState.ourKey, known, now:Date.now(),
           knownDouble:loadInfoSettings().double, knownMeetPlaces:loadInfoSettings().meet,
           history:infoState.history, routeNames, messages:infoState.messages,
           positions:infoState.positions, coords:lineCoords(), ourPos,
           buses:infoState.buses, names:lineNames(), connMode:connSettings().mode, connAlerts:connSettings().alerts,
-          marked:markedConnections()
+          marked:markedConnections(),
+          posAt: est && est.sig ? { sig:est.sig, t:est.t } : null
         });
       }catch(e){
         console.error('Infofliken: fel i beräkningen', e);
@@ -4063,6 +4075,7 @@
       m.end.trvEst!=null && !m.end.arrived ? `Trafikverket ${roundClock(m.end.trvEst)}` : '',
       m.end.track ? `spår ${escapeHtml(m.end.track)}` : '',
       m.recoveryMin>0 && !m.end.arrived ? `tar igen ca ${m.recoveryMin} min` : '',
+      m.posAt && !m.end.arrived ? 'räknat från var vi är' : '',
       updated
     ].filter(Boolean).join(' · ');
     let html=`<div class="info-head"><div class="ih-label">${m.end.arrived?'Framme i':'Prognos'} ${escapeHtml(endName)}</div>` +
@@ -4148,7 +4161,8 @@
       ? m.connections.map(c=>connRow(c, escapeHtml(connTo(c)||'?'), false)).join('')
       : `<div class="info-empty">${busEmptyText(line[line.length-1].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst enligt tidtabell.`}</div>`;
 
-    const basis = m.recoveryObs ? `Trafikverkets tider och egna gångtider (upp till ${m.recoveryObs} körningar per sträcka)` : 'Trafikverkets tider och tidtabellen';
+    const basis = (m.recoveryObs ? `Trafikverkets tider och egna gångtider (upp till ${m.recoveryObs} körningar per sträcka)` : 'Trafikverkets tider och tidtabellen') +
+      (legProfiles.size ? '. Till nästa station räknas tiden från var vi är, ur tidigare GPS-spår på samma sträcka' : '');
     const notShown=(m.messagesHidden||[]).filter(h=>h.reason!=='inte under resan').length;
     const what = mode==='buss' ? 'bussar' : (mode==='bada' ? 'tåg och bussar' : 'tåg');
     const transferNote=`Anslutningar: ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. ` +
@@ -5143,6 +5157,68 @@
     return repoRuns.length;
   }
 
+  /* ── Gångprofiler (railtimer-info.js: profileBuilder) ──
+     Beräknad ankomst till nästa station från där vi är, ur tidigare körningars GPS-spår. Vid synken (aldrig
+     under en resa) hämtas de nyaste LEG_PROFILE_TRACKS spåren från railtimer-data. De sparas per sha i samma
+     lokala databas som analysverktyget (AppBlobCache), så bara nya spår hämtas. Profilerna räknas om när
+     spåren ändrats och sparas kompakt under LEG_PROFILES_KEY. */
+  const LEG_PROFILES_KEY = 'app:gangprofiler-v1';
+  const LEG_PROFILE_TRACKS = 60;
+  let legProfiles = new Map();
+  let legProfilesInfo = null; // { at, tracks, profiles }
+  async function loadLegProfilesFromDevice(){
+    const saved=await AppBlobCache.get(LEG_PROFILES_KEY);
+    if(saved && Array.isArray(saved.profiles)){
+      legProfiles=new Map(saved.profiles.map(p=>[p.key, p]));
+      legProfilesInfo={ at:saved.at, tracks:saved.tracks, profiles:saved.profiles.length };
+    }
+    return legProfiles.size;
+  }
+  async function syncLegProfiles(client, trackList){
+    if(!INFO || !client) return null;
+    const files=(trackList||[]).slice().sort((a,b)=>b.path.localeCompare(a.path)).slice(0, LEG_PROFILE_TRACKS);
+    const shas=files.map(f=>f.sha).join(',');
+    const saved=await AppBlobCache.get(LEG_PROFILES_KEY);
+    if(saved && saved.v===1 && saved.shas===shas) return null; // inga nya spår
+    const runsById=new Map(allRuns().map(r=>[String(r.id), r]));
+    const builder=INFO.profileBuilder();
+    let used=0, fetched=0;
+    for(const f of files){                 // nyast först, ett spår i taget i minnet
+      let json=await AppBlobCache.get(f.sha);
+      if(json===undefined){
+        if(state.running) return null;     // resan har startat: hämtas nästa gång
+        json=JSON.parse(await client.getBlob(f.sha));
+        fetched++;
+        await AppBlobCache.set(f.sha, json);
+      }
+      const run=json && runsById.get(String(json.runId));
+      if(run && builder.add(run, json)) used++;
+    }
+    const profiles=Array.from(builder.result().values());
+    const at=Date.now();
+    await AppBlobCache.set(LEG_PROFILES_KEY, { v:1, at, shas, tracks:used, profiles });
+    legProfiles=new Map(profiles.map(p=>[p.key, p]));
+    legProfilesInfo={ at, tracks:used, profiles:profiles.length };
+    return { fetched, used, profiles:profiles.length };
+  }
+  /* Beräknad ankomst till nästa station från där vi är (gångprofilerna): { t, sec, n, exact, idx, sig } eller
+     null – vid station, utan färsk och säker GPS-position, när föregående station saknar avgång, eller utan
+     profil för sträckan med samma uppehåll i nästa station. */
+  function nextArrivalEstimate(){
+    if(!INFO || !legProfiles.size || !state.running || state.nextIndex==null || currentStationIndex()!=null) return null;
+    const ni=state.nextIndex, B=state.route[ni], A=state.route[ni-1];
+    if(!A || !B || !A.actualDeparture || B.actualArrival) return null;
+    const lp=state.lastPosition, at=state.lastFixTime;
+    if(!lp || !lp.coords || !at || Date.now()-at>60000) return null;
+    if(lp.coords.accuracy!=null && lp.coords.accuracy>INFO.PROFILE.maxAccM) return null;
+    const dep=timeMs(A.actualDeparture), arr=timeMs(A.actualArrival);
+    const stopA = ni-1===0 || (arr!=null && dep-arr>=INFO.PROFILE.stopDwellMs);
+    const stopB = ni===state.route.length-1 || !!B.shouldStop;
+    const e=INFO.positionEstimate(legProfiles, { from:A.name, to:B.name, stopA, stopB,
+      pos:{ lat:lp.coords.latitude, lon:lp.coords.longitude }, at, now:Date.now() });
+    return e ? Object.assign(e, { idx:ni, sig:B.sig||'' }) : null;
+  }
+
   // Telefonens körningar plus de från GitHub som inte finns på telefonen
   function allRuns(){
     const local=loadLogs();
@@ -5164,6 +5240,7 @@
         repoRuns=r.runs.map(compactRun);
         await AppBlobCache.set(REPO_RUNS_KEY, { at:Date.now(), runs:repoRuns });
         await syncPlaceNotes(client).catch(e=>console.warn('Platsminnena kunde inte synkas', e));
+        await syncLegProfiles(client, r.trackList).catch(e=>console.warn('Gångprofilerna kunde inte räknas', e));
         const st={ at:Date.now(), count:repoRuns.length, newFiles:r.newFiles, error:null };
         saveRepoSyncState(st);
         return st;
@@ -5203,6 +5280,7 @@
     }
     const sync=loadRepoSyncState();
     if(sync.at) lines.push(`<strong>Hämtat från GitHub:</strong> ${sync.count} körningar (${new Date(sync.at).toLocaleString('sv-SE')})`);
+    if(legProfilesInfo) lines.push(`<strong>Gångprofiler:</strong> ${legProfilesInfo.profiles} sträckor ur ${legProfilesInfo.tracks} GPS-spår – beräknad ankomst från var tåget är`);
     if(sync.error && (!sync.at || sync.error.at>sync.at)){
       lines.push(sync.error.kind==='network' ? 'Hämtning från GitHub väntar (ingen täckning)' : `<strong>Hämtning från GitHub:</strong> ${escapeHtml(sync.error.message)}`);
     }

@@ -452,6 +452,193 @@
     return out;
   }
 
+  /* ── Gångprofiler: tid kvar till nästa station från där vi är ──
+     Ur tidigare körningars GPS-spår. Per sträcka A → B och om tåget stannade i A och i B (nyckel "a>b|ss",
+     "a>b|ps" …, namnen med små bokstäver som i historyMedians): en referenslinje med en punkt ungefär var
+     100:e meter, och för varje punkt medianen av hur lång tid det var kvar till ankomsten i B när tågen var där.
+     profileBuilder() tar ett spår i taget, nyast först, så att bara ett spår åt gången behöver finnas i minnet.
+     Referenslinjen tas från det nyaste spåret utan glapp. Sträckor som föraren undantagit (excludeInboundRun)
+     räknas inte. Varje profil har minst minObs spår, och varje punkt minst minObs värden. */
+  const PROFILE = {
+    stepM: 100,        // avstånd mellan referenslinjens punkter
+    matchM: 100,       // ett spår räknas vid en punkt bara om det var så här nära den
+    gapM: 400,         // ett spår med glapp längre än så blir inte referenslinje
+    maxAccM: 50,       // positioner med sämre noggrannhet används inte
+    maxTracks: 15,     // högst så många spår per sträcka (de nyaste)
+    minObs: 3,
+    stopDwellMs: 8000, // uppehåll minst så här långt = stannade (passager under 6 s, stopp från 10 s i datan 2026-11)
+    lookupM: 300       // vi måste vara högst så här långt från referenslinjen
+  };
+  const nameKey = s => String(s || '').trim().toLowerCase();
+  function legKey(a, b, stopA, stopB) { return `${nameKey(a)}>${nameKey(b)}|${stopA ? 's' : 'p'}${stopB ? 's' : 'p'}`; }
+
+  // Spårets positioner { t, lat, lon } i tidsordning (format från appens GPS-spår: t0 + fält)
+  function trackPoints(track) {
+    const t0 = ms(track && track.t0);
+    if (t0 == null) return [];
+    const f = Array.isArray(track.fields) ? track.fields : ['t_ms', 'lat', 'lon', 'acc_m'];
+    const it = f.indexOf('t_ms'), ila = f.indexOf('lat'), ilo = f.indexOf('lon'), iac = f.indexOf('acc_m');
+    const out = [];
+    for (const p of Array.isArray(track.points) ? track.points : []) {
+      if (!Array.isArray(p)) continue;
+      const t = t0 + Number(p[it]), lat = Number(p[ila]), lon = Number(p[ilo]);
+      const acc = iac >= 0 && p[iac] != null ? Number(p[iac]) : null;
+      if (!Number.isFinite(t) || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      if (acc != null && acc > PROFILE.maxAccM) continue;
+      out.push({ t, lat, lon });
+    }
+    out.sort((a, b) => a.t - b.t);
+    return out;
+  }
+
+  // Körningens sträckor med avgång från A, ankomst till B och om tåget stannade där
+  function runLegs(run) {
+    const stops = Array.isArray(run && run.stops) ? run.stops : [];
+    const out = [];
+    for (let i = 0; i + 1 < stops.length; i++) {
+      const A = stops[i], B = stops[i + 1];
+      if (!A || !B || B.excludeInboundRun || B.missedReason) continue;
+      const dep = ms(A.actualDeparture), arr = ms(B.actualArrival);
+      if (dep == null || arr == null || !(arr > dep) || arr - dep > 3 * 3600000) continue;
+      const aArr = ms(A.actualArrival), bDep = ms(B.actualDeparture);
+      const stopA = i === 0 || (aArr != null && dep - aArr >= PROFILE.stopDwellMs);
+      const stopB = i + 1 === stops.length - 1 || (bDep != null && bDep - arr >= PROFILE.stopDwellMs);
+      out.push({ key: legKey(A.name, B.name, stopA, stopB), from: A.name, to: B.name, stopA, stopB, dep, arr });
+    }
+    return out;
+  }
+
+  function profileBuilder(opts) {
+    const o = Object.assign({}, PROFILE, opts || {});
+    const legs = new Map();
+    // Referenslinjen: punkter minst stepM isär, sista punkten (vid B) med; null om spåret har glapp
+    function thin(pts) {
+      const ref = [[pts[0].lat, pts[0].lon]];
+      for (let k = 1; k < pts.length; k++) {
+        const p = pts[k], q = pts[k - 1], last = ref[ref.length - 1];
+        if (haversine(q.lat, q.lon, p.lat, p.lon) > o.gapM) return null;
+        if (haversine(last[0], last[1], p.lat, p.lon) >= o.stepM) ref.push([p.lat, p.lon]);
+      }
+      const end = pts[pts.length - 1], last = ref[ref.length - 1];
+      if (haversine(last[0], last[1], end.lat, end.lon) > 5) ref.push([end.lat, end.lon]);
+      return ref;
+    }
+    /* Tid kvar till ankomsten (s) när spåret var vid varje referenspunkt: den sista tidpunkten spåret var som
+       närmast punkten (står tåget still där räknas när det åkte), framåt i tiden, högst matchM bort. */
+    function remsFor(ref, pts, arr) {
+      const out = new Array(ref.length).fill(null);
+      let j = 0;
+      for (let k = 0; k < ref.length; k++) {
+        let best = Infinity, end = pts.length;
+        const d = new Array(pts.length);
+        for (let x = j; x < pts.length; x++) {
+          d[x] = haversine(ref[k][0], ref[k][1], pts[x].lat, pts[x].lon);
+          if (d[x] < best) best = d[x];
+          else if (d[x] > best + 300) { end = x; break; }
+        }
+        if (best > o.matchM) continue;
+        let bi = j;
+        for (let x = j; x < end; x++) if (d[x] <= best + 10) bi = x;
+        out[k] = Math.round((arr - pts[bi].t) / 1000);
+        j = bi;
+      }
+      return out;
+    }
+    // Sträckor med glapp som kom innan det fanns en referenslinje: räknas när en finns
+    const waiting = new Map();
+    function count(L, seg, leg) {
+      if (L.rems.length >= o.maxTracks) return false;
+      const r = remsFor(L.ref, seg, leg.arr);
+      if (r.filter(v => v != null).length < 0.6 * r.length) return false; // spåret täcker inte sträckan
+      L.rems.push(r);
+      L.durs.push(leg.arr - leg.dep);
+      return true;
+    }
+    function add(run, track) {
+      const pts = trackPoints(track);
+      if (pts.length < 2) return 0;
+      let used = 0;
+      for (const leg of runLegs(run)) {
+        const seg = pts.filter(p => p.t >= leg.dep - 2000 && p.t <= leg.arr + 2000);
+        if (seg.length < 5) continue;
+        let L = legs.get(leg.key);
+        if (!L) {
+          const ref = thin(seg);
+          if (!ref || ref.length < 2) {
+            if (!waiting.has(leg.key)) waiting.set(leg.key, []);
+            if (waiting.get(leg.key).length < o.maxTracks) waiting.get(leg.key).push({ seg, leg });
+            continue;
+          }
+          L = { key: leg.key, from: leg.from, to: leg.to, stopA: leg.stopA, stopB: leg.stopB, ref, rems: [], durs: [] };
+          legs.set(leg.key, L);
+          for (const w of waiting.get(leg.key) || []) if (count(L, w.seg, w.leg)) used++;
+          waiting.delete(leg.key);
+        }
+        if (count(L, seg, leg)) used++;
+      }
+      return used;
+    }
+    function result() {
+      const out = new Map();
+      for (const L of legs.values()) {
+        if (L.rems.length < o.minObs) continue;
+        const pts = [];
+        L.ref.forEach((p, k) => {
+          const vals = L.rems.map(r => r[k]).filter(v => v != null);
+          if (vals.length >= o.minObs) pts.push([Math.round(p[0] * 1e5) / 1e5, Math.round(p[1] * 1e5) / 1e5, Math.round(median(vals)), vals.length]);
+        });
+        if (pts.length < 2) continue;
+        out.set(L.key, { key: L.key, from: L.from, to: L.to, stopA: L.stopA, stopB: L.stopB, n: L.rems.length,
+          legSec: Math.round(median(L.durs) / 1000), pts });
+      }
+      return out;
+    }
+    return { add, result };
+  }
+
+  // Punkten p projicerad på sträckan a–b (meter, lokalt plant): { d: avstånd, f: 0–1 längs sträckan }
+  function project(p, a, b) {
+    const kx = 111320 * Math.cos(a[0] * Math.PI / 180), ky = 110540;
+    const bx = (b[1] - a[1]) * kx, by = (b[0] - a[0]) * ky, px = (p.lon - a[1]) * kx, py = (p.lat - a[0]) * ky;
+    const len2 = bx * bx + by * by;
+    const f = len2 > 0 ? clamp((px * bx + py * by) / len2, 0, 1) : 0;
+    return { d: Math.hypot(px - f * bx, py - f * by), f };
+  }
+  /* Tid kvar till B (s) från läget pos ({ lat, lon }) enligt profilen: { sec, distM, n, start } eller null när
+     vi är längre än lookupM från referenslinjen. Mellan två punkter vägs tiden efter var vi är. start är tiden
+     kvar från A, så att man ser hur långt in på sträckan vi är. */
+  function remainingFrom(profile, pos, maxM) {
+    const pts = profile && profile.pts;
+    if (!Array.isArray(pts) || pts.length < 2 || !pos) return null;
+    let best = null;
+    for (let k = 0; k + 1 < pts.length; k++) {
+      const pr = project(pos, pts[k], pts[k + 1]);
+      if (!best || pr.d < best.d) best = { k, d: pr.d, f: pr.f };
+    }
+    if (!best || best.d > (maxM || PROFILE.lookupM)) return null;
+    const a = pts[best.k], b = pts[best.k + 1];
+    return { sec: a[2] + (b[2] - a[2]) * best.f, distM: Math.round(best.d), n: Math.min(a[3], b[3]), start: pts[0][2] };
+  }
+  /* Beräknad ankomst till nästa station från där vi är. q: { from, to, stopA, stopB, pos: { lat, lon }, at
+     (positionens tid), now }. Profilen för samma uppehåll i A gäller; finns bara den andra (stannade i A eller
+     inte) används den först när vi är förbi första fjärdedelen av sträckan, eftersom starten skiljer.
+     Ger { t, sec, key, n, exact } eller null. */
+  function positionEstimate(profiles, q) {
+    if (!profiles || !q || !q.pos) return null;
+    const exact = legKey(q.from, q.to, q.stopA, q.stopB), other = legKey(q.from, q.to, !q.stopA, q.stopB);
+    const get = k => profiles instanceof Map ? profiles.get(k) : profiles[k];
+    let p = get(exact), r = p ? remainingFrom(p, q.pos) : null, isExact = true;
+    if (!r) {
+      p = get(other);
+      r = p ? remainingFrom(p, q.pos) : null;
+      if (r && r.sec > 0.75 * r.start) r = null;
+      isExact = false;
+    }
+    if (!r) return null;
+    const at = q.at != null ? q.at : q.now;
+    return { t: Math.max(at + r.sec * 1000, q.now != null ? q.now : at), sec: Math.round(r.sec), key: p.key, n: r.n, exact: isExact, distM: r.distM };
+  }
+
   /* Faktor per sträcka i linjen (≤ 1): så mycket kortare än planerat vi brukar köra mellan två stationer
      i vår rutt. Gäller alla delsträckor mellan stationerna. */
   function recoveryRatios(line, routeNames, history, opts) {
@@ -506,8 +693,10 @@
      { need, kind, their } = möte här, vi kan åka tidigast need; { done } = mötet är avklarat utan väntan här;
      null = inte här. arriveAt(c) = vår ankomst till plats c om vi åker från i vid dep.
      Efteråt har varje möte atI (var mötet blir), waitMs, ourDep och move ('rapporterat', 'beräknat' eller null).
+     pos: { i, t } = ankomsten till plats i räknad från där vi är (gångprofilerna). Platserna mellan senaste
+     kända plats och i räknas då bakåt från den med planerad gångtid × faktor.
      Platser vi inte nått än ligger aldrig före nu. */
-  function predict(line, known, meets, ratios, now, opts, move) {
+  function predict(line, known, meets, ratios, now, opts, move, pos) {
     const n = line.length;
     let f = -1;
     for (let i = 0; i < n; i++) if (known[i] && (known[i].arr != null || known[i].dep != null)) f = i;
@@ -520,7 +709,11 @@
       if (i < f) { p.arr = K.arr != null ? K.arr : null; p.dep = K.dep != null ? K.dep : null; preds.push(p); continue; }
       if (i > 0) {
         if (K.arr != null) p.arr = K.arr;
-        else if (i > f) {
+        else if (i > f && pos && i <= pos.i) {
+          let back = 0;
+          for (let k = i; k < pos.i; k++) back += plannedRun(line, k) * ratios[k];
+          p.arr = Math.max(pos.t - back, now);
+        } else if (i > f) {
           const prev = preds[i - 1];
           const base = prev.dep != null ? prev.dep : (prev.arr != null ? prev.arr : now);
           p.arr = Math.max(base + plannedRun(line, i - 1) * ratios[i - 1], now);
@@ -988,10 +1181,17 @@
       return { need: t + o.meetMarginMs, kind: m.moved ? 'rapporterat' : 'beräknat', their };
     }
 
+    /* Från där vi är (input.posAt: { sig, t }, gångprofilerna i appen): ankomsten till nästa station i rutten.
+       Gäller bara en plats vi inte nått, efter den senaste vi har en tid för. */
+    let pos = null;
+    if (input.posAt && input.posAt.t != null && idxOf.has(input.posAt.sig)) {
+      const pi = idxOf.get(input.posAt.sig);
+      if (pi > 0 && pi > frontier && known[pi].arr == null) pos = { i: pi, t: Math.max(input.posAt.t, now) };
+    }
     const rec = recoveryRatios(line, routeNames, input.history, o);
-    const { preds } = predict(line, known, meetings, rec.ratios, now, o, move);
+    const { preds } = predict(line, known, meetings, rec.ratios, now, o, move, pos);
     // Samma prognos utan egna gångtider: så mycket tar vi igen tack vare dem
-    const plain = rec.obs ? predict(line, known, meetings.map(m => Object.assign({}, m)), line.map(() => 1), now, o, move).preds : preds;
+    const plain = rec.obs ? predict(line, known, meetings.map(m => Object.assign({}, m)), line.map(() => 1), now, o, move, pos).preds : preds;
     // Var mötet blir: plats, det mötande tågets ankomst dit och position i förhållande till den platsen
     for (const m of meetings) {
       m.at = line[m.atI].sig;
@@ -1164,6 +1364,7 @@
 
     return {
       now, frontier, end, currentDelayMin, recoveryMin, recoveryObs: rec.obs,
+      posAt: pos ? { sig: line[pos.i].sig, t: pos.t } : null,
       meetings, deviations, messages, messagesHidden: cls.hidden,
       connections: endSplit.shown, connectionsHidden: endSplit.hidden,
       incoming: startDeparted ? null : incSplit.shown, incomingHidden: incSplit.hidden,
@@ -1404,7 +1605,7 @@
     DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, alerts, newAlerts, actionText, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
     request, queryOurTrain, queryLine, queryNames, queryMessages, resultOf,
     parseAnnouncement, groupTrains, nearestRun, buildLine, crossingOf, latestDelay, theirArrival, theirDeparture,
-    progressOf, meetingPlaces, travel, trvLogNew, trvLogTrains, trvLogPositions, trvLogModel, trvLogOut,
+    progressOf, meetingPlaces, travel, trvLogNew, PROFILE, legKey, trackPoints, runLegs, profileBuilder, remainingFrom, positionEstimate, trvLogTrains, trvLogPositions, trvLogModel, trvLogOut,
     historyMedians, recoveryRatios, plannedRun, predict, outgoing, incoming, signaturesIn, parseMessage, classifyMessages, messagesFor, compute,
     townKey, lineTownsExcept, busOutgoing, busIncoming, CONN_MODES, connShows, splitByMode, connKey
   };

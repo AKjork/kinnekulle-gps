@@ -1622,3 +1622,59 @@ Appversion `2026-11-25zc`. Logiken för ankomst och avgång är oförändrad.
 - `node --test "tests/*.test.js"`: *anslutningar längs vägen* provar även 30 min-gränsen.
 - `node tests/run-browser-tests.mjs`, nya: *meny: kort meny med snabbval, och allt som ställs in en gång under Inställningar* och *startformulär: tipsen visas bara när fältet är tomt, och anteckningen är ihopfälld*. Ändrade: *uppdatering: …* (den korta menyn behöver inte rullas), *info: … färdigt utrop* (ihopfällt när föraren mäter), *buss: Buss visar bussarna …* (ingen hållplats) och *bara info: GPS:en följer tåget …* (Avsluta resan).
 - Bilder: `--shot=meny`, `--shot=appinstallningar` och `--shot=info-tagvard` (Info i Bara info, utropet öppet).
+
+## Uppdatering (2026-11-25zd): beräknad ankomst från var tåget är (gångprofiler)
+
+André 2026-11-25: "min beräknade ankomsttid beräknas den på vart jag faktiskt är någonstans. Avstånd och hur fort jag kör och så vidare?" Svaret var nej: prognosen räknades från senaste station vi passerat, och mellan stationerna stod den still tills vi blev sena. "Gör det du rekommenderar. Det är bättre att vi bygger något och rättar dig i efterhand." Appversion `2026-11-25zd`. Logiken för ankomst och avgång är oförändrad.
+
+### Hur det räknas (`railtimer-info.js`)
+- **Gångprofil** per sträcka A → B och om tåget stannade i A och i B. Nyckeln är till exempel `källby>blomberg|ss` eller `…|ps`, med namnen i små bokstäver som i `historyMedians`. Stannade = uppehåll minst 8 s (`PROFILE.stopDwellMs`). I datan 2026-11 är passager under 6 s och stopp från 10 s.
+  - **Referenslinjen** är en punkt ungefär var 100:e meter (`stepM`) längs det nyaste spåret utan glapp över 400 m (`gapM`).
+  - För varje punkt sparas **medianen av tiden kvar till ankomsten i B** när tidigare tåg var där. Den räknas från den sista tidpunkten tåget var som närmast punkten, högst 100 m bort (`matchM`). Står ett tåg still där räknas när det åkte.
+  - Minst 3 spår per sträcka och 3 värden per punkt (`minObs`), högst de 15 nyaste spåren (`maxTracks`).
+  - Positioner sämre än ±50 m räknas inte (`maxAccM`). Sträckor som föraren undantagit (`excludeInboundRun`) och missade stationer räknas inte.
+- `profileBuilder()` tar ett spår i taget, nyast först, så att bara ett spår åt gången finns i minnet. Sträckor med glapp som kommer innan det finns en referenslinje sparas och räknas när den finns. Annars föll det nyaste spåret bort om det hade ett glapp.
+- `remainingFrom(profil, läge)`: läget projiceras på närmaste del av referenslinjen, högst 300 m bort (`lookupM`), och tiden vägs mellan de två punkterna.
+- `positionEstimate(profiler, { from, to, stopA, stopB, pos, at, now })`: ankomst = positionens tid + tid kvar, aldrig före nu.
+  - Profilen med samma uppehåll i A gäller.
+  - Finns bara den andra används den först efter första fjärdedelen av sträckan, eftersom starten skiljer.
+  - Uppehållet i B måste stämma, eftersom inbromsning till stopp och passage tar olika lång tid.
+- **Prognosen** (`compute`: `input.posAt` `{ sig, t }`, `predict`: `pos`): ankomsten till nästa station i rutten tas från positionen. Driftplatserna före den räknas bakåt därifrån med planerad gångtid × faktor. Efter den räknas allt som förut. Gäller bara en plats efter den senaste vi har en tid för. `compute` ger `posAt` när den använts.
+
+### Provat mot riktiga spår
+Leave-one-out på `railtimer-data` (55 spår, 2 467 lägen mitt på sträckor, var 30:e sekund): profilerna byggs av de andra spåren och jämförs med verklig ankomst.
+
+| | median fel | 90 % inom | största |
+|---|---|---|---|
+| Från positionen (gångprofil) | 3 s | 15 s | 53 s |
+| Avgång + median gångtid för sträckan | 8 s | 26 s | 62 s |
+
+- Medianfelet är 0 s i båda, så ingen av dem ligger systematiskt före eller efter.
+- Med under 1 min kvar: 2 s mot 8 s. Med 3–6 min kvar: 6 s mot 10 s.
+- Den gamla metoden i appen (planerad gångtid × faktor, högst 1) är högst lika bra som median gångtid, eftersom faktorn bygger på samma median.
+- Profilerna för alla 55 spår: 65 sträckor, 103 kB, 143 ms att räkna på en dator.
+
+### Appen (index.html)
+- **Spåren** hämtas vid synken med GitHub (`syncFromGithub` → `syncLegProfiles`), aldrig under en resa.
+  - Det gäller de nyaste 60 i `gps-spar/` (`LEG_PROFILE_TRACKS`).
+  - De sparas per sha i samma lokala databas som analysverktyget (IndexedDB `railtimer-analys`/`blobs`, `AppBlobCache`), så bara nya spår hämtas. Analysverktyget och appen delar dem i samma webbläsare.
+  - Första gången är det ca 7 MB, sedan ca 150 kB per ny resa. Startar en resa under hämtningen avbryts den och görs nästa gång.
+- **Profilerna** räknas om bara när listan med spår ändrats. De sparas under `app:gangprofiler-v1` (`legProfiles`) och läses vid start (`loadLegProfilesFromDevice`), så att de finns utan nät.
+- `nextArrivalEstimate()` gäller mellan stationerna. Det kräver en position som är högst 60 s gammal och säkrare än ±50 m, att föregående station i rutten har en avgång och att nästa inte har en ankomst. Stannade i A räknas från avgång − ankomst, och startstationen räknas som stopp. Nästa station räknas som stopp om den är ett planerat stopp (`shouldStop`) eller slutstationen.
+- **Panelen:** mellan stationerna visar nedräkningen tid kvar till den beräknade ankomsten, med *beräknat 05:15* under. Den är gul över 1 min och röd över 5 min efter planen. Utan profil visas som förut tid kvar till planen.
+- **Info:** prognosen räknar med positionen och säger *räknat från var vi är*. *Så räknas det* nämner GPS-spåren.
+- Fungerar även utan tågnummer och i Bara info, eftersom det bara bygger på rutten och GPS:en. Utan tågnummer har rutten bara start och slut, och då krävs tidigare körningar med samma två stationer.
+- ⋮ → Inställningar → Uppladdning visar *Gångprofiler: N sträckor ur N GPS-spår*.
+
+### Inte provat
+- På telefon: hämtningen av spåren och att nedräkningen följer tåget. Kontrollera under nästa resa att *beräknat* syns i panelen mellan stationerna och stämmer med ankomsten.
+- Ett tåg som står still mellan stationerna (signal) får en ankomst som skjuts fram i takt med klockan. Det fungerar, men appen vet inte varför tåget står.
+
+### Tester
+- `node --test "tests/*.test.js"` (198), nya i `tests/railtimer-info.test.js`:
+  - *gångprofil: tid kvar till nästa station …*: median, halvvägs, vid sidan, positionens tid, passage och den andra profilen;
+  - *gångprofil: minst 3 spår, undantagna sträckor …*: glapp och passage;
+  - *prognos från där vi är …*.
+- `node tests/run-browser-tests.mjs` (126), nytt: *gångprofil: GPS-spåren från GitHub ger beräknad ankomst …*. En hel resa läggs i GitHub tre gånger, och nästa resa räknar Blomberg inom 3 s från förra ankomsten. Testet provar panelen, Info, Uppladdning och att spåren inte hämtas igen.
+- Bild: `--shot=resa-beraknat`.
+

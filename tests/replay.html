@@ -2151,6 +2151,62 @@ test('info: flyttat möte – 3347 har åkt från Råbäck mot oss och vi vänta
   assertEqual([r2.rt.infoModel().meetings[0].at, r2.rt.infoModel().meetings[0].waitMin], ['Rbk', 0], 'utan mötesplats');
 });
 
+/* Gångprofil: en hel resa (körningen och GPS-spåret) läggs i GitHub tre gånger. Nästa resa med samma positioner
+   hämtar spåren vid synken och räknar ankomsten till nästa station från där tåget är. */
+async function journeyWithProfiles() {
+  const full = await runJourney(buildJourney(), { trainNumber: '3344' });
+  const tr = await full.rt.getTrack(full.log.id);
+  assert(tr && tr.points && tr.points.length > 100, 'spåret från hela resan');
+  const fields = ['t_ms', 'lat', 'lon', 'acc_m', 'speed_ms', 'heading_deg', 'fixAge_ms'];
+  const bmbArr = Date.parse(full.log.stops[3].actualArrival);
+  const fixes = buildJourney();
+  const stopT = fixes.find(f => f.leg === 2 && f.frac > 0.55).t;
+  let fake = null, profiles = null;
+  const r = await runJourney(fixes, { trainNumber: '3344', drop: f => f.t > stopT, route: scheduleFor(fixes), beforeStart: async w => {
+    await new Promise(resolve => { const req = w.indexedDB.deleteDatabase('railtimer-analys'); req.onsuccess = req.onerror = req.onblocked = () => resolve(); });
+    w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'test-token', branch: 'main' }));
+    fake = browserFakeGitHub(w);
+    for (const id of ['p1', 'p2', 'p3']) {
+      fake.put(`korningar/2026/2026-10-15_3344_${id}.json`, JSON.stringify(Object.assign({}, full.log, { id })));
+      fake.put(`gps-spar/2026/2026-10-15_3344_${id}.json`, JSON.stringify({ format: 1, runId: id, trainNumber: '3344', t0: new Date(tr.t0).toISOString(), fields, points: tr.points }));
+    }
+    w.__railtimer.setFetchForTest(fake.fetch);
+    await w.__railtimer.syncFromGithub(true);
+    profiles = w.__railtimer.legProfilesInfo();
+  } });
+  return { r, full, fake, profiles, bmbArr };
+}
+test('gångprofil: GPS-spåren från GitHub ger beräknad ankomst från där tåget är – i panelen och i Info', async () => {
+  const { r, fake, profiles, bmbArr } = await journeyWithProfiles();
+  assert(profiles && profiles.tracks === 3 && profiles.profiles >= 4, 'profiler ur tre spår: ' + JSON.stringify(profiles));
+  // Mitt på sträckan Källby → Blomberg: beräknad ankomst = när tåget kom fram förra gången
+  const est = r.rt.nextArrivalEstimate();
+  assert(est && est.key === 'källby>blomberg|ss' && est.exact, 'profil för sträckan: ' + JSON.stringify(est));
+  assert(Math.abs(est.t - bmbArr) <= 3000, `beräknad ankomst ${iso(est.t)}, verklig ${iso(bmbArr)}`);
+  // Panelen: tid kvar till den beräknade ankomsten
+  r.rt.updateNextStopUI();
+  const d = r.w.document;
+  assertEqual(d.getElementById('nextCountdownSub').textContent, 'beräknat ' + formatHm(est.t), 'panelen');
+  // Info räknar ankomsten till Blomberg från positionen
+  r.trv = fakeTrafikverketInfo(r.rt.state.route, { meetLateMin: 0 });
+  r.w.fetch = r.trv.fetch;
+  await r.rt.refreshInfo();
+  const m = r.rt.infoModel();
+  assert(m.posAt && m.posAt.sig === 'Bmb' && Math.abs(m.posAt.t - est.t) < 6000, 'Info: ' + JSON.stringify(m.posAt));
+  r.rt.setInfoTab('info');
+  const pane = d.getElementById('infoPane').textContent;
+  assert(pane.includes('räknat från var vi är') && pane.includes('ur tidigare GPS-spår på samma sträcka'), 'fliken säger det');
+  // Uppladdning visar profilerna
+  r.rt.showUploadSettings();
+  await r.rt.renderUploadStatus();
+  assert(d.getElementById('uploadStatus').textContent.includes('Gångprofiler: '), d.getElementById('uploadStatus').textContent);
+  // Andra synken: inga nya spår, inget räknas om
+  r.rt.state.running = false;
+  const before = fake.calls.filter(c => /\/git\/blobs\//.test(c.path)).length;
+  await r.rt.syncFromGithub(true);
+  assertEqual(fake.calls.filter(c => /\/git\/blobs\//.test(c.path)).length, before, 'spåren hämtas inte igen');
+});
+
 test('info: utan tågnummer förklarar fliken varför den är tom', async () => {
   const fixes = buildJourney();
   const r = await runJourney(fixes, { drop: f => f.t > fixes[40].t, afterStart: rt => { rt.state.trainNumber = ''; } });
@@ -3433,6 +3489,11 @@ window.prepareShot = async function (name) {
     const r = await midJourneyWithInfo();
     r.w.document.getElementById('journeyMsg').style.display = 'none';
     r.rt.setInfoTab(name === 'info' ? 'info' : 'stations');
+  } else if (name === 'resa-beraknat') {
+    // Mitt på sträckan med gångprofiler: panelen visar tid kvar till beräknad ankomst
+    const { r } = await journeyWithProfiles();
+    r.w.document.getElementById('journeyMsg').style.display = 'none';
+    r.rt.updateNextStopUI();
   } else if (name === 'info-flyttat') {
     // Vi är sena och 3347 har åkt från Råbäck mot oss: mötet flyttat till Blomberg
     const r = await lateJourneyWithInfo(10, { meetLateMin: 0, meetReported: true, meetPlaces: ['Bmb'] });
