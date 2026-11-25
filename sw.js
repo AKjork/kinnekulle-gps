@@ -14,6 +14,8 @@ const ASSETS = [
   './railtimer-avbrott.js',
   './railtimer-github.js',
   './railtimer-karta.js',
+  './railtimer-trv.js',
+  './api-koll.html',
   './kinnekulle-gps.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png'

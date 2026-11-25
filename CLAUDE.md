@@ -19,6 +19,8 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 | `Analys.html` | Analysverktyg för gång- och uppehållstider |
 | `sw.js` | Service Worker för PWA |
 | `railtimer-avbrott.js`, `railtimer-github.js`, `railtimer-karta.js`, `railtimer-analys.js` | Avbrott, uppladdning, kartans linje längs spåret, analysens beräkningar |
+| `railtimer-trv.js` | Trafikverkets API: frågor, rapporterade tider för en körning, jämförelse, kontrollen |
+| `api-koll.html` | Trafikverket-data: visar vad API:t svarar och appens tider mot Trafikverkets |
 | `kinnekulle-gps.webmanifest` | PWA manifest |
 
 ## Viktiga konstanter (i koden)
@@ -757,3 +759,55 @@ André 2026-11-25, före resan: "Kontrollera så allt ser rätt ut." Appversion 
 ### Tester
 - `node --test "tests/*.test.js"` (109).
 - `node tests/run-browser-tests.mjs` (75), nya: `tidtabell: godtar Trafikverket inte LocationDateTimeOTN …` (HTTP 400 och `ERROR` med HTTP 200) och `tidtabell: hela vägen – startformuläret, …`.
+
+## Uppdatering (2026-11-25h): Trafikverkets rapporterade tider och kontrollsidan
+
+André 2026-11-25: kontrollera vad mer vi kan läsa ut ur Trafikverkets API och gör det som krävs. Appversion `2026-11-25h`.
+
+Utvecklingsmiljön når inte `api.trafikinfo.trafikverket.se` (proxyn spärrar adressen). Fälten nedan kommer från dokumentationen, och allt är testat mot simulerade svar. Kontrollsidan finns för att prova på riktigt från telefonen. Sammanfattningen finns också i projektet (`claude/trafikverket-api.md`).
+
+### `railtimer-trv.js`
+- `buildQuery`/`query` med tidsgräns (10 s, efter resan 8 s), felsorter `network|timeout|http|api` och Trafikverkets feltext.
+- `swedishLocal`/`swedishDay`: svensk tid utan tidszon, som API:t tolkar som svensk tid.
+- `runQuery`: tågets annonseringar i körningens tidsfönster ± 3 h. Sena tåg och tåg över midnatt kommer med.
+- `trafikverketTimes`: per station Trafikverkets rapporterade tid (`TimeAtLocationWithSeconds`, annars `TimeAtLocation`), spår, inställt och avvikelser. Tågorderns tider ingår inte, eftersom `fetchTimetable` redan sparar dem (2026-11-25f).
+  - Matchas på signatur och Ankomst/Avgang, närmast i tid.
+  - `complete` = allt som annonserats för körningens stationer är rapporterat. Inställda räknas inte.
+- `compareRun`: appen − Trafikverket i sekunder per station och aktivitet. `summarizeComparison` ger median, P10–P90 och antal inom 10/30 s, per aktivitet och per station.
+- `runCheck`: kontrollen i api-koll.html.
+  - Varje del körs för sig, så att ett fel i en del inte stoppar resten.
+  - Utan kontakt avbryts kontrollen efter första frågan (`aborted`).
+
+### I appen
+- **Efter resan** (`afterJourneyTrafikverket`): Trafikverkets tider hämtas och sparas i körningen som `run.trv` (`fetchedAt, found, complete, operator, product`) och `stop.trv` (`arrival, departure, track, canceled, deviations`). Sedan laddas körningen upp.
+  - Saknas slutstationens rapport görs ett nytt försök efter 60 s (`trvRetryDelayMs`), men aldrig under en ny resa.
+  - Misslyckas hämtningen laddas körningen upp ändå.
+- **Före uppladdning** (`fillTrafikverketBeforeUpload`): hämtar tider för högst 3 körningar som inte laddats upp än och saknar dem (`needsTrafikverket`). Körningen ska vara högst 7 dagar gammal. En ofullständig hämtning görs om tills den gjorts mer än 15 min efter resan.
+- `updateStoredLog` ändrar en körning i lagringen med `setItemWithRoom`, och i `unsavedLogs` om den bara finns i minnet. `normalizeLogEntry` bevarar `trv`.
+- Logiken för ankomst och avgång är oförändrad, och regressionsfacit passerar.
+- **Rapporten**: raden *Trafikverket ↓ tid appen ±s · ↑ tid appen ±s · spår · inställt* under varje station, och en sammanfattning med medianskillnaden (`#trvSummary`) eller *Hämtar …*/*kunde inte hämtas nu*.
+- **CSV** (`logsCsv`): kolumnerna *TrV ankomst*, *TrV avgång* och *TrV spår* sist, efter tågorderns kolumner.
+- ⋮ → **Trafikverket-data** öppnar `api-koll.html`, utom under en resa.
+- Service workern sparar `railtimer-trv.js` och `api-koll.html`.
+
+### Kontrollsidan `api-koll.html`
+Tågnummer (förifyllt från senaste körningen) och datum. Sidan visar:
+- **Appens tider mot Trafikverkets** för upp till 20 senaste körningar på telefonen, plus en körning per ålder: 7, 14, 30, 60, 90, 180 och 365 dagar. Därmed syns också hur långt bakåt API:t har data.
+- **Tågets annonseringar**: plan, faktisk tid med sekunder, avvikelse, spår, operativ tid, prognos, inställt och avvikelser. Ej annonserade platser visas nedtonade.
+- **TrainPosition**: tågets senaste position, hur många tåg som rapporterar och hur många av förarens tågnummer som finns med.
+- **TrainStation**: annonserade och ej annonserade platser, och alla fält för tågets stationer.
+- **TrainMessage** som rör tågets stationer, **TrainStationMessage** och **ReasonCode**.
+- Fältlistor per objekttyp: hur många poster som har varje fält, med exempel.
+- **Spara i railtimer-data** skriver resultatet till `api-koll/api-koll_<datum>_<tid>_<tåg>.json` med appens uppladdningsinställningar. **Ladda ner JSON** fungerar utan dem.
+- Schemaversioner: TrainAnnouncement 1.9, TrainStation 1.4, TrainPosition 1.1 (namespace `järnväg.trafikinfo`), TrainMessage 1.7, TrainStationMessage 1 och ReasonCode 1. Fel i en version visas i sin del.
+
+### Inte provat
+- Svar från det riktiga API:t, särskilt om `TimeAtLocationWithSeconds` finns för Kinnekullebanan och hur långt bakåt data finns.
+- Schemaversionerna för TrainPosition, TrainStationMessage och ReasonCode.
+
+### Tester
+- `node --test "tests/*.test.js"` (124), bland dem `tests/railtimer-trv.test.js`.
+- `node tests/run-browser-tests.mjs trafikverket` (8), som täcker efter resan, nytt försök, utan kontakt, före uppladdning, utan testsvar och kontrollsidan, även utan täckning.
+- Alla webbläsartester: 83.
+- `tidtabell: hela vägen …` (2026-11-25g) kontrollerar nu appversionens form i stället för en viss version. Förut slog det fel vid varje höjning.
+- Bilder: `--shot=rapport-trafikverket` och `--shot=trafikverket-data`.

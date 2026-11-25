@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1a1d23">
+<title>RailTimer – Trafikverket-data</title>
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<style>
+  :root{
+    --bg:#1a1d23; --bg-solid:#0d0f12; --ink:#e8eaed; --ink-dim:#9aa0a6; --mut:#6b7280;
+    --pri:#22c55e; --b:#2d3139; --card-bg:#1e2128; --err:#ef4444; --warn:#f59e0b; --blue:#3b82f6;
+  }
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;background:var(--bg-solid);color:var(--ink);line-height:1.45;font-size:15px}
+  header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--b);padding:.6rem .75rem;display:flex;align-items:center;gap:.75rem;z-index:2}
+  header h1{font-size:1.05rem;margin:0;flex:1}
+  header a{color:var(--ink-dim);text-decoration:none;font-size:.9rem}
+  main{padding:.75rem;max-width:960px;margin:0 auto}
+  .intro{color:var(--ink-dim);font-size:.9rem;margin:.25rem 0 .75rem}
+  form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;margin-bottom:.5rem}
+  label{display:flex;flex-direction:column;font-size:.8rem;color:var(--ink-dim);gap:.2rem}
+  input{background:var(--card-bg);color:var(--ink);border:1px solid var(--b);border-radius:8px;padding:.55rem .6rem;font-size:1rem;min-width:8rem}
+  button{background:var(--pri);color:#04130a;border:0;border-radius:8px;padding:.6rem 1rem;font-size:1rem;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--b);font-weight:500}
+  button:disabled{opacity:.5}
+  .status{font-size:.85rem;color:var(--ink-dim);min-height:1.3em;margin:.25rem 0 .75rem}
+  .status.err{color:var(--err)} .status.ok{color:var(--pri)}
+  section.card{background:var(--card-bg);border:1px solid var(--b);border-radius:10px;padding:.75rem;margin-bottom:.75rem}
+  section.card h2{font-size:1rem;margin:0 0 .4rem}
+  .sub{color:var(--ink-dim);font-size:.85rem;margin:.2rem 0 .5rem}
+  .err-text{color:var(--err);font-size:.9rem}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));gap:.5rem;margin:.4rem 0 .6rem}
+  .tile{border:1px solid var(--b);border-radius:8px;padding:.45rem .55rem}
+  .tile b{display:block;font-size:1.25rem;font-variant-numeric:tabular-nums}
+  .tile span{font-size:.75rem;color:var(--ink-dim)}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{border-collapse:collapse;width:100%;font-size:.82rem;font-variant-numeric:tabular-nums}
+  th,td{text-align:left;padding:.3rem .45rem;border-bottom:1px solid var(--b);vertical-align:top;white-space:nowrap}
+  th{color:var(--ink-dim);font-weight:500}
+  td.wrap{white-space:normal;min-width:12rem}
+  .num{text-align:right}
+  .pos{color:var(--warn)} .neg{color:var(--blue)} .mut{color:var(--mut)}
+  .tag{display:inline-block;border-radius:4px;padding:0 .3rem;font-size:.75rem;background:rgba(239,68,68,.15);color:var(--err)}
+  details{margin-top:.4rem} summary{cursor:pointer;color:var(--ink-dim);font-size:.85rem}
+  ul.plain{margin:.3rem 0;padding-left:1.1rem;font-size:.85rem}
+  .actions{display:flex;flex-wrap:wrap;gap:.5rem;margin:.5rem 0 1rem}
+</style>
+</head>
+<body>
+<header>
+  <a href="./">← Appen</a>
+  <h1>Trafikverket-data</h1>
+</header>
+<main>
+  <p class="intro">Frågar Trafikverkets API från den här telefonen och visar vad som finns för tåget, och hur appens tider stämmer med Trafikverkets för körningarna som finns sparade här.</p>
+  <form id="checkForm">
+    <label>Tågnummer<input id="train" inputmode="numeric" autocomplete="off" required></label>
+    <label>Datum<input id="date" type="date" required></label>
+    <button id="btnRun" type="submit">Kör kontroll</button>
+  </form>
+  <div id="status" class="status" role="status" aria-live="polite"></div>
+  <div id="actions" class="actions" style="display:none">
+    <button id="btnSave" type="button">Spara i railtimer-data</button>
+    <button id="btnDownload" type="button" class="ghost">Ladda ner JSON</button>
+  </div>
+  <div id="result"></div>
+</main>
+<script src="railtimer-github.js"></script>
+<script src="railtimer-trv.js"></script>
+<script>
+(function(){
+  'use strict';
+  const TRV = window.RailTimerTrv;
+  const GH = window.RailTimerGitHub || null;
+  const TEST_MODE = new URLSearchParams(location.search).has('test');
+  const KEY_LOGS = 'kmon_gps_logs_v1';
+  const KEY_STATIONS = 'kmon_all_stations_v1';
+  const KEY_GITHUB = 'railtimer_github_v1';
+  let fetchForTest = null;
+  let ghFetchForTest = null;
+  let lastResult = null;
+  let lastDownload = null;
+
+  const $ = id => document.getElementById(id);
+
+  function readJson(key, fallback){
+    try{ const v = JSON.parse(localStorage.getItem(key) || 'null'); return v == null ? fallback : v; }catch(e){ return fallback; }
+  }
+  function loadLogs(){ const l = readJson(KEY_LOGS, []); return Array.isArray(l) ? l : []; }
+  function stationNames(){
+    const c = readJson(KEY_STATIONS, null);
+    const map = new Map();
+    for(const s of (c && Array.isArray(c.stations) ? c.stations : [])) if(s && s.sig) map.set(s.sig, s.name);
+    return map;
+  }
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function clock(t){
+    const ms = TRV.toMs(t);
+    return ms == null ? '' : new Date(ms).toLocaleTimeString('sv-SE', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  }
+  function hm(t){
+    const ms = TRV.toMs(t);
+    return ms == null ? '' : new Date(ms).toLocaleTimeString('sv-SE', {hour:'2-digit', minute:'2-digit'});
+  }
+  function day(t){ return TRV.swedishDay(t) || ''; }
+  function plural(n, one, many){ return `${n} ${n === 1 ? one : many}`; }
+  // Sekunder med tecken: +8 s, −24 s, +1:05
+  function diff(s){
+    if(s == null || !Number.isFinite(s)) return '–';
+    const r = Math.round(s);
+    const sign = r > 0 ? '+' : r < 0 ? '−' : '±';
+    const a = Math.abs(r);
+    return a >= 60 ? `${sign}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}` : `${sign}${a} s`;
+  }
+  function diffCell(s){
+    const cls = s == null ? 'mut' : Math.abs(s) <= 10 ? '' : s > 0 ? 'pos' : 'neg';
+    return `<td class="num ${cls}">${diff(s)}</td>`;
+  }
+  function setStatus(text, kind){
+    const el = $('status');
+    el.textContent = text;
+    el.className = 'status' + (kind ? ' ' + kind : '');
+  }
+  function errorBlock(text){ return `<p class="err-text">Fel från Trafikverket: ${escapeHtml(text)}</p>`; }
+
+  function fieldTable(fields, total){
+    if(!fields || !fields.length) return '<p class="sub">Inga fält.</p>';
+    return `<div class="scroll"><table><thead><tr><th>Fält</th><th class="num">Poster</th><th>Exempel</th></tr></thead><tbody>${
+      fields.map(f => `<tr><td>${escapeHtml(f.path)}</td><td class="num">${f.count}${total ? ` av ${total}` : ''}</td><td class="wrap">${escapeHtml(f.examples.join(' · ')).slice(0, 300)}</td></tr>`).join('')
+    }</tbody></table></div>`;
+  }
+  function fieldsDetails(title, fields, total){
+    return `<details><summary>${escapeHtml(title)} (${fields ? fields.length : 0} fält)</summary>${fieldTable(fields, total)}</details>`;
+  }
+
+  // ── Delarna ──
+
+  function renderComparison(c, names){
+    const s = c.summary;
+    const runs = c.runs;
+    const withData = runs.filter(r => r.announcements > 0);
+    const missing = runs.filter(r => !r.error && !r.announcements);
+    const errors = runs.filter(r => r.error);
+    const oldestWith = withData.reduce((m, r) => Math.max(m, r.ageDays), -1);
+    const youngestWithout = missing.reduce((m, r) => Math.min(m, r.ageDays), Infinity);
+    let back = '';
+    if(withData.length) back = `Trafikverket har data för körningar upp till ${plural(oldestWith, 'dag', 'dagar')} gamla`;
+    if(Number.isFinite(youngestWithout)) back += `${back ? ', men inte för' : 'Ingen data för'} en körning som är ${plural(youngestWithout, 'dag', 'dagar')} gammal`;
+    const tile = (st, label) => `<div class="tile"><b>${st.n ? diff(st.median) : '–'}</b><span>${label}, median${st.n ? ` (${st.n} st, ${st.within10} inom 10 s)` : ''}</span></div>`;
+    const stationRows = s.stations.map(r => `<tr><td>${escapeHtml(r.name || names.get(r.sig) || r.sig)}</td><td>${r.kind === 'arrival' ? 'ankomst' : 'avgång'}${r.shouldStop ? '' : ' (passage)'}</td><td class="num">${r.n}</td>${diffCell(r.median)}<td class="num mut">${diff(r.p10)} – ${diff(r.p90)}</td></tr>`).join('');
+    const largest = s.largest.map(r => `<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.trainNumber)}</td><td>${escapeHtml(r.name || r.sig)}</td><td>${r.kind === 'arrival' ? '↓' : '↑'}</td><td>${clock(r.app)}</td><td>${clock(r.trv)}</td>${diffCell(r.diffS)}<td class="mut">${escapeHtml(r.source)}</td></tr>`).join('');
+    return `<section class="card" id="secComparison">
+      <h2>Appens tider mot Trafikverkets</h2>
+      <p class="sub">${plural(runs.length, 'körning', 'körningar')} från telefonen. Skillnad = appen − Trafikverket. Trafikverkets tider kommer oftast från signalsystemet, så de mäts inte exakt där tåget står.</p>
+      ${runs.length ? `<div class="tiles">${tile(s.arrival, 'ankomst')}${tile(s.departure, 'avgång')}<div class="tile"><b>${withData.length} av ${runs.length}</b><span>körningar där Trafikverket hade data</span></div></div>` : '<p class="sub">Det finns inga körningar med tågnummer och stationssignaturer på den här telefonen.</p>'}
+      ${back ? `<p class="sub" id="retention">${escapeHtml(back)}.</p>` : ''}
+      ${errors.length ? `<p class="err-text">${errors.length} körningar gick inte att hämta: ${escapeHtml(errors[0].error)}</p>` : ''}
+      ${stationRows ? `<div class="scroll"><table><thead><tr><th>Station</th><th>Typ</th><th class="num">Antal</th><th class="num">Median</th><th class="num">P10 – P90</th></tr></thead><tbody>${stationRows}</tbody></table></div>` : ''}
+      ${largest ? `<details><summary>Största skillnaderna</summary><div class="scroll"><table><thead><tr><th>Datum</th><th>Tåg</th><th>Station</th><th></th><th>Appen</th><th>TrV</th><th class="num">Skillnad</th><th>Källa</th></tr></thead><tbody>${largest}</tbody></table></div></details>` : ''}
+      <details><summary>Körningarna</summary><div class="scroll"><table><thead><tr><th>Datum</th><th>Tåg</th><th>Urval</th><th class="num">Ålder</th><th class="num">Annonseringar</th><th class="num">Jämförda tider</th></tr></thead><tbody>${
+        runs.map(r => `<tr><td>${escapeHtml(day(r.startedAt))}</td><td>${escapeHtml(r.trainNumber)}</td><td>${escapeHtml(r.reason)}</td><td class="num">${r.ageDays} d</td><td class="num">${r.error ? `<span class="tag">fel</span>` : r.announcements}</td><td class="num">${r.rows == null ? '–' : r.rows}</td></tr>`).join('')
+      }</tbody></table></div></details>
+    </section>`;
+  }
+
+  function renderAnnouncements(a, train, date, names){
+    if(a.error) return `<section class="card"><h2>Tåg ${escapeHtml(train)} ${escapeHtml(date)}</h2>${errorBlock(a.error)}</section>`;
+    if(!a.count) return `<section class="card"><h2>Tåg ${escapeHtml(train)} ${escapeHtml(date)}</h2><p class="sub">Trafikverket har inga annonseringar för tåget den dagen.</p></section>`;
+    const rows = a.records.map(r => {
+      const status = [];
+      if(r.Canceled) status.push('<span class="tag">inställd</span>');
+      for(const d of r.Deviation || []) status.push(escapeHtml(d.Description || d.Code));
+      for(const d of r.OtherInformation || []) status.push(`<span class="mut">${escapeHtml(d.Description || d.Code)}</span>`);
+      const reported = r.TimeAtLocationWithSeconds || r.TimeAtLocation;
+      const late = reported ? Math.round((Date.parse(reported) - Date.parse(r.AdvertisedTimeAtLocation)) / 1000) : null;
+      return `<tr${r.Advertised === false ? ' class="mut"' : ''}>
+        <td>${escapeHtml(names.get(r.LocationSignature) || r.LocationSignature)}${r.Advertised === false ? ' <small>(ej annonserad)</small>' : ''}</td>
+        <td>${r.ActivityType === 'Ankomst' ? '↓' : '↑'}</td>
+        <td>${hm(r.AdvertisedTimeAtLocation)}</td>
+        <td>${clock(reported)}</td>${reported ? diffCell(late) : '<td></td>'}
+        <td>${escapeHtml(r.TrackAtLocation || '')}</td>
+        <td>${r.LocationDateTimeOTN && r.LocationDateTimeOTN !== r.AdvertisedTimeAtLocation ? clock(r.LocationDateTimeOTN) : ''}</td>
+        <td>${clock(r.EstimatedTimeAtLocation)}</td>
+        <td class="wrap">${status.join(' · ')}</td></tr>`;
+    }).join('');
+    const first = a.records.find(r => r.Operator || r.ProductInformation) || {};
+    const product = (first.ProductInformation || []).map(p => p.Description).filter(Boolean).join(', ');
+    const from = (first.FromLocation || []).map(l => names.get(l.LocationName) || l.LocationName).join(', ');
+    const to = (first.ToLocation || []).map(l => names.get(l.LocationName) || l.LocationName).join(', ');
+    return `<section class="card" id="secAnnouncements">
+      <h2>Tåg ${escapeHtml(train)} ${escapeHtml(date)}</h2>
+      <p class="sub">${[from && to ? `${escapeHtml(from)} → ${escapeHtml(to)}` : '', escapeHtml(product), first.Operator ? `kör: ${escapeHtml(first.Operator)}` : '', first.AdvertisedTrainIdent ? `annonserat nummer ${escapeHtml(first.AdvertisedTrainIdent)}` : ''].filter(Boolean).join(' · ')}</p>
+      <p class="sub">${plural(a.count, 'annonsering', 'annonseringar')}. Plan = annonserad tid, Faktisk = Trafikverkets rapport med sekunder, Operativ = tågläget när det skiljer.</p>
+      <div class="scroll"><table><thead><tr><th>Station</th><th></th><th>Plan</th><th>Faktisk</th><th class="num">Avvik.</th><th>Spår</th><th>Operativ</th><th>Prognos</th><th>Övrigt</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${fieldsDetails('Alla fält i TrainAnnouncement', a.fields, a.count)}
+    </section>`;
+  }
+
+  function renderPositions(p, train, myTrains){
+    let html = '';
+    if(p.trainError) html += errorBlock(p.trainError);
+    else if(p.train && p.train.count){
+      const r = p.train.records[0];
+      const pt = TRV.wgs84(r.Position && r.Position.WGS84);
+      html += `<p>Senaste position för tåg ${escapeHtml(train)}: ${escapeHtml(day(r.TimeStamp))} ${clock(r.TimeStamp)}${r.Speed != null ? `, ${escapeHtml(r.Speed)} km/h` : ''}${r.Bearing != null ? `, bäring ${escapeHtml(r.Bearing)}°` : ''}${pt ? `, ${pt.lat.toFixed(5)} ${pt.lon.toFixed(5)}` : ''}.</p>
+        ${fieldsDetails('Alla fält i TrainPosition', p.train.fields, p.train.count)}`;
+    }else html += `<p class="sub">Ingen position för tåg ${escapeHtml(train)} just nu. Positionen finns bara medan tåget rapporterar.</p>`;
+    if(p.nationalError) html += errorBlock(p.nationalError);
+    else if(p.national){
+      const n = p.national;
+      html += `<div class="tiles"><div class="tile"><b>${n.count}</b><span>tåg med position</span></div><div class="tile"><b>${n.last10min}</b><span>rapporterade senaste 10 min</span></div><div class="tile"><b>${n.myTrainsSeen.length} av ${n.myTrainsCount}</b><span>av dina tågnummer finns med</span></div></div>
+        ${n.myTrainsSeen.length ? `<p class="sub">Dina tåg med position: ${n.myTrainsSeen.map(escapeHtml).join(', ')}</p>` : ''}`;
+    }
+    return `<section class="card" id="secPositions"><h2>Tågposition (TrainPosition)</h2>${html}</section>`;
+  }
+
+  function renderStations(s){
+    let html = '';
+    if(s.allError) html += errorBlock(s.allError);
+    else if(s.all){
+      html += `<div class="tiles"><div class="tile"><b>${s.all.count}</b><span>platser totalt</span></div><div class="tile"><b>${s.all.advertised}</b><span>annonserade (appen använder dessa)</span></div><div class="tile"><b>${s.all.notAdvertised}</b><span>ej annonserade, ${s.all.notAdvertisedWithPosition} med position</span></div></div>
+        ${s.all.routeNotAdvertised.length ? `<p class="sub">Ej annonserade platser på tågets väg: ${s.all.routeNotAdvertised.map(escapeHtml).join(', ')}</p>` : ''}`;
+    }
+    if(s.routeError) html += errorBlock(s.routeError);
+    else if(s.route && s.route.count) html += fieldsDetails('Alla fält i TrainStation för tågets stationer', s.route.fields, s.route.count);
+    return `<section class="card" id="secStations"><h2>Stationer (TrainStation)</h2>${html}</section>`;
+  }
+
+  function renderMessages(m, sm, rc){
+    const list = (m.onRoute || []).map(x => `<li><b>${escapeHtml(x.Header || (x.ReasonCode && x.ReasonCode[0] && x.ReasonCode[0].Description) || 'Meddelande')}</b> ${escapeHtml(x.ExternalDescription || '')} <span class="mut">${escapeHtml(day(x.StartDateTime))} ${hm(x.StartDateTime)}${x.PrognosticatedEndDateTimeTrafficImpact ? ` – prognos ${escapeHtml(day(x.PrognosticatedEndDateTimeTrafficImpact))} ${hm(x.PrognosticatedEndDateTimeTrafficImpact)}` : ''}</span></li>`).join('');
+    const part = (title, x, extra) => x.error ? `<h3 class="sub">${title}</h3>${errorBlock(x.error)}` : `<p>${title}: <b>${x.count}</b>${extra || ''}</p>`;
+    return `<section class="card" id="secMessages"><h2>Störningar och meddelanden</h2>
+      ${part('Störningar och banarbeten (TrainMessage)', m, m.error ? '' : `, varav <b>${m.onRouteCount}</b> rör tågets stationer`)}
+      ${list ? `<ul class="plain">${list}</ul>` : ''}
+      ${m.fields ? fieldsDetails('Alla fält i TrainMessage', m.fields, m.count) : ''}
+      ${part('Stationsmeddelanden (TrainStationMessage)', sm, sm.error ? '' : `, varav <b>${sm.onRouteCount}</b> för tågets stationer`)}
+      ${sm.fields ? fieldsDetails('Alla fält i TrainStationMessage', sm.fields, sm.count) : ''}
+      ${part('Orsakskoder (ReasonCode)', rc)}
+      ${rc.fields ? fieldsDetails('Alla fält i ReasonCode', rc.fields, rc.count) : ''}
+    </section>`;
+  }
+
+  function render(res){
+    const names = stationNames();
+    const s = res.sections;
+    const myTrains = Array.from(new Set(loadLogs().map(l => String(l && l.trainNumber || '').trim()).filter(Boolean)));
+    $('result').innerHTML = renderComparison(s.comparison, names)
+      + renderAnnouncements(s.announcements, res.trainNumber, res.date, names)
+      + renderPositions(s.positions, res.trainNumber, myTrains)
+      + renderStations(s.stations)
+      + renderMessages(s.messages, s.stationMessages, s.reasonCodes);
+  }
+
+  // ── Körning, sparande ──
+
+  async function runCheck(ev){
+    if(ev) ev.preventDefault();
+    const train = $('train').value.trim();
+    const date = $('date').value;
+    if(!train || !date) return;
+    $('btnRun').disabled = true;
+    $('actions').style.display = 'none';
+    $('result').innerHTML = '';
+    try{
+      lastResult = await TRV.runCheck({
+        fetch: fetchForTest || undefined, trainNumber: train, date, logs: loadLogs(),
+        sleep: TEST_MODE ? (async () => {}) : undefined,
+        onProgress: text => { if(text !== 'Avbrutet') setStatus(text === 'Klart' ? 'Klart.' : `Hämtar: ${text} …`, text === 'Klart' ? 'ok' : ''); }
+      });
+      if(lastResult.aborted){
+        setStatus(`${lastResult.aborted}. Har telefonen täckning?`, 'err');
+        return;
+      }
+      lastResult.device = navigator.userAgent;
+      render(lastResult);
+      $('actions').style.display = '';
+      $('btnSave').style.display = GH && readJson(KEY_GITHUB, null) ? '' : 'none';
+    }catch(e){
+      setStatus('Kontrollen avbröts: ' + ((e && e.message) || e), 'err');
+    }finally{
+      $('btnRun').disabled = false;
+    }
+  }
+
+  function resultFileName(){
+    const t = TRV.swedishLocal(lastResult.checkedAt).replace(/:/g, '').replace('T', '_');
+    return `api-koll_${t}_${lastResult.trainNumber.replace(/[^0-9A-Za-z]/g, '') || 'tag'}.json`;
+  }
+
+  async function saveToGithub(){
+    const s = readJson(KEY_GITHUB, null);
+    const repo = s && GH ? GH.parseRepo(s.repo) : null;
+    if(!lastResult || !repo || !s.token){ setStatus('Ställ in uppladdningen i appen först (⋮ → Uppladdning).', 'err'); return; }
+    $('btnSave').disabled = true;
+    setStatus('Sparar i ' + s.repo + ' …');
+    try{
+      const client = GH.createClient({ owner: repo.owner, repo: repo.repo, token: s.token, branch: s.branch || 'main', fetch: ghFetchForTest || undefined });
+      const path = `api-koll/${resultFileName()}`;
+      await client.putFile(path, JSON.stringify(lastResult, null, 1), `Trafikverket-kontroll ${lastResult.date} (tåg ${lastResult.trainNumber})`);
+      setStatus(`Sparat som ${path}.`, 'ok');
+    }catch(e){
+      setStatus('Kunde inte spara: ' + ((e && e.message) || e), 'err');
+    }finally{
+      $('btnSave').disabled = false;
+    }
+  }
+
+  function download(){
+    if(!lastResult) return;
+    const text = JSON.stringify(lastResult, null, 1);
+    lastDownload = { filename: resultFileName(), text };
+    if(TEST_MODE) return;
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = lastDownload.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function init(){
+    const logs = loadLogs().filter(l => l && String(l.trainNumber || '').trim())
+      .sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
+    const params = new URLSearchParams(location.search);
+    $('train').value = params.get('train') || (logs[0] ? String(logs[0].trainNumber).trim() : '');
+    $('date').value = params.get('date') || TRV.swedishDay(Date.now());
+    $('checkForm').addEventListener('submit', runCheck);
+    $('btnSave').addEventListener('click', saveToGithub);
+    $('btnDownload').addEventListener('click', download);
+    if(!TRV) setStatus('Modulen kunde inte laddas – ladda om sidan.', 'err');
+    if(TEST_MODE){
+      window.__apikoll = {
+        setFetchForTest: fn => { fetchForTest = fn; },
+        setGithubFetchForTest: fn => { ghFetchForTest = fn; },
+        run: () => runCheck(), save: saveToGithub, download,
+        getResult: () => lastResult, getLastDownload: () => lastDownload
+      };
+    }
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

@@ -1413,7 +1413,8 @@ test('tidtabell: hela vägen – startformuläret, tågorderns tider i resvyn oc
   await realSleep(100);
   const logs = rt.loadLogs();
   const saved = logs[logs.length - 1];
-  assertEqual([saved.format, saved.appVersion], [3, '2026-11-25g'], 'format och version');
+  assertEqual(saved.format, 3, 'format');
+  assert(/^\d{4}-\d\d-\d\d[a-z]?$/.test(saved.appVersion), 'appversion: ' + saved.appVersion); // inte en viss version: den höjs vid varje publicering
   assertEqual(saved.stops.map(s => s.operationalArrival ? new Date(s.operationalArrival).toISOString() : null), [null, t(5), t(10), t(15), t(23), t(30)], 'tågorderns ankomster sparas');
   assertEqual(saved.stops.map(s => s.scheduledArrival ? new Date(s.scheduledArrival).toISOString() : null), [null, t(6), t(11), t(15), t(24), t(30)], 'annonserade ankomster sparas oförändrade');
 });
@@ -1706,6 +1707,223 @@ test('karta: Följ zoomar in kring tåget, Hela visar hela rutten, och valet spa
   assert(!d.getElementById('routeMapContainer').classList.contains('collapsed'), 'kartan visas igen');
 });
 
+// ── Trafikverkets rapporterade tider (railtimer-trv.js) ──
+
+/* Simulerat Trafikverket för en uppspelad resa: annonseringar för tåget TEST med "rapporterade" tider
+   = verklig ankomst + 5 s och avgång − 3 s. opts.lastLate: slutstationen rapporteras först vid andra anropet.
+   opts.offline: nätfel. Varje anrop sparas i calls. */
+function fakeTrafikverket(fixes, opts) {
+  const o = opts || {};
+  const calls = [];
+  const n = STATIONS.length;
+  const firstMove = fixes.find(f => f.speed > 0.6).t;
+  const arrivals = [], departures = [];
+  for (let i = 1; i < n; i++) {
+    const at = fixes.filter(f => f.dwellAt === i);
+    arrivals[i] = at[0].t;
+    if (i < n - 1) departures[i] = at[at.length - 1].t + STEP_MS;
+  }
+  departures[0] = firstMove;
+  const iso = ms => new Date(ms).toISOString();
+  const minute = ms => iso(Math.round(ms / 60000) * 60000);
+  async function fetch(url, init) {
+    calls.push(init.body);
+    if (o.offline) throw new TypeError('Failed to fetch');
+    if (!/OperationalTrainNumber" value="TEST"/.test(init.body)) return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: [] }] } }) };
+    const anns = [];
+    STATIONS.forEach((st, i) => {
+      if (i > 0) {
+        const late = o.lastLate && i === n - 1 && calls.length === 1;
+        anns.push({ LocationSignature: st[3], ActivityType: 'Ankomst', AdvertisedTimeAtLocation: minute(arrivals[i]), TimeAtLocationWithSeconds: late ? undefined : iso(arrivals[i] + 5000), TrackAtLocation: '1' });
+      }
+      if (i < n - 1) anns.push({ LocationSignature: st[3], ActivityType: 'Avgang', AdvertisedTimeAtLocation: minute(departures[i]), TimeAtLocationWithSeconds: iso(departures[i] - 3000), TrackAtLocation: '1', Operator: 'SJ', ProductInformation: [{ Description: 'Västtågen' }] });
+    });
+    return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ TrainAnnouncement: anns }] } }) };
+  }
+  return { fetch, calls, arrivals, departures };
+}
+
+test('trafikverket: efter resan hämtas tågets tider, sparas i körningen, visas i rapporten och laddas upp', async () => {
+  const fixes = buildJourney();
+  const trv = fakeTrafikverket(fixes);
+  let fake;
+  const r = await runJourney(fixes, { beforeStart: async w => { fake = browserFakeGitHub(w); configureUpload(w, fake); w.__railtimer.setTrvFetchForTest(trv.fetch, 20); } });
+  await r.rt.whenUploadIdle();
+  const log = r.rt.loadLogs().pop();
+  assertEqual([log.trv.found, log.trv.complete, log.trv.operator, log.trv.product], [6, true, 'SJ', 'Västtågen'], 'run.trv');
+  assertEqual(log.stops[2].trv, { arrival: new Date(trv.arrivals[2] + 5000).toISOString(), departure: new Date(trv.departures[2] - 3000).toISOString(), track: '1' }, 'Källby');
+  assertEqual(trv.calls.length, 1, 'ett anrop när allt var rapporterat');
+  const d = r.w.document;
+  assertEqual(d.querySelectorAll('#reportHTML .rl-trv').length, 6, 'en Trafikverket-rad per station');
+  assert(/^Trafikverket: 6 stationer · ankomst appen [−+±]\d+ s · avgång appen [−+±]\d+ s \(median\)$/.test(d.getElementById('trvSummary').textContent), 'sammanfattning: ' + d.getElementById('trvSummary').textContent);
+  assert(/Trafikverket ↓ \d\d:\d\d:\d\d appen [−+±]\d+ s · ↑ \d\d:\d\d:\d\d appen [−+±]\d+ s · spår 1/.test(d.querySelectorAll('#reportHTML .rl-trv')[2].textContent), 'raden: ' + d.querySelectorAll('#reportHTML .rl-trv')[2].textContent);
+  const uploaded = JSON.parse(fake.files.get(r.w.RailTimerGitHub.runPath(log)).text);
+  assertEqual(uploaded.stops[2].trv, log.stops[2].trv, 'Trafikverkets tider laddas upp med körningen');
+  const rows = r.rt.logsCsv(r.rt.loadLogs()).split('\n').map(line => line.split(';').map(c => c.replace(/^"|"$/g, '')));
+  assertEqual(rows[0].slice(-3), ['TrV ankomst', 'TrV avgång', 'TrV spår'], 'CSV-kolumner');
+  const trvCols = rows[3].slice(-3);
+  assert(/^\d\d:\d\d:\d\d$/.test(trvCols[0]) && /^\d\d:\d\d:\d\d$/.test(trvCols[1]) && trvCols[2] === '1', 'CSV: Trafikverkets tider och spår: ' + rows[3].join(';'));
+});
+
+test('trafikverket: slutstationen rapporteras efter en stund – nytt försök innan uppladdningen', async () => {
+  const fixes = buildJourney();
+  const trv = fakeTrafikverket(fixes, { lastLate: true });
+  let fake;
+  const r = await runJourney(fixes, { beforeStart: async w => { fake = browserFakeGitHub(w); configureUpload(w, fake); w.__railtimer.setTrvFetchForTest(trv.fetch, 20); } });
+  await r.rt.whenUploadIdle();
+  const log = r.rt.loadLogs().pop();
+  assertEqual(trv.calls.length, 2, 'två anrop');
+  assertEqual(log.trv.complete, true, 'komplett efter andra försöket');
+  const uploaded = JSON.parse(fake.files.get(r.w.RailTimerGitHub.runPath(log)).text);
+  assert(uploaded.stops[5].trv && uploaded.stops[5].trv.arrival, 'slutstationens tid kom med i uppladdningen');
+});
+
+test('trafikverket: utan kontakt laddas resan upp ändå, och rapporten säger att tiderna saknas', async () => {
+  const fixes = buildJourney();
+  let fake;
+  const r = await runJourney(fixes, { beforeStart: async w => { fake = browserFakeGitHub(w); configureUpload(w, fake); w.__railtimer.setTrvFetchForTest(fakeTrafikverket(fixes, { offline: true }).fetch, 20); } });
+  await r.rt.whenUploadIdle();
+  const log = r.rt.loadLogs().pop();
+  assertEqual(log.trv, undefined, 'inga Trafikverket-tider');
+  assert(fake.files.get(r.w.RailTimerGitHub.runPath(log)), 'körningen laddades upp ändå');
+  assert(/kunde inte hämtas/.test(r.w.document.getElementById('reportHTML').textContent), 'rapporten säger att tiderna saknas');
+});
+
+test('trafikverket: tider som saknas hämtas före nästa uppladdning', async () => {
+  const fixes = buildJourney();
+  const r = await runJourney(fixes, { beforeStart: async w => { configureUpload(w, browserFakeGitHub(w, { offline: true })); w.__railtimer.setTrvFetchForTest(fakeTrafikverket(fixes, { offline: true }).fetch, 20); } });
+  await r.rt.whenUploadIdle();
+  assertEqual(r.rt.loadLogs().pop().trv, undefined, 'inget utan täckning');
+  const fake = browserFakeGitHub(r.w);
+  r.rt.setFetchForTest(fake.fetch);
+  r.rt.setTrvFetchForTest(fakeTrafikverket(fixes).fetch);
+  await r.rt.scheduleUpload();
+  const log = r.rt.loadLogs().pop();
+  assertEqual(log.trv && log.trv.found, 6, 'hämtat före uppladdningen');
+  assertEqual(JSON.parse(fake.files.get(r.w.RailTimerGitHub.runPath(log)).text).trv.found, 6, 'och uppladdat');
+});
+
+test('trafikverket: utan testsvar hämtas inga tider och rapporten är som förut', async () => {
+  const r = await runJourney(buildJourney());
+  await r.rt.whenUploadIdle();
+  assertEqual(r.rt.loadLogs().pop().trv, undefined, 'inga tider');
+  assertEqual(r.w.document.querySelectorAll('#reportHTML .rl-trv').length, 0, 'inga rader');
+  assert(!r.w.document.getElementById('trvSummary'), 'ingen sammanfattning');
+});
+
+// ── Kontrollsidan api-koll.html ──
+
+async function loadApiKoll(setup) {
+  const frame = document.getElementById('app');
+  await new Promise(resolve => { frame.onload = resolve; frame.src = '../api-koll.html?test=1&n=' + Date.now(); });
+  let w = frame.contentWindow;
+  w.localStorage.clear();
+  if (setup) setup(w);
+  await new Promise(resolve => { frame.onload = resolve; frame.src = '../api-koll.html?test=1&n=' + Date.now(); });
+  w = frame.contentWindow;
+  for (let i = 0; i < 100 && !w.__apikoll; i++) await realSleep(20);
+  if (!w.__apikoll) throw new Error('Kontrollsidan startade inte i testläge');
+  return w;
+}
+
+function fakeTrafikverketApi() {
+  const types = [];
+  const today = new Date().toISOString().slice(0, 10);
+  const day = '2026-11-24';
+  const a = (sig, type, adv, rep, extra) => Object.assign({ LocationSignature: sig, ActivityType: type, Advertised: true, AdvertisedTimeAtLocation: `${day}T${adv}:00.000+01:00`, TimeAtLocationWithSeconds: rep ? `${day}T${rep}.000+01:00` : undefined }, extra || {});
+  const anns = [
+    a('Hrc', 'Avgang', '19:40', '19:40:12', { TrackAtLocation: '3', Operator: 'SJ', ProductInformation: [{ Description: 'Västtågen' }], FromLocation: [{ LocationName: 'Hrc' }], ToLocation: [{ LocationName: 'Mst' }] }),
+    a('Ved', 'Ankomst', '19:47', '19:47:20'),
+    a('Ved', 'Avgang', '19:48', '19:47:55', { LocationDateTimeOTN: `${day}T19:47:30.000+01:00` }),
+    a('Grh', 'Avgang', '19:51', '19:51:40', { Advertised: false }),
+    a('Vaa', 'Ankomst', '19:55', null, { Canceled: true, Deviation: [{ Description: 'Inställt' }] })
+  ];
+  async function fetch(url, init) {
+    const type = /objecttype="([^"]+)"/.exec(init.body)[1];
+    types.push(type);
+    const data = {
+      TrainAnnouncement: anns,
+      TrainPosition: /<EQ name="Train.OperationalTrainNumber"/.test(init.body) ? [] : [{ Train: { OperationalTrainNumber: '24360' }, TimeStamp: new Date().toISOString(), Speed: 70 }],
+      TrainStation: /<IN /.test(init.body) ? [{ LocationSignature: 'Ved', AdvertisedLocationName: 'Vedum', PlatformLine: ['1'] }] : [{ LocationSignature: 'Ved', Advertised: true }, { LocationSignature: 'Grh', Advertised: false, Geometry: { WGS84: 'POINT (13 58.2)' } }],
+      TrainMessage: [{ Header: 'Banarbete Vara', StartDateTime: `${day}T08:00:00.000+01:00`, TrafficImpact: [{ AffectedLocation: [{ LocationSignature: 'Vaa' }] }] }],
+      TrainStationMessage: [],
+      ReasonCode: [{ Code: 'ANA002', Level1Description: 'Inställt' }]
+    }[type];
+    return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ [type]: data }] } }) };
+  }
+  return { fetch, types, today };
+}
+
+test('trafikverket-data: kontrollsidan visar tågets tider, fälten, positioner, stationer och appens tider mot Trafikverkets', async () => {
+  const run = {
+    id: 'k1', trainNumber: '24360', startedAt: '2026-11-24T18:24:45Z', finishedAt: '2026-11-24T19:10:00Z',
+    stops: [
+      { name: 'Herrljunga C', sig: 'Hrc', actualDeparture: '2026-11-24T18:40:03Z', departSource: 'gps' },
+      { name: 'Vedum', sig: 'Ved', actualArrival: '2026-11-24T18:47:28Z', actualDeparture: '2026-11-24T18:47:31Z', arrivalSource: 'gps', departSource: 'gps' }
+    ]
+  };
+  const w = await loadApiKoll(win => {
+    win.localStorage.setItem('kmon_gps_logs_v1', JSON.stringify([run]));
+    win.localStorage.setItem('kmon_all_stations_v1', JSON.stringify({ timestamp: Date.now(), stations: [{ name: 'Herrljunga C', sig: 'Hrc' }, { name: 'Vedum', sig: 'Ved' }, { name: 'Mariestad', sig: 'Mst' }] }));
+    win.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'test-token', branch: 'main' }));
+  });
+  const d = w.document;
+  assertEqual(d.getElementById('train').value, '24360', 'tågnumret från senaste körningen');
+  d.getElementById('date').value = '2026-11-24';
+  const api = fakeTrafikverketApi();
+  w.__apikoll.setFetchForTest(api.fetch);
+  await w.__apikoll.run();
+  assertEqual(d.getElementById('status').textContent, 'Klart.', 'status');
+  const ann = d.getElementById('secAnnouncements');
+  assert(/Herrljunga C → Mariestad · Västtågen · kör: SJ/.test(ann.textContent), 'tågets väg och produkt: ' + ann.querySelector('.sub').textContent);
+  assertEqual(ann.querySelectorAll('tbody tr').length > 5, true, 'annonseringar och fälttabell');
+  assert(/inställd/.test(ann.textContent) && /ej annonserad/.test(ann.textContent), 'inställd och ej annonserad');
+  const cmp = d.getElementById('secComparison');
+  assert(/\+8 s/.test(cmp.querySelector('.tiles').textContent), 'ankomst: appen 8 s efter Trafikverket: ' + cmp.querySelector('.tiles').textContent);
+  assert(/1 av 1/.test(cmp.textContent), 'körningar med data');
+  assert(/rapporterade senaste 10 min/.test(d.getElementById('secPositions').textContent), 'positioner');
+  assert(/1 av 1/.test(d.getElementById('secPositions').textContent), 'dina tåg med position');
+  assert(/1 med position/.test(d.getElementById('secStations').textContent), 'ej annonserade platser');
+  assert(/Banarbete Vara/.test(d.getElementById('secMessages').textContent), 'störning på sträckan');
+  assert(api.types.includes('ReasonCode') && api.types.includes('TrainStationMessage'), 'alla objekttyper frågades');
+
+  const fake = browserFakeGitHub(w);
+  w.__apikoll.setGithubFetchForTest(fake.fetch);
+  await w.__apikoll.save();
+  const saved = Array.from(fake.files.keys()).find(k => k.startsWith('api-koll/'));
+  assert(saved && /^api-koll\/api-koll_\d{4}-\d\d-\d\d_\d{6}_24360\.json$/.test(saved), 'sparad fil: ' + saved);
+  assertEqual(JSON.parse(fake.files.get(saved).text).sections.comparison.rows.length, 3, 'jämförelsen sparas');
+  w.__apikoll.download();
+  assertEqual(w.__apikoll.getLastDownload().filename, saved.slice('api-koll/'.length), 'nedladdning med samma namn');
+});
+
+test('trafikverket-data: utan täckning säger sidan det direkt', async () => {
+  const w = await loadApiKoll();
+  w.document.getElementById('train').value = '1';
+  let calls = 0;
+  w.__apikoll.setFetchForTest(async () => { calls++; throw new TypeError('Failed to fetch'); });
+  await w.__apikoll.run();
+  assertEqual(calls, 1, 'ett anrop');
+  assertEqual(w.document.getElementById('status').textContent, 'Ingen kontakt med Trafikverket. Har telefonen täckning?', 'status');
+  assertEqual(w.document.getElementById('actions').style.display, 'none', 'inget att spara');
+});
+
+test('trafikverket-data: fel från Trafikverket visas i sin del och resten visas ändå', async () => {
+  const w = await loadApiKoll();
+  const d = w.document;
+  d.getElementById('train').value = '1';
+  w.__apikoll.setFetchForTest(async (url, init) => {
+    if (/TrainPosition/.test(init.body)) return { ok: false, status: 400, json: async () => ({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Request', MESSAGE: 'Invalid schemaversion' } }] } }) };
+    const type = /objecttype="([^"]+)"/.exec(init.body)[1];
+    return { ok: true, status: 200, json: async () => ({ RESPONSE: { RESULT: [{ [type]: [] }] } }) };
+  });
+  await w.__apikoll.run();
+  assert(/Invalid schemaversion/.test(d.getElementById('secPositions').textContent), 'felet visas');
+  assert(/inga annonseringar/.test(d.getElementById('result').textContent), 'tåget utan data');
+  assert(/inga körningar/.test(d.getElementById('secComparison').textContent), 'inga körningar på telefonen');
+  assertEqual(d.getElementById('btnSave').style.display, 'none', 'ingen sparknapp utan uppladdning');
+});
+
 window.prepareShot = async function (name) {
   if (name === 'installningar') {
     const w = await loadApp();
@@ -1733,6 +1951,29 @@ window.prepareShot = async function (name) {
   } else if (name === 'rapport') {
     const fixes = buildJourney();
     await runJourney(fixes, { drop: twoStationCall(fixes).drop });
+  } else if (name === 'rapport-trafikverket') {
+    const fixes = buildJourney();
+    const trv = fakeTrafikverket(fixes);
+    const r = await runJourney(fixes, { trainNumber: 'TEST', route: scheduleFor(fixes), beforeStart: async w => w.__railtimer.setTrvFetchForTest(trv.fetch, 20) });
+    await r.rt.whenUploadIdle();
+  } else if (name === 'trafikverket-data') {
+    const frame = document.getElementById('app');
+    frame.style.height = '2400px';
+    const run = {
+      id: 'k1', trainNumber: '24360', startedAt: '2026-11-24T18:24:45Z', finishedAt: '2026-11-24T19:10:00Z',
+      stops: [
+        { name: 'Herrljunga C', sig: 'Hrc', actualDeparture: '2026-11-24T18:40:03Z', departSource: 'gps' },
+        { name: 'Vedum', sig: 'Ved', actualArrival: '2026-11-24T18:47:28Z', actualDeparture: '2026-11-24T18:47:31Z', arrivalSource: 'gps', departSource: 'gps' }
+      ]
+    };
+    const w = await loadApiKoll(win => {
+      win.localStorage.setItem('kmon_gps_logs_v1', JSON.stringify([run]));
+      win.localStorage.setItem('kmon_all_stations_v1', JSON.stringify({ timestamp: Date.now(), stations: [{ name: 'Herrljunga C', sig: 'Hrc' }, { name: 'Vedum', sig: 'Ved' }, { name: 'Mariestad', sig: 'Mst' }, { name: 'Vara', sig: 'Vaa' }, { name: 'Grästorp', sig: 'Grh' }] }));
+      win.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'x', branch: 'main' }));
+    });
+    w.document.getElementById('date').value = '2026-11-24';
+    w.__apikoll.setFetchForTest(fakeTrafikverketApi().fetch);
+    await w.__apikoll.run();
   } else if (name === 'per-tag' || name === 'per-tag-utskrift') {
     const frame = document.getElementById('app');
     frame.style.width = '1200px';   // analysverktyget används främst på dator

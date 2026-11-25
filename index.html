@@ -414,6 +414,9 @@
   .rl-times strong{color:var(--ink)}
   .rl-times small{color:var(--mut);font-size:.75rem}
   .rl-note{font-size:.8rem;color:var(--ink-dim);margin-top:.3rem;font-style:italic}
+  .rl-trv{font-size:.78rem;color:var(--mut);margin-top:.2rem;font-variant-numeric:tabular-nums}
+  .rl-trv small{font-size:.72rem}
+  .trv-warn{color:var(--err)}
   .control-row{margin:.4rem 0}
   .control-row label{
     display:inline-flex;
@@ -571,6 +574,7 @@
         <hr>
         <button id="btnStatistics">Statistik</button>
         <button id="btnUploadSettings">Uppladdning</button>
+        <button id="btnTrvCheck">Trafikverket-data</button>
         <button id="btnExportCSV">Exportera CSV (Excel)</button>
         <button id="btnExport">Exportera JSON</button>
         <button id="btnSaveFile">Spara till fil</button>
@@ -764,13 +768,15 @@
 <script src="railtimer-avbrott.js"></script>
 <script src="railtimer-github.js"></script>
 <script src="railtimer-karta.js"></script>
+<script src="railtimer-trv.js"></script>
 <script>
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25g';
+  const APP_VERSION = '2026-11-25h';
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
+  const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
   const DEFAULT_RADIUS = 200;
   const EXTRA_MARGIN = 150;
   const SPEED_THRESHOLD_KMH = 2; // Sänkt från 5 - endast riktigt stopp räknas
@@ -878,6 +884,10 @@
   let overlayReturnView = null; // Vyn som var öppen innan Statistik eller Uppladdning öppnades
   let uploadPromise = null;     // pågående körning av uppladdningskön
   let afterJourneyPromise = null; // sparning av spåret och uppladdning efter senaste resan
+  let trvFetchForTest = null;     // simulerat Trafikverket i testerna (utan det hämtas inga tider i testläge)
+  let trvRetryDelayMs = 60000;    // nytt försök när Trafikverket inte hunnit rapportera slutstationen
+  const trvStatus = new Map();    // körnings-id → 'pending' | 'failed' medan tiderna saknas
+  let reportedLogId = null;       // körningen som rapporten visar
   let testFetch = null;         // simulerat GitHub i testerna
 
   // Settings
@@ -919,7 +929,8 @@
       setRailFetchForTest: fn => { railFetchForTest = fn; }, loadRailGeometry, renderRouteMap,
       scheduleUpload, whenUploadIdle, showUploadSettings, saveAndTestGithub,
       loadAllStations, stationNames: () => allStationsCache.map(s => s.name), checkForInterruptedJourney,
-      removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog
+      removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog,
+      setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; }
     };
   }
 
@@ -1436,6 +1447,11 @@
     document.getElementById('btnCloseStats').addEventListener('click', hideStatistics);
 
     // Uppladdning
+    document.getElementById('btnTrvCheck').addEventListener('click', () => {
+      closeAllMenus();
+      if(state.running){ showHeaderStatus('Öppnas när resan är klar', true); return; }
+      location.href='api-koll.html';
+    });
     document.getElementById('btnUploadSettings').addEventListener('click', () => {
       closeAllMenus();
       showUploadSettings();
@@ -2777,7 +2793,7 @@
     // Rapporten visas ensam överst; startformuläret kommer först via "Starta ny mätning"
     showView('report');
     // Spåret sparas klart innan uppladdningen läser det
-    afterJourneyPromise=flushTrack().then(afterJourneyUpload);
+    afterJourneyPromise=flushTrack().then(()=>afterJourneyTrafikverket(logEntry.id)).then(afterJourneyUpload);
   }
 
   let currentView='setup';
@@ -2811,6 +2827,7 @@
       els.reportHTML.innerHTML='<p>Ingen data att visa.</p>';
       return;
     }
+    reportedLogId=String(logEntry.id);
     const stops=logEntry.stops||[];
     const first=stops[0]||{};
     const last=stops[stops.length-1]||{};
@@ -2857,6 +2874,7 @@
       return `<div class="rl-row">
         <div class="rl-name"><span class="station-num">${idx+1}</span>${escapeHtml(st.name)}${st.shouldStop===false?' ⏩':''}</div>
         <div class="rl-times">${parts.join('')}</div>
+        ${trvReportLine(st)}
         ${st.notes?`<div class="rl-note">${escapeHtml(st.notes)}</div>`:''}
       </div>`;
     }).join('');
@@ -2889,6 +2907,7 @@
           <div><span class="rs-big">${longest?formatDuration(longest.sec):'–'}</span><span class="rs-sub">längsta uppehåll${longest?` (${escapeHtml(longest.name)})`:''}</span></div>
         </div>
         <div class="meta">${status}</div>
+        ${trvReportSummary(logEntry)}
         ${logEntry.notes?`<p class="rl-note">${escapeHtml(logEntry.notes)}</p>`:''}
       </div>
       <div class="report-list">${rows}</div>
@@ -2952,14 +2971,14 @@
     if(!GH || !settings || state.running) return Promise.resolve(null);
     const client=githubClient(settings);
     if(!client) return Promise.resolve(null);
-    uploadPromise=GH.runUploadPass({
+    uploadPromise=fillTrafikverketBeforeUpload().then(()=>GH.runUploadPass({
       client,
       repo:`${client.owner}/${client.repo}`,
       logs:loadLogs(),
       state:loadUploadState(),
       trackStore:TrackStore,
       onProgress:saveUploadState
-    }).then(result=>{
+    })).then(result=>{
       saveUploadState(result.state);
       renderUploadStatus();
       return result;
@@ -2973,6 +2992,135 @@
   // Väntar tills uppladdningen efter en resa (och en pågående körning av kön) är klar
   function whenUploadIdle(){
     return Promise.resolve(afterJourneyPromise).then(()=>uploadPromise).then(()=>null);
+  }
+
+  // ── Trafikverkets rapporterade tider (railtimer-trv.js) ──
+  // Efter resan hämtas Trafikverkets tider för tåget och sparas i körningen (run.trv, stop.trv), så att de
+  // laddas upp tillsammans med appens egna tider. Logiken för ankomst och avgång påverkas inte.
+
+  function trvFetch(){
+    if(TEST_MODE) return trvFetchForTest;
+    return typeof window.fetch==='function' ? window.fetch.bind(window) : null;
+  }
+
+  // Ändrar en sparad körning, i lagringen och i minnet (unsavedLogs), utan att röra de andra
+  function updateStoredLog(id, change){
+    const key=String(id);
+    let found=false;
+    const mem=unsavedLogs.find(l=>String(l.id)===key);
+    if(mem){ change(mem); found=true; }
+    const rawLogs=()=>{
+      try{ const r=JSON.parse(localStorage.getItem(STORAGE_KEY_LOGS)||'[]'); return Array.isArray(r)?r:[]; }
+      catch(e){ return []; }
+    };
+    if(rawLogs().some(e=>e && String(e.id)===key)){
+      // makeValue läses om efter varje steg som frigör plats
+      found=setItemWithRoom(STORAGE_KEY_LOGS, ()=>{
+        const raw=rawLogs();
+        const entry=raw.find(e=>e && String(e.id)===key);
+        if(entry) change(entry);
+        return JSON.stringify(raw);
+      }) || found;
+    }
+    return found;
+  }
+
+  // Hämtar och sparar Trafikverkets tider för en körning. Ger run.trv, eller null om hämtningen misslyckades.
+  async function attachTrafikverket(id){
+    const fetchFn=trvFetch();
+    if(!TRV || !fetchFn) return null;
+    const run=loadLogs().find(l=>String(l.id)===String(id));
+    if(!run) return null;
+    if(!TRV.needsTrafikverket(run, Date.now())) return run.trv || null;
+    trvStatus.set(String(id), 'pending');
+    refreshReportFor(id);
+    let anns;
+    try{
+      anns=await TRV.fetchRunAnnouncements(run, { fetch:fetchFn, timeoutMs:8000 });
+    }catch(e){
+      console.warn('Trafikverkets tider kunde inte hämtas', e);
+      trvStatus.set(String(id), 'failed');
+      refreshReportFor(id);
+      return null;
+    }
+    const times=TRV.trafikverketTimes(run, anns, Date.now());
+    updateStoredLog(id, entry=>TRV.applyTrafikverket(entry, times));
+    trvStatus.delete(String(id));
+    refreshReportFor(id);
+    return times.meta;
+  }
+
+  function refreshReportFor(id){
+    if(currentView!=='report' || reportedLogId!==String(id)) return;
+    const entry=loadLogs().find(l=>String(l.id)===String(id));
+    if(entry) renderReport(entry);
+  }
+
+  // Direkt efter resan, och en gång till efter en minut om slutstationen inte hunnit rapporteras
+  async function afterJourneyTrafikverket(id){
+    const meta=await attachTrafikverket(id);
+    if(meta && meta.complete===false && meta.found>0){
+      await new Promise(resolve=>setTimeout(resolve, trvRetryDelayMs));
+      if(!state.running) await attachTrafikverket(id); // aldrig under en ny resa
+    }
+  }
+
+  // Före uppladdningen: körningar som inte laddats upp än och saknar Trafikverkets tider (t.ex. utan täckning vid slutstationen)
+  async function fillTrafikverketBeforeUpload(){
+    if(!TRV || !trvFetch()) return;
+    const uploaded=uploadedRunIds();
+    const now=Date.now();
+    const pending=loadLogs().filter(l=>!uploaded.has(String(l.id)) && TRV.needsTrafikverket(l, now)).slice(-3);
+    for(const log of pending){
+      if(await attachTrafikverket(log.id)===null) break; // ingen kontakt: försök igen nästa gång
+    }
+  }
+
+  // +8 s, −24 s, ±0 s, +1:05
+  function formatSignedSeconds(sec){
+    const r=Math.round(sec);
+    const sign=r>0?'+':r<0?'−':'±';
+    const a=Math.abs(r);
+    return a>=60 ? `${sign}${Math.floor(a/60)}:${String(a%60).padStart(2,'0')}` : `${sign}${a} s`;
+  }
+
+  // Raden "Trafikverket …" under en station i rapporten
+  function trvReportLine(st){
+    const t=st.trv;
+    if(!t) return '';
+    const bits=[];
+    const one=(arrow, trvTime, appTime)=>{
+      if(!trvTime) return;
+      const d=appTime?Math.round((new Date(appTime)-new Date(trvTime))/1000):null;
+      bits.push(`${arrow} ${formatTime(trvTime)}${d!=null?` <small>appen ${formatSignedSeconds(d)}</small>`:''}`);
+    };
+    one('↓', t.arrival, st.actualArrival);
+    one('↑', t.departure, st.actualDeparture);
+    if(t.track) bits.push(`spår ${escapeHtml(t.track)}`);
+    if(t.canceled) bits.push('<span class="trv-warn">inställt</span>');
+    for(const d of (t.deviations||[]).slice(0,2)) if(!/inställ/i.test(d) || !t.canceled) bits.push(escapeHtml(d));
+    return bits.length ? `<div class="rl-trv">Trafikverket ${bits.join(' · ')}</div>` : '';
+  }
+
+  // Sammanfattningen överst i rapporten
+  function trvReportSummary(logEntry){
+    if(!TRV || !logEntry.trainNumber) return '';
+    const t=logEntry.trv;
+    if(!t){
+      const status=trvStatus.get(String(logEntry.id));
+      if(status==='pending') return '<div class="meta">Hämtar Trafikverkets tider …</div>';
+      if(status==='failed') return '<div class="meta">Trafikverkets tider kunde inte hämtas nu – nytt försök senare.</div>';
+      return '';
+    }
+    if(!t.found) return '<div class="meta">Trafikverket har inga tider för tåget.</div>';
+    const rows=TRV.compareRun(logEntry);
+    const arr=TRV.stats(rows.filter(r=>r.kind==='arrival').map(r=>r.diffS));
+    const dep=TRV.stats(rows.filter(r=>r.kind==='departure').map(r=>r.diffS));
+    const parts=[`Trafikverket: ${t.found} ${t.found===1?'station':'stationer'}`];
+    if(arr.n) parts.push(`ankomst appen ${formatSignedSeconds(arr.median)}`);
+    if(dep.n) parts.push(`avgång appen ${formatSignedSeconds(dep.median)} (median)`);
+    if(t.complete===false) parts.push('alla tider är inte rapporterade än');
+    return `<div class="meta" id="trvSummary">${parts.join(' · ')}</div>`;
   }
 
   // Efter en avslutad resa: ladda upp och berätta hur det gick
@@ -3943,7 +4091,8 @@
   function logsCsv(logs){
     // Schema Ank/Avg är tågorderns tider när de finns (kolumnen Tidtabell säger vilka); de annonserade står sist.
     // Utan tågorderns tider är Schema Ank tom vid mellanstationer där annonserad ankomst = avgång (se planArr).
-    const rows=[['Datum','Tåg','Fordon','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa','Tidtabell','Annonserad Ank','Annonserad Avg']];
+    // TrV-kolumnerna är Trafikverkets rapporterade tider (stop.trv, hämtade efter resan).
+    const rows=[['Datum','Tåg','Fordon','Från','Till','Station','Ordning','Ankomst','Avgång','Schema Ank','Schema Avg','Försenad (min)','Källa','Tidtabell','Annonserad Ank','Annonserad Avg','TrV ankomst','TrV avgång','TrV spår']];
     const clock=v=>v?new Date(v).toLocaleTimeString('sv-SE'):'';
     logs.forEach(log=>{
       const logDate=log.startedAt?new Date(log.startedAt).toLocaleDateString('sv-SE'):'';
@@ -3963,7 +4112,8 @@
         }
         const source=st.arrivalSource||'';
         const basis=hasOperationalTimes(st) ? 'tågorder' : (st.scheduledArrival||st.scheduledDeparture ? 'annonserad' : '');
-        rows.push([logDate,trainNum,vehicleType,fromSt,toSt,st.name,idx+1,arr,dep,schArr,schDep,delay,source,basis,clock(st.scheduledArrival),clock(st.scheduledDeparture)]);
+        const trv=st.trv||{};
+        rows.push([logDate,trainNum,vehicleType,fromSt,toSt,st.name,idx+1,arr,dep,schArr,schDep,delay,source,basis,clock(st.scheduledArrival),clock(st.scheduledDeparture),clock(trv.arrival),clock(trv.departure),trv.track||'']);
       });
     });
     return rows.map(r=>r.map(c=>'"'+(c+'').replace(/"/g,'""')+'"').join(';')).join('\n');
@@ -4344,8 +4494,8 @@
         excludeInboundRun: !!(stop.excludeInboundRun || stop.exclude),
         notes: stop.notes || ''
       };
-      // Fält från format 2 och 3 bevaras när de finns
-      for(const key of ['sig','lat','lon','radius','arrivalWindow','departureWindow','missedReason','operationalArrival','operationalDeparture']){
+      // Fält från format 2 och 3 bevaras när de finns, och Trafikverkets rapporterade tider (trv)
+      for(const key of ['sig','lat','lon','radius','arrivalWindow','departureWindow','missedReason','operationalArrival','operationalDeparture','trv']){
         if(stop[key]!==undefined) out[key]=stop[key];
       }
       return out;
@@ -4363,7 +4513,7 @@
       notes: entry.notes || entry.note || '',
       stops: normalizedStops
     };
-    for(const key of ['format','appVersion','interruptions','trackPath']){
+    for(const key of ['format','appVersion','interruptions','trackPath','trv']){
       if(entry[key]!==undefined) out[key]=entry[key];
     }
     return out;
