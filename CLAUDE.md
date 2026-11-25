@@ -1185,3 +1185,46 @@ Appversion `2026-11-25r`.
   - *info: banarbeten och händelser på andra banor visas inte, men sparas i körningen med varför*.
 - Bilder: `--shot=startformular`, `--shot=nasta-tur` och `--shot=info-tur`.
 - Inte provat på telefon: rösten (Safari och Chrome), att GPS:en fortsätter i startformuläret med skärmen vaken, och starten när ett riktigt tåg rullar. Kontrollera vid första resan att raden under Start-knappen syns och att resan startar efter några hundra meter.
+
+## Uppdatering (2026-11-25s): mötande tågets position, anslutningar längs vägen och utrop
+
+André 2026-11-25: fortsättning på "Gör allt" (se 2026-11-25r). Appversion `2026-11-25s`.
+
+### Mötande tågets position (TrainPosition)
+- Efter varje hämtning frågas Trafikverket om senaste positionen för de mötande tågen, högst 8 (`queryPositions`, TrainPosition 1.1 i namespace `järnväg.trafikinfo`, som kontrollsidan provade 2026-11-25j).
+  - `parsePositions` ger senaste positionen per tågnummer: läge (`Position.WGS84`), tid och fart (`Speed` finns för ungefär hälften).
+  - Godtar Trafikverket inte frågan hämtas inga positioner resten av resan (`positionsOff`). Infon fungerar som förut.
+- **Läget** i förhållande till mötesplatsen (`positionAt`): avståndet fågelvägen och sidan. Jämförelsen görs från vår GPS-position, eller senaste platsen vi passerat.
+  - *beyond*: tåget är fortfarande på andra sidan mötesplatsen.
+  - *at*: inom 500 m.
+  - *passed*: mellan oss och mötesplatsen.
+  - Positioner äldre än 5 min används inte (`positionMaxAgeMs`).
+- **Undre gräns för ankomsten**: är tåget på andra sidan kan det inte vara framme förrän tidigast efter avståndet i 200 km/h (`maxSpeedMs`). Är det senare än Trafikverkets tid gäller gränsen, med källan *räknat från tågets position*.
+  - Gränsen gör aldrig prognosen för tidig. *passed* ändrar inte prognosen, eftersom fågelvägen kan lura nära stationer; det visas bara.
+- **Visas** i mötesraden: *3,9 km från Råbäck · 0 km/h · 30 s sedan*, *vid Råbäck* eller *har passerat Råbäck mot oss*. Positionen sparas med mötet i körningen (`info.meetings[].position`).
+- **Lägen för driftplatser**: namnfrågan hämtar även `Geometry.WGS84` (`queryNames`). Läget sparas i `railtimer_sig_coords_v1` (0 = okänt, frågas inte igen).
+
+### Anslutningar längs vägen
+- Vid varje station där vi stannar och inte har åkt från (`stops` i `compute`) visas:
+  - tåg som går därifrån åt ett annat håll högst 20 min efter vår ankomst (`midConnectionWindowMin`);
+  - tåg som kommer dit högst 20 min före vår avgång och ansluter till oss.
+- Samma regler som i slutstationen: tåg längs vår linje räknas inte, och bytestiden gäller per station (`transferBySig`, förval 4 min).
+- Avsnittet *Anslutningar längs vägen* i Info, till exempel *Blomberg → Mariestad, missas, 3 min att byta*.
+- De räknas i siffran på fliken, i panelens rad (*N anslutningar missas*) och i meddelandena, som läses upp: *Anslutningen i Blomberg mot Mariestad hinns inte.*
+
+### Utrop (`announcement`)
+- Färdig text för högtalaren när vi beräknas vara minst 3 min sena, eller när en anslutning i slutstationen blir knapp eller missas. Avsnittet *Utrop* överst i Info, med **Svenska/English** och **Kopiera**.
+- Exempel: *Vi är cirka 6 minuter försenade på grund av möte med ett försenat tåg. Beräknad ankomst till Herrljunga C 11:46. Tåget mot Göteborg C 11:45 hinns tyvärr inte. Tåget mot Borås C 11:55 hinner ni, det går från spår 3.*
+- **Orsaken** anges bara när den är känd: väntan på ett försenat mötande tåg i minst 2 min, annars den första störningen som visas (rubriken). Annars utan orsak.
+- **Anslutningar**: missade, eller redan avgångna, högst 3; knappa, högst 3; och de som hinns, högst 2, bara när vi är sena.
+- Tider avrundade till hel minut, spår när Trafikverket anger det.
+
+### Tester
+- `node --test "tests/*.test.js"` (162), nya i `tests/railtimer-info.test.js`:
+  - *position: mötande tåg långt bort på andra sidan mötesplatsen …*;
+  - *position: mötande tåg som redan passerat mötesplatsen mot oss …*;
+  - *anslutningar längs vägen: …*;
+  - *utrop: …*.
+- `node tests/run-browser-tests.mjs` (111), nytt: *info: mötande tågets position, anslutningar längs vägen och färdigt utrop*.
+- Bild: `--shot=info-utrop`.
+- Inte provat mot riktiga svar: positionsfrågan med flera tågnummer (OR-filter på `Train.OperationalTrainNumber`), och anslutningar vid mellanstationer med riktiga tåg. Kontrollera vid nästa resa med möte att mötesraden visar avståndet.

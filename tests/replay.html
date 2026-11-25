@@ -1960,9 +1960,10 @@ function fakeTrafikverketInfo(route, opts) {
       return { ok: false, status: 400, json: async () => ({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Query', MESSAGE: 'Okänt fält: LocationDateTimeOTN' } }] } }) };
     }
     if (body.includes('objecttype="OperativeEvent"')) return resp({ RESPONSE: { RESULT: [{ OperativeEvent: o.messages || [] }] } });
+    if (body.includes('objecttype="TrainPosition"')) return resp({ RESPONSE: { RESULT: [{ TrainPosition: o.positions || [] }] } });
     if (body.includes('objecttype="TrainStation"')) return resp({ RESPONSE: { RESULT: [{ TrainStation: [{ LocationSignature: 'Mst', AdvertisedLocationName: 'Mariestad' }] }] } });
     if (body.includes('name="OperationalTrainNumber"')) return resp({ RESPONSE: { RESULT: [{ TrainAnnouncement: only(ours, body) }] } });
-    return resp({ RESPONSE: { RESULT: [{ TrainAnnouncement: only(ours.concat(meet, conns), body) }] } });
+    return resp({ RESPONSE: { RESULT: [{ TrainAnnouncement: only(ours.concat(meet, conns, o.extraRows ? o.extraRows(row, dest) : []), body) }] } });
   };
   return { fetch, calls };
 }
@@ -2243,6 +2244,36 @@ test('info: banarbeten och händelser på andra banor visas inte, men sparas i k
   const events = logs[logs.length - 1].info.events;
   assertEqual(events.map(e => [e.id, e.shown, e.reason]).sort(), [['o', false, 'annan bana'], ['s', true, ''], ['w', false, 'planerat arbete']], 'alla tre sparas');
   assert(events.find(e => e.id === 'w').raw.includes('"FromLocation"'), 'med Trafikverkets original');
+});
+
+test('info: mötande tågets position, anslutningar längs vägen och färdigt utrop', async () => {
+  const r0 = await midJourney();
+  const now = r0.w.Date.now();
+  const route = r0.rt.state.route;
+  const B = Date.parse(route[3].scheduledArrival);
+  const trv = fakeTrafikverketInfo(route, {
+    positions: [{ Train: { OperationalTrainNumber: '3347' }, Position: { WGS84: `POINT (${STATIONS[5][2]} ${STATIONS[5][1]})` }, TimeStamp: new Date(now - 30000).toISOString(), Speed: 0 }],
+    extraRows: (row, dest) => [row('3071', 'Bmb', 'Avgang', B + 6 * 60000, dest('Mst'))]
+  });
+  r0.w.fetch = trv.fetch;
+  await r0.rt.refreshInfo();
+  await realSleep(100);
+  r0.rt.setInfoTab('info');
+  const pane = () => r0.w.document.getElementById('infoPane').textContent;
+  assert(trv.calls.some(b => b.includes('objecttype="TrainPosition"') && b.includes('value="3347"')), 'positionen för det mötande tåget hämtas');
+  assert(/km från Råbäck · 0 km\/h · 30 s sedan/.test(pane()), pane());
+  assert(pane().includes('Anslutningar längs vägen') && pane().includes('Blomberg → Mariestad'), pane());
+  // Utropet: sena på grund av mötet, och anslutningen i Hällekis som missas
+  const sv = r0.w.document.getElementById('utropText').textContent;
+  assert(sv.startsWith('Vi är cirka') && sv.includes('på grund av möte med ett försenat tåg') && sv.includes('Beräknad ankomst till Hällekis'), sv);
+  assert(sv.includes('hinns tyvärr inte'), sv);
+  r0.w.document.querySelector('[data-info="utrop-en"]').click();
+  assert(r0.w.document.getElementById('utropText').textContent.startsWith('We are approximately'), 'engelska');
+  r0.rt.stopJourney(false, 'test');
+  await realSleep(100);
+  const logs = r0.rt.loadLogs();
+  const mt = logs[logs.length - 1].info.meetings[0];
+  assertEqual(mt.position.side, 'beyond', 'positionen sparas med mötet');
 });
 
 // ── Automatisk start, uppläsning och dagens tur (2026-11-25q) ──
@@ -2759,6 +2790,23 @@ window.prepareShot = async function (name) {
       },
       afterStart: async rt => { rt.saveTour(['3344', '3346']); await rt.fetchNextTour(); }
     });
+  } else if (name === 'info-utrop') {
+    // Infofliken med utrop, mötande tågets position och anslutningar längs vägen
+    const frame = document.getElementById('app');
+    frame.style.height = '1300px';
+    const r0 = await midJourney();
+    const now = r0.w.Date.now();
+    const route = r0.rt.state.route;
+    const B = Date.parse(route[3].scheduledArrival);
+    const trv = fakeTrafikverketInfo(route, {
+      positions: [{ Train: { OperationalTrainNumber: '3347' }, Position: { WGS84: `POINT (${STATIONS[5][2]} ${STATIONS[5][1]})` }, TimeStamp: new Date(now - 30000).toISOString(), Speed: 0 }],
+      extraRows: (row, dest) => [row('3071', 'Bmb', 'Avgang', B + 6 * 60000, dest('Mst'))]
+    });
+    r0.w.fetch = trv.fetch;
+    await r0.rt.refreshInfo();
+    await realSleep(100);
+    r0.w.document.getElementById('journeyMsg').style.display = 'none';
+    r0.rt.setInfoTab('info');
   } else if (name === 'info-tur') {
     const r = await midJourneyWithInfo();
     r.rt.saveTour(['3344', '3346']);

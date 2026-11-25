@@ -212,6 +212,9 @@
   .transfer-ctl{display:inline-flex;align-items:center;gap:.3rem;text-transform:none;letter-spacing:0;font-weight:500;font-size:.75rem;color:var(--ink-dim);white-space:nowrap}
   .transfer-ctl button{padding:.05rem .55rem;font-size:.9rem;line-height:1.3}
   .info-foot{font-size:.7rem;color:var(--mut);padding:.5rem .7rem;margin:0;border-top:1px solid var(--b)}
+  .utrop{margin:0;padding:.5rem .7rem;font-size:.9rem;line-height:1.4;color:var(--ink);border-left:3px solid var(--pri)}
+  .utrop-ctl button{padding:.15rem .5rem;font-size:.75rem;margin-left:.3rem}
+  .utrop-ctl button[aria-pressed="true"]{border-color:var(--pri);color:var(--pri)}
   .cards{display:flex;flex-direction:column}
   .card{
     border-bottom:1px solid var(--b);
@@ -854,7 +857,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25r'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25s'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -3008,19 +3011,51 @@
     if(!sig) return '';
     return knownSigName(sig) || loadSigNames()[sig] || sig;
   }
-  // Namn för driftplatser och destinationer som inte finns i appens stationslista
-  async function fetchMissingNames(sigs){
+  // Lägen för platserna på linjen (för mötande tågs position): resans stationer, stationslistan och sparade driftplatser
+  const STORAGE_KEY_SIG_COORDS = 'railtimer_sig_coords_v1'; // { sig: [lat, lon] } eller 0 = okänt läge
+  let sigCoords=null;
+  function loadSigCoords(){
+    if(!sigCoords){
+      try{ sigCoords=JSON.parse(localStorage.getItem(STORAGE_KEY_SIG_COORDS)||'{}')||{}; }catch(e){ sigCoords={}; }
+    }
+    return sigCoords;
+  }
+  function coordOf(sig){
+    const r=state.route.find(st=>st.sig===sig && st.baseLat!=null);
+    if(r) return { lat:r.baseLat, lon:r.baseLon };
+    const st=allStationsCache.find(x=>x.sig===sig && x.lat!=null);
+    if(st) return { lat:st.lat, lon:st.lon };
+    const c=loadSigCoords()[sig];
+    return Array.isArray(c) ? { lat:c[0], lon:c[1] } : null;
+  }
+  function lineCoords(){
+    const out=new Map();
+    for(const l of infoState.line||[]){ const c=coordOf(l.sig); if(c) out.set(l.sig, c); }
+    return out;
+  }
+  // Namn för driftplatser och destinationer som inte finns i appens stationslista, och läget för linjens platser
+  async function fetchMissingNames(sigs, coordSigs){
     const names=loadSigNames();
-    const missing=Array.from(new Set(sigs)).filter(s=>s && !names[s] && !knownSigName(s)).slice(0, 80);
+    const coords=loadSigCoords();
+    const needCoord=new Set((coordSigs||[]).filter(s=>s && coords[s]===undefined && !coordOf(s)));
+    const missing=Array.from(new Set(sigs.concat(Array.from(needCoord)))).filter(s=>s && ((!names[s] && !knownSigName(s)) || needCoord.has(s))).slice(0, 80);
     if(!missing.length || infoState.namesPending || !INFO) return;
     infoState.namesPending=true;
     try{
       const data=await trvRequest([INFO.queryNames(missing)]);
       const r=INFO.resultOf(data, 0, 'TrainStation');
       if(r.error) return;
-      for(const st of r.list) if(st.LocationSignature && st.AdvertisedLocationName) names[st.LocationSignature]=st.AdvertisedLocationName;
-      for(const s of missing) if(!names[s]) names[s]=s; // okänd: fråga inte igen
+      for(const st of r.list){
+        if(st.LocationSignature && st.AdvertisedLocationName) names[st.LocationSignature]=st.AdvertisedLocationName;
+        const pt=INFO.wgs84(st.Geometry && st.Geometry.WGS84);
+        if(st.LocationSignature && pt) coords[st.LocationSignature]=[pt.lat, pt.lon];
+      }
+      for(const s of missing){
+        if(!names[s]) names[s]=s; // okänd: fråga inte igen
+        if(needCoord.has(s) && coords[s]===undefined) coords[s]=0;
+      }
       try{ localStorage.setItem(STORAGE_KEY_SIG_NAMES, JSON.stringify(names)); }catch(e){}
+      try{ localStorage.setItem(STORAGE_KEY_SIG_COORDS, JSON.stringify(coords)); }catch(e){}
       renderInfo();
     }catch(e){
       console.warn('Kunde inte hämta namn på platser', e);
@@ -3074,7 +3109,8 @@
   function startInfo(){
     stopInfo();
     Object.assign(infoState, { our:null, ourKey:null, line:null, trains:null, fetchedAt:null, error:null, messages:[], messagesAt:0,
-      model:null, lastHtml:'', notified:new Map(), meetLog:new Map(), eventLog:new Map(), safeFields:false });
+      model:null, lastHtml:'', notified:new Map(), meetLog:new Map(), eventLog:new Map(), safeFields:false,
+      positions:new Map(), positionsOff:false, utropLang:infoState.utropLang||'sv' });
     infoState.history = INFO ? INFO.historyMedians(allRuns()) : null; // även körningar hämtade från GitHub
     setInfoTab('stations');
     renderInfo();
@@ -3130,13 +3166,33 @@
     }
     // Namn på driftplatser och destinationer först, så att meddelandena har namn i stället för signaturer
     if(infoState.line && infoState.trains){
-      const sigs=infoState.line.map(l=>l.sig);
-      const ends=[infoState.line[0].sig, infoState.line[infoState.line.length-1].sig];
-      for(const tr of infoState.trains.values()) if(ends.some(s=>tr.at.has(s))) sigs.push(...tr.to, ...tr.from);
-      await fetchMissingNames(sigs);
+      const lineSigs=infoState.line.map(l=>l.sig);
+      const sigs=lineSigs.slice();
+      const stopSigs=new Set(infoState.line.filter(l=>l.stop).map(l=>l.sig)); // anslutningar finns vid alla stopp
+      for(const tr of infoState.trains.values()) if(Array.from(stopSigs).some(s=>tr.at.has(s))) sigs.push(...tr.to, ...tr.from);
+      await fetchMissingNames(sigs, lineSigs);
     }
     updateInfo();
+    await refreshPositions();
     if(infoState.line && now-infoState.messagesAt>=INFO_MESSAGES_MS) refreshTrainMessages(now);
+  }
+
+  /* Mötande tågs senaste position (TrainPosition), en gång per hämtning. Godtar Trafikverket inte frågan
+     hämtas inga positioner resten av resan; infon fungerar som förut utan dem. */
+  async function refreshPositions(){
+    const m=infoState.model;
+    if(!INFO || infoState.positionsOff || !m || !m.meetings.length) return;
+    const otns=Array.from(new Set(m.meetings.filter(x=>!x.canceled).map(x=>x.otn))).slice(0, 8);
+    if(!otns.length) return;
+    try{
+      const r=INFO.resultOf(await trvRequest([INFO.queryPositions(otns)]), 0, 'TrainPosition');
+      if(r.error) throw infoError('api', r.error);
+      infoState.positions=INFO.parsePositions(r.list);
+      updateInfo();
+    }catch(e){
+      if(e.kind==='api' || e.kind==='http'){ infoState.positionsOff=true; console.warn('Tågpositioner: Trafikverket godtog inte frågan', e.message); }
+      else console.warn('Tågpositioner kunde inte hämtas', e);
+    }
   }
 
   // Störningar och banarbeten (OperativeEvent, pågående i hela landet) var 10:e minut; går det inte visas fliken ändå
@@ -3170,10 +3226,13 @@
       const routeNames=new Map(state.route.filter(s=>s.sig).map(s=>[s.sig, s.name]));
       const endSig=infoState.line[infoState.line.length-1].sig;
       try{
+        const lp=state.lastPosition;
+        const ourPos = lp && state.lastFixTime && Date.now()-state.lastFixTime<60000 ? { lat:lp.coords.latitude, lon:lp.coords.longitude } : null;
         model=INFO.compute({
           line:infoState.line, trains:infoState.trains, ourKey:infoState.ourKey, known, now:Date.now(),
           transferMin:transferMinFor(endSig), knownDouble:loadInfoSettings().double,
-          history:infoState.history, routeNames, messages:infoState.messages
+          history:infoState.history, routeNames, messages:infoState.messages,
+          positions:infoState.positions, coords:lineCoords(), ourPos, transferBySig:loadInfoSettings().transfer
         });
       }catch(e){
         console.error('Infofliken: fel i beräkningen', e);
@@ -3197,7 +3256,8 @@
         sig:m.sig, name:sigName(m.sig), train:m.ident||m.otn,
         theirPlanned:new Date(m.their.planned).toISOString(),
         theirDelayMin:m.theirDelayMin, theirSource:m.their.source,
-        waitMin:m.waitMin, single:m.single, canceled:m.canceled, moved:m.moved
+        waitMin:m.waitMin, single:m.single, canceled:m.canceled, moved:m.moved,
+        ...(m.position ? { position:{ distM:m.position.distM, side:m.position.side, ageS:m.position.ageS, speedKmh:m.position.speedKmh } } : {})
       });
     }
   }
@@ -3254,7 +3314,8 @@
     if(m.end.arrived) parts.push(`Framme i ${endName}`);
     else parts.push(`${endName} ${roundClock(m.end.predArr)} ${d===0?'i tid':(d>0?'+'+d:'−'+(-d))}`);
     if(m.reason && !m.end.arrived) parts.push(`möte ${sigName(m.reason.sig)}`);
-    if(m.missed) parts.push(`${m.missed} anslutning${m.missed>1?'ar':''} missas`);
+    const missed=m.missed+(m.midMissed||0);
+    if(missed) parts.push(`${missed} anslutning${missed>1?'ar':''} missas`);
     else if(m.tight) parts.push(`${m.tight} knapp${m.tight>1?'a':''} anslutning${m.tight>1?'ar':''}`);
     if(m.deviations.length) parts.push(m.deviations[0].text);
     if(m.messages.length) parts.push(m.messages[0].header);
@@ -3269,7 +3330,17 @@
   }
 
   function sourceText(src){
-    return { 'faktisk':'rapporterat', 'trafikverket':'enligt Trafikverket', 'senast':'räknat från senaste rapporten', 'plan':'enligt tidtabell' }[src] || '';
+    return { 'faktisk':'rapporterat', 'trafikverket':'enligt Trafikverket', 'senast':'räknat från senaste rapporten', 'plan':'enligt tidtabell',
+      'position':'räknat från tågets position' }[src] || '';
+  }
+  // "4,2 km från Vara · 85 km/h · 30 s sedan", "vid Vara" eller "har passerat Vara mot oss"
+  function positionText(p, place){
+    if(!p) return '';
+    const age = p.ageS<90 ? `${p.ageS} s sedan` : `${Math.round(p.ageS/60)} min sedan`;
+    const speed = p.speedKmh!=null ? ` · ${Math.round(p.speedKmh)} km/h` : '';
+    if(p.side==='at') return `vid ${place}${speed} · ${age}`;
+    if(p.side==='passed') return `har passerat ${place} mot oss · ${age}`;
+    return `${formatDistance(p.distM)} från ${place}${speed} · ${age}`;
   }
 
   function meetingRow(m, line){
@@ -3278,6 +3349,7 @@
     const their = m.canceled ? 'inställt' : (m.theirDelayMin>0 ? `${m.theirDelayMin} min sent` : 'i tid');
     const sub=[
       `${escapeHtml(m.ident||m.otn)} ${their}${m.canceled?'':' ('+sourceText(m.their.source)+')'}`,
+      m.position ? escapeHtml(positionText(m.position, sigName(m.sig))) : '',
       m.single ? 'enkelspår' : 'dubbelspår',
       m.moved ? 'mötet flyttat närmare oss' : '',
       m.waitMin>=1 ? `vi avgår ca ${roundClock(m.ourDep)}` : ''
@@ -3327,6 +3399,17 @@
       `${m.reason && !m.end.arrived ? `<span class="ih-why">möte i ${escapeHtml(sigName(m.reason.sig))}</span>` : ''}</div>` +
       `<div class="ih-sub">${sub}</div></div>`;
 
+    // Färdig text att ropa ut när vi är sena eller en anslutning påverkas
+    const ut=INFO.announcement(m, { name:sigName, clock:roundClock });
+    if(ut){
+      const lang=infoState.utropLang==='en' ? 'en' : 'sv';
+      html+=`<div class="info-sec"><span>Utrop</span><span class="utrop-ctl">` +
+        `<button type="button" data-info="utrop-sv" aria-pressed="${lang==='sv'}">Svenska</button>` +
+        `<button type="button" data-info="utrop-en" aria-pressed="${lang==='en'}">English</button>` +
+        `<button type="button" data-info="utrop-copy">Kopiera</button></span></div>` +
+        `<p class="utrop" id="utropText">${escapeHtml(ut[lang])}</p>`;
+    }
+
     // Nästa tåg i dagens tur och vändtiden dit
     const tour=tourStatus();
     if(tour) html+=`<div class="info-sec"><span>Nästa tur</span></div>${tourRowHtml(tour)}`;
@@ -3349,6 +3432,16 @@
     rows.sort((a,b)=>a.i-b.i);
     html+=`<div class="info-sec"><span>Längs vägen</span></div>`;
     html+= rows.length ? rows.map(r=>r.html).join('') : '<div class="info-empty">Inga möten eller störningar framför oss.</div>';
+
+    // Anslutningar vid stationerna längs vägen: tåg därifrån efter vår ankomst och tåg som ansluter till oss där
+    if(m.stops && m.stops.length){
+      html+=`<div class="info-sec"><span>Anslutningar längs vägen</span></div>`;
+      for(const st of m.stops){
+        const where=escapeHtml(sigName(st.sig));
+        for(const c of st.connections) html+=infoRow(c.level, roundClock(c.adv), `${where} → ${escapeHtml(placesText(c.to)||'?')}`, connectionSub(c), connectionStatusHtml(c, false));
+        for(const c of st.incoming) html+=infoRow(c.level, roundClock(c.adv), `${where}: från ${escapeHtml(placesText(c.from)||'?')} till oss`, connectionSub(c), connectionStatusHtml(c, true));
+      }
+    }
 
     // Tåg som ansluter till oss i startstationen (bara före avgång)
     if(m.incoming && m.incoming.length){
@@ -3410,6 +3503,17 @@
   function handleInfoClick(ev){
     const btn=ev.target.closest('[data-info]');
     if(!btn || !infoState.line) return;
+    if(btn.dataset.info==='utrop-sv' || btn.dataset.info==='utrop-en'){
+      infoState.utropLang=btn.dataset.info.slice(6);
+      renderInfo();
+      return;
+    }
+    if(btn.dataset.info==='utrop-copy'){
+      const text=(document.getElementById('utropText')||{}).textContent||'';
+      const done=()=>showJourneyMessage('Utropet kopierat', false);
+      if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, ()=>showJourneyMessage('Kunde inte kopiera', true));
+      return;
+    }
     const endSig=infoState.line[infoState.line.length-1].sig;
     const cur=transferMinFor(endSig);
     if(btn.dataset.info==='transfer-') setTransferMin(endSig, cur-1);
@@ -3435,6 +3539,15 @@
     for(const c of m.incoming||[]) if(c.level) add(`i|${c.otn}`, c.level,
       `${trainText(c)} från ${placesText(c.from)}: ${c.status==='knappt'?'knappt byte till oss':(c.status==='inställt'?'inställt':'hinner inte till oss')}`,
       `Tåget från ${placesText(c.from)} ${c.status==='knappt'?'ger ett knappt byte till oss':(c.status==='inställt'?'är inställt':'hinner inte till oss')}.`);
+    for(const st of m.stops||[]){
+      const where=sigName(st.sig);
+      for(const c of st.connections) if(c.level) add(`c|${c.otn}|${st.sig}`, c.level,
+        `Anslutning i ${where} ${roundClock(c.adv)} ${placesText(c.to)}: ${c.status==='knappt'?`knappt (${Math.max(c.transferMin,0)} min)`:c.status}`,
+        `Anslutningen i ${where} mot ${placesText(c.to)} ${({ knappt:'blir knapp', missas:'hinns inte', 'avgått':'har gått', 'inställt':'är inställd' })[c.status]||c.status}.`);
+      for(const c of st.incoming) if(c.level) add(`i|${c.otn}|${st.sig}`, c.level,
+        `${trainText(c)} från ${placesText(c.from)} till oss i ${where}: ${c.status==='knappt'?'knappt':(c.status==='inställt'?'inställt':'hinner inte')}`,
+        `Tåget från ${placesText(c.from)} ${c.status==='knappt'?'ger ett knappt byte till oss':(c.status==='inställt'?'är inställt':'hinner inte till oss')} i ${where}.`);
+    }
     for(const d of m.deviations) add(`d|${d.sig}|${d.text}`, 1, `${sigName(d.sig)}: ${d.text}`, `${sigName(d.sig)}: ${d.text}.`);
     for(const msg of m.messages) add(`t|${msg.id}`, 1, msg.header, `${msg.header}.`);
     const t=tourStatus();

@@ -41,9 +41,12 @@ function setup(rows, opts) {
   return I.compute({
     line, trains, ourKey: our.key, known, now: o.now != null ? o.now : at('10:55'),
     transferMin: o.transferMin, knownDouble: o.knownDouble, history: o.history, routeNames: ROUTE,
-    messages: o.messages
+    messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos, transferBySig: o.transferBySig
   });
 }
+// Ungefärliga lägen längs linjen (norr → söder)
+const COORDS = new Map([['Lkp', { lat: 58.505, lon: 13.164 }], ['Jp', { lat: 58.385, lon: 12.968 }], ['Vr', { lat: 58.262, lon: 12.955 }],
+  ['Vdm', { lat: 58.172, lon: 12.99 }], ['Hr', { lat: 58.08, lon: 13.03 }]]);
 
 test('linjen: vårt tågs platser i tidsordning, utan ankomst i start och avgång i slut', () => {
   const trains = I.groupTrains(OUR());
@@ -310,4 +313,72 @@ test('det mötande tågets ankomst ligger aldrig före nu om det inte kommit', (
   const tr = trains.get('24360|2026-11-25');
   assert.equal(I.theirArrival(tr, 'Vr', at('11:24')).t, at('11:24'));
   assert.equal(I.theirArrival(tr, 'Vr', at('11:00')).t, at('11:20'));
+});
+
+
+test('position: mötande tåg långt bort på andra sidan mötesplatsen kan inte vara framme i tid', () => {
+  // 11:19 och 24360 står fortfarande i Herrljunga, ca 20 km från Vara: tidigast framme ca 11:25 även i 200 km/h
+  const known = { Lkp: { dep: at('11:00') }, Jp: { arr: at('11:10'), dep: at('11:11') } };
+  const positions = I.parsePositions([
+    { Train: { OperationalTrainNumber: '24360' }, Position: { WGS84: 'POINT (13.03 58.08)' }, TimeStamp: T('11:19'), Speed: 0 },
+    { Train: { OperationalTrainNumber: '24360' }, Position: { WGS84: 'POINT (13.0 58.1)' }, TimeStamp: T('11:10') }
+  ]);
+  assert.equal(positions.get('24360').t, at('11:19'), 'senaste positionen');
+  const m = setup(MEET(), { now: at('11:19'), known, positions, coords: COORDS });
+  const mt = m.meetings[0];
+  assert.equal(mt.position.side, 'beyond');
+  assert.ok(mt.position.distM > 19000 && mt.position.distM < 21000, String(mt.position.distM));
+  assert.equal(mt.their.source, 'position');
+  assert.ok(mt.waitMin >= 5, `vi väntar (${mt.waitMin} min)`);
+});
+
+test('position: mötande tåg som redan passerat mötesplatsen mot oss visas, men ändrar inte prognosen', () => {
+  const known = { Lkp: { dep: at('11:00') }, Jp: { arr: at('11:10'), dep: at('11:11') } };
+  const positions = I.parsePositions([{ Train: { OperationalTrainNumber: '24360' }, Position: { WGS84: 'POINT (12.96 58.32)' }, TimeStamp: T('11:14') }]);
+  const m = setup(MEET(), { now: at('11:15'), known, positions, coords: COORDS });
+  assert.equal(m.meetings[0].position.side, 'passed');
+  assert.equal(m.meetings[0].their.source, 'plan');
+  // Gammal position används inte
+  const old = setup(MEET(), { now: at('11:25'), known, positions, coords: COORDS });
+  assert.equal(old.meetings.length ? old.meetings[0].position : null, null);
+  assert.ok(I.queryPositions(['24360']).includes('namespace="järnväg.trafikinfo" objecttype="TrainPosition" schemaversion="1.1"'));
+  assert.ok(I.queryNames(['Vr']).includes('<INCLUDE>Geometry.WGS84</INCLUDE>'));
+});
+
+test('anslutningar längs vägen: tåg från Vara åt annat håll efter vår ankomst, och tåg som kommer dit före vår avgång', () => {
+  const to = sig => ({ ToLocation: [{ LocationName: sig, Priority: 1, Order: 0 }] });
+  const rows = [
+    ann('X2', 'Vr', 'd', '11:24', to('Sk')),  // 4 min efter vår ankomst: knappt
+    ann('X1', 'Vr', 'd', '11:30', to('G')),   // 10 min: ok
+    ann('X9', 'Vr', 'd', '11:50', to('G')),   // 30 min: utanför fönstret
+    ann('X3', 'Vr', 'a', '11:15', { FromLocation: [{ LocationName: 'Sk', Priority: 1, Order: 0 }] }) // till oss, 6 min före avgång
+  ];
+  const m = setup(rows);
+  assert.equal(m.stops.length, 1);
+  const st = m.stops[0];
+  assert.equal(st.sig, 'Vr');
+  assert.deepEqual(st.connections.map(c => [c.otn, c.status]), [['X2', 'knappt'], ['X1', 'ok']]);
+  assert.deepEqual(st.incoming.map(c => [c.otn, c.status]), [['X3', 'ok']]);
+  assert.equal(m.attention, 1, 'den knappa räknas');
+  // Egen bytestid för Vara
+  const m2 = setup(rows, { transferBySig: { Vr: 2 } });
+  assert.deepEqual(m2.stops[0].connections.map(c => c.status), ['ok', 'ok']);
+  // Har vi åkt från Vara visas inga anslutningar där
+  const passed = setup(rows, { now: at('11:22'), known: { Lkp: { dep: at('11:00') }, Jp: { arr: at('11:10'), dep: at('11:11') }, Vr: { arr: at('11:20'), dep: at('11:21') } } });
+  assert.equal(passed.stops.length, 0);
+});
+
+test('utrop: försening med orsak, beräknad ankomst och anslutningar – på svenska och engelska', () => {
+  const to = sig => ({ ToLocation: [{ LocationName: sig, Priority: 1, Order: 0 }], TrackAtLocation: '3' });
+  const conns = [ann('G1', 'Hr', 'd', '11:45', to('G')), ann('B1', 'Hr', 'd', '11:55', to('Bo'))];
+  const known = { Lkp: { dep: at('11:00') }, Jp: { arr: at('11:10'), dep: at('11:11') } };
+  const m = setup(MEET({ Vdm: { d: { TimeAtLocationWithSeconds: T('11:20') } } }).concat(conns), { now: at('11:12'), known });
+  const names = new Map([...ROUTE, ['G', 'Göteborg C'], ['Bo', 'Borås C']]);
+  const clock = t => new Date(Math.round(t / 60000) * 60000).toTimeString().slice(0, 5);
+  const a = I.announcement(m, { name: s => names.get(s) || s, clock });
+  assert.equal(a.sv, 'Vi är cirka 6 minuter försenade på grund av möte med ett försenat tåg. Beräknad ankomst till Herrljunga C 11:46. ' +
+    'Tåget mot Göteborg C 11:45 hinns tyvärr inte. Tåget mot Borås C 11:55 hinner ni, det går från spår 3.');
+  assert.ok(a.en.startsWith('We are approximately 6 minutes late due to a delayed oncoming train. Expected arrival at Herrljunga C 11:46.'), a.en);
+  // I tid och inga anslutningar som påverkas: inget utrop
+  assert.equal(I.announcement(setup(MEET()), { clock }), null);
 });
