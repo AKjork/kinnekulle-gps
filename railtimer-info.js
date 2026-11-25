@@ -845,8 +845,57 @@
     return { sv: sv.join(' '), en: en.join(' ') };
   }
 
+  /* ── Meddelanden ──
+     Det som ska meddelas när det blir värre: möte med väntan, anslutning som blir knapp eller missas, tåg som
+     inte hinner till oss, avvikelse och störning. Varje sak har en nyckel och en nivå; den som meddelar
+     (appen i notifyInfo, bevakningen i bakgrunden i bevakning/bevaka.js) meddelar en nyckel en gång per nivå.
+     text: kort, för toast och notis. say: för uppläsning (inga tågnummer, "minuter" utskrivet).
+     opts: { name: sig → namn, clock: tid → "hh:mm" (avrundat till hel minut) }. */
+  function alerts(m, opts) {
+    const out = [];
+    if (!m) return out;
+    const name = (opts && opts.name) || (s => s);
+    const clock = (opts && opts.clock) || (t => new Date(Math.round(t / MIN) * MIN).toTimeString().slice(0, 5));
+    const places = sigs => (sigs || []).map(name).join(' / ');
+    const trainText = c => [c.product, c.ident].filter(Boolean).join(' ');
+    const minutes = k => `${k} minut${k === 1 ? '' : 'er'}`;
+    const connSay = { knappt: 'blir knapp', missas: 'hinns inte', 'avgått': 'har gått', 'inställt': 'är inställd' };
+    const connText = c => c.status === 'knappt' ? `knappt (${Math.max(c.transferMin, 0)} min)` : c.status;
+    const add = (key, level, text, say) => out.push({ key, level, text, say });
+    for (const mt of m.meetings || []) if (mt.level) add(`m|${mt.otn}|${mt.sig}`, mt.level,
+      `Möte ${name(mt.sig)}: ${mt.ident || mt.otn} är ${mt.theirDelayMin} min sent – vi väntar ca ${mt.waitMin} min`,
+      `Möte i ${name(mt.sig)}. Mötande tåg ${minutes(mt.theirDelayMin)} sent. Vi väntar cirka ${minutes(mt.waitMin)}.`);
+    for (const c of m.connections || []) if (c.level) add(`c|${c.otn}`, c.level,
+      `Anslutning ${clock(c.adv)} ${places(c.to)}: ${connText(c)}`,
+      `Anslutningen mot ${places(c.to)} ${clock(c.adv)} ${connSay[c.status] || c.status}.`);
+    for (const c of m.incoming || []) if (c.level) add(`i|${c.otn}`, c.level,
+      `${trainText(c)} från ${places(c.from)}: ${c.status === 'knappt' ? 'knappt byte till oss' : (c.status === 'inställt' ? 'inställt' : 'hinner inte till oss')}`,
+      `Tåget från ${places(c.from)} ${c.status === 'knappt' ? 'ger ett knappt byte till oss' : (c.status === 'inställt' ? 'är inställt' : 'hinner inte till oss')}.`);
+    for (const st of m.stops || []) {
+      const where = name(st.sig);
+      for (const c of st.connections) if (c.level) add(`c|${c.otn}|${st.sig}`, c.level,
+        `Anslutning i ${where} ${clock(c.adv)} ${places(c.to)}: ${connText(c)}`,
+        `Anslutningen i ${where} mot ${places(c.to)} ${connSay[c.status] || c.status}.`);
+      for (const c of st.incoming) if (c.level) add(`i|${c.otn}|${st.sig}`, c.level,
+        `${trainText(c)} från ${places(c.from)} till oss i ${where}: ${c.status === 'knappt' ? 'knappt' : (c.status === 'inställt' ? 'inställt' : 'hinner inte')}`,
+        `Tåget från ${places(c.from)} ${c.status === 'knappt' ? 'ger ett knappt byte till oss' : (c.status === 'inställt' ? 'är inställt' : 'hinner inte till oss')} i ${where}.`);
+    }
+    for (const d of m.deviations || []) add(`d|${d.sig}|${d.text}`, 1, `${name(d.sig)}: ${d.text}`, `${name(d.sig)}: ${d.text}.`);
+    for (const msg of m.messages || []) add(`t|${msg.id}`, 1, msg.header, `${msg.header}.`);
+    return out;
+  }
+  // Det som är nytt eller värre än i `notified` (Map nyckel → nivå), som nu räknas som meddelat; viktigast först
+  function newAlerts(list, notified) {
+    const fresh = [];
+    for (const a of list || []) {
+      const prev = notified.get(a.key) || 0;
+      if (a.level > prev) { fresh.push(a); notified.set(a.key, a.level); }
+    }
+    return fresh.sort((a, b) => b.level - a.level);
+  }
+
   return {
-    DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
+    DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, alerts, newAlerts, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
     request, queryOurTrain, queryLine, queryNames, queryMessages, resultOf,
     parseAnnouncement, groupTrains, nearestRun, buildLine, crossingOf, latestDelay, theirArrival,
     historyMedians, recoveryRatios, plannedRun, predict, outgoing, incoming, signaturesIn, parseMessage, classifyMessages, messagesFor, compute
