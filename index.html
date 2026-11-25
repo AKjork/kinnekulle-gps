@@ -892,29 +892,33 @@
 
   <section id="vtSettings" style="display:none">
     <h2>Västtrafik (bussar)</h2>
-    <p class="hint">Bussanslutningar i Info kommer från Västtrafik. Skapa en applikation i <a id="vtPortalLink" target="_blank" rel="noopener">Västtrafiks utvecklarportal</a> och prenumerera på API:t <b>Planera Resa v4</b>. Där får du en nyckel och en hemlighet. De sparas bara på den här enheten.</p>
-    <form id="vtForm" autocomplete="off" onsubmit="return false">
-      <div class="form-group">
-        <label for="vtKey">Nyckel</label>
-        <input id="vtKey" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="från Applikationer i portalen">
-      </div>
-      <div class="form-group">
-        <label for="vtSecret">Hemlighet</label>
-        <input id="vtSecret" type="password" autocomplete="off" placeholder="">
-      </div>
-      <div class="form-group">
-        <label for="vtServer">Egen server (behövs bara om testet säger det)</label>
-        <input id="vtServer" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://railtimer-vt.….workers.dev">
-      </div>
-    </form>
-    <p class="hint">Västtrafik tillåter kanske inte att appen hämtar token direkt från telefonen. Säger testet det behövs en liten egen server som har nyckeln och hemligheten. Den finns färdig i appens repo (<code>docs/vasttrafik-worker.js</code>) och kan köras gratis hos Cloudflare.</p>
+    <p class="hint">Bussanslutningarna i Info kommer från Västtrafik och fungerar utan inställningar. Välj <b>Buss</b> eller <b>Båda</b> under Anslutningar i Info.</p>
+    <p id="vtSharedStatus" class="meta" role="status" aria-live="polite"></p>
+    <details id="vtOwn">
+      <summary>Egen nyckel (behövs inte)</summary>
+      <p class="hint">Bara om den gemensamma nyckeln inte fungerar. Skapa en applikation i <a id="vtPortalLink" target="_blank" rel="noopener">Västtrafiks utvecklarportal</a> med API:t <b>Planera Resa v4</b>. Nyckeln och hemligheten sparas bara på den här enheten. Töm fälten och tryck Testa för att gå tillbaka till den gemensamma.</p>
+      <form id="vtForm" autocomplete="off" onsubmit="return false">
+        <div class="form-group">
+          <label for="vtKey">Nyckel (Klientidentifierare)</label>
+          <input id="vtKey" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="från Applikationer i portalen">
+        </div>
+        <div class="form-group">
+          <label for="vtSecret">Hemlighet</label>
+          <input id="vtSecret" type="password" autocomplete="off" placeholder="">
+        </div>
+        <div class="form-group">
+          <label for="vtServer">Egen server (behövs inte)</label>
+          <input id="vtServer" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…">
+        </div>
+      </form>
+    </details>
     <div class="settings-actions">
-      <button id="btnVtSave" class="primary">Spara och testa</button>
+      <button id="btnVtSave" class="primary">Testa</button>
       <button id="btnVtCheck" class="ghost">Provsidan</button>
     </div>
     <p id="vtTestResult" class="meta" role="status" aria-live="polite"></p>
     <div class="settings-actions">
-      <button id="btnVtRemove" class="danger">Ta bort</button>
+      <button id="btnVtRemove" class="danger">Ta bort egen nyckel</button>
       <button id="btnCloseVt" class="ghost">Stäng</button>
     </div>
   </section>
@@ -935,7 +939,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25z'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25za'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1118,7 +1122,7 @@
       setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; },
       refreshInfo, updateInfo, setInfoTab, infoModel: () => infoState.model,
       purpose, setPurpose, loadInfoTrips, tourRuns,
-      refreshBuses, connSettings, saveConnSettings, markedConnections, toggleConnMark, infoLogEntry, showVtSettings, saveAndTestVt, busTargets, vtState: () => ({ buses: infoState.buses, error: infoState.vtError, at: infoState.vtFetchedAt }),
+      refreshBuses, connSettings, saveConnSettings, markedConnections, toggleConnMark, infoLogEntry, showVtSettings, showVtStatus, saveAndTestVt, removeVtSettings, busTargets, vtState: () => ({ buses: infoState.buses, error: infoState.vtError, at: infoState.vtFetchedAt }),
       applyUpdate, checkForInterruptedJourney, saveActiveJourney, checkForNewVersion,
       checkVersionByHand, versionCheckResult: () => versionCheckResult,
       setVersionForTest: (fetchFn, reloadFn) => { versionFetchForTest = fetchFn; if(reloadFn) reloadPage = reloadFn; },
@@ -3130,7 +3134,10 @@
   // Bussar från Västtrafik (railtimer-vt.js) och valet Tåg | Buss | Båda
   const VT = window.RailTimerVt || null;
   const STORAGE_KEY_VT = 'railtimer_vt_v1';             // { key, secret, server, deviceId } – bara på den här enheten
-  const STORAGE_KEY_VT_TOKEN = 'railtimer_vt_token_v1'; // { token, expiresAt }
+  const STORAGE_KEY_VT_TOKEN = 'railtimer_vt_token_v1'; // { token, expiresAt, source: 'own'|'shared' }
+  /* Den gemensamma token: GitHub Actions hämtar den med appens Västtrafik-nyckel och lägger den här
+     (tools/vasttrafik-token.mjs). Ingen behöver fylla i något. */
+  const VT_SHARED_TOKEN_URL = 'vt-token.json';
   const STORAGE_KEY_VT_STOPS = 'railtimer_vt_stops_v1'; // { sig: { at, areas: [{ gid, name, dist }] } }
   const STORAGE_KEY_CONN = 'railtimer_conn_v1';         // { mode: 'tag'|'buss'|'bada', alerts: true }
   const STORAGE_KEY_CONN_MARKS = 'railtimer_conn_marks_v1'; // { vårt tågnummer: { nyckel (connKey): tid } }
@@ -3395,7 +3402,8 @@
     const s=readJsonKey(STORAGE_KEY_VT, null);
     return s && typeof s==='object' ? { key:String(s.key||''), secret:String(s.secret||''), server:String(s.server||''), deviceId:String(s.deviceId||'') } : null;
   }
-  function vtConfigured(){ return !!(VT && VT.configured(loadVtSettings())); }
+  function vtConfigured(){ return !!(VT && VT.configured(loadVtSettings(), VT_SHARED_TOKEN_URL)); }
+  function vtOwnConfigured(){ return !!(VT && VT.ownConfigured(loadVtSettings())); }
   // Sparat val; utan Västtrafik visas bara tåg
   function connSettings(){
     const s=readJsonKey(STORAGE_KEY_CONN, {}) || {};
@@ -3413,6 +3421,7 @@
   function vtClient(settings){
     return VT.createClient({
       fetch:(url, init)=>window.fetch(url, init), settings:settings||loadVtSettings()||{}, tokenStore:vtTokenStore,
+      sharedTokenUrl:VT_SHARED_TOKEN_URL,
       online:()=>TEST_MODE || navigator.onLine!==false
     });
   }
@@ -3533,8 +3542,32 @@
     sec.placeholder = s && s.secret ? '•••• sparad – lämna tomt för att behålla' : '';
     document.getElementById('vtServer').value = s ? s.server : '';
     document.getElementById('vtPortalLink').href = VT ? VT.PORTAL_URL : 'https://developer.vasttrafik.se/';
-    setVtResult(vtConfigured() ? 'Inställt. Välj Buss eller Båda under Anslutningar i Info.' : '', false);
+    const own=vtOwnConfigured();
+    document.getElementById('vtOwn').open = own;
+    document.getElementById('btnVtRemove').hidden = !own;
+    setVtResult('', false);
     showView('vtSettings');
+    return showVtStatus();
+  }
+  // Raden överst: varifrån bussarna får sin nyckel och om den gemensamma gäller
+  async function showVtStatus(){
+    const el=document.getElementById('vtSharedStatus');
+    if(!VT){ el.textContent='Västtrafikmodulen kunde inte laddas – ladda om sidan.'; el.className='meta err'; return; }
+    const s=loadVtSettings();
+    const src=VT.sourceOf(s, VT_SHARED_TOKEN_URL);
+    if(src==='server'){ el.textContent='Bussarna hämtas via din egen server.'; el.className='meta ok'; return; }
+    if(src==='own'){ el.textContent='Bussarna hämtas med din egen nyckel.'; el.className='meta ok'; return; }
+    el.textContent='Kontrollerar den gemensamma nyckeln…'; el.className='meta';
+    try{
+      await vtClient({}).token();
+      const t=vtTokenStore.get();
+      const until=t && t.expiresAt ? (new Date(t.expiresAt).toDateString()===new Date().toDateString() ? '' : 'i morgon ')+formatClock(t.expiresAt) : '?';
+      el.textContent=`Gemensam nyckel från GitHub – gäller till ${until} och förnyas av sig själv.`;
+      el.className='meta ok';
+    }catch(e){
+      el.textContent=`Bussarna fungerar inte just nu: ${VT.errorText(e).replace(/\.$/,'')}.`;
+      el.className='meta err';
+    }
   }
   // Stationen att prova med: resans slutstation, annars Herrljunga C
   function vtTestStation(){
@@ -3555,35 +3588,45 @@
       deviceId:old.deviceId || ('rt'+Math.random().toString(36).slice(2, 10))
     };
     if(server && !s.server){ setVtResult('Den egna servern måste vara en https-adress.', true); return null; }
-    if(!VT.configured(s)){ setVtResult('Fyll i nyckel och hemlighet, eller en egen server.', true); return null; }
-    writeJsonKey(STORAGE_KEY_VT, s);
-    vtTokenStore.set(null);
+    const keyOnly=!!(s.key || document.getElementById('vtSecret').value.trim()) && !(s.key && s.secret);
+    if(keyOnly && !s.server){ setVtResult('Fyll i både nyckel och hemlighet – eller töm fälten för den gemensamma nyckeln.', true); return null; }
+    const own=VT.ownConfigured(s);
+    // Tomma fält: den egna nyckeln tas bort och den gemensamma gäller
+    if(own) writeJsonKey(STORAGE_KEY_VT, s); else localStorage.removeItem(STORAGE_KEY_VT);
+    const changed=JSON.stringify(own ? s : null)!==JSON.stringify(VT.ownConfigured(old) ? old : null);
+    if(changed) vtTokenStore.set(null);
     document.getElementById('vtSecret').value='';
-    document.getElementById('vtSecret').placeholder = s.secret ? '•••• sparad – lämna tomt för att behålla' : '';
+    document.getElementById('vtSecret').placeholder = own && s.secret ? '•••• sparad – lämna tomt för att behålla' : '';
+    if(!own) document.getElementById('vtKey').value='';
+    document.getElementById('btnVtRemove').hidden = !own;
     const st=vtTestStation();
-    setVtResult('Sparat. Testar Västtrafik…', false);
+    setVtResult(own ? 'Sparat. Testar Västtrafik…' : 'Testar Västtrafik…', false);
     try{
-      const client=vtClient(s);
+      const client=vtClient(own ? s : {});
       if(!client.viaServer) await client.token();
       const areas=await client.stopAreasNear(st.lat, st.lon, VT.DEFAULTS.stopRadiusM);
       if(!areas.length){ setVtResult(`Västtrafik svarar, men det finns ingen hållplats inom ${VT.DEFAULTS.stopRadiusM} m från ${st.name}.`, false); return { ok:true, areas:[] }; }
       const buses=VT.busesOnly(await client.board('departures', areas[0].gid, Date.now(), 60));
-      setVtResult(`Fungerar${client.viaServer ? ' via egen server' : ''}: ${buses.length} bussavgång${buses.length===1?'':'ar'} från ${areas[0].name} närmaste timmen. Välj Buss eller Båda under Anslutningar i Info.`, false);
-      if(state.running) refreshBuses(true);
-      return { ok:true, areas, buses };
+      const via = client.viaServer ? ' via egen server' : client.source==='own' ? ' med din egen nyckel' : ' med den gemensamma nyckeln';
+      setVtResult(`Fungerar${via}: ${buses.length} bussavgång${buses.length===1?'':'ar'} från ${areas[0].name} närmaste timmen. Välj Buss eller Båda under Anslutningar i Info.`, false);
+      if(state.running && changed) refreshBuses(true);
+      return { ok:true, areas, buses, source:client.source };
     }catch(e){
-      setVtResult(`Sparat, men det gick inte: ${VT.errorText(e)}`, true);
+      setVtResult(`${own ? 'Sparat, men det' : 'Det'} gick inte: ${VT.errorText(e)}`, true);
       return { ok:false, error:e };
+    }finally{
+      showVtStatus();
     }
   }
   function removeVtSettings(){
-    if(!confirm('Ta bort Västtrafiks nyckel och hemlighet från den här enheten?')) return;
+    if(!confirm('Ta bort din egen Västtrafik-nyckel från den här enheten? Bussarna fungerar ändå med den gemensamma nyckeln.')) return;
     localStorage.removeItem(STORAGE_KEY_VT);
     vtTokenStore.set(null);
-    infoState.buses=new Map();
+    document.getElementById('vtKey').value='';
+    document.getElementById('vtServer').value='';
     showVtSettings();
-    setVtResult('Borttaget från enheten. Info visar bara tåg.', false);
-    if(state.running) updateInfo();
+    setVtResult('Borttagen. Bussarna hämtas med den gemensamma nyckeln.', false);
+    if(state.running) refreshBuses(true);
   }
 
   function timeMs(v){
@@ -3787,15 +3830,15 @@
     return `<div class="info-row action l2"><span class="ir-t" aria-hidden="true">☎</span><span class="ir-txt"><b>${escapeHtml(t.title)}</b><small>${escapeHtml(t.sub)}</small></span><span class="ir-s"></span></div>`;
   }
 
-  // Valet Tåg | Buss | Båda överst i anslutningarna. Utan Västtrafik går bara Tåg att välja.
+  // Valet Tåg | Buss | Båda överst i anslutningarna. Bara utan Västtrafikmodulen går bara Tåg att välja.
   function connControlHtml(mode, alerts, vtOn){
     const b=(k, label)=>`<button type="button" data-info="conn-${k}" aria-pressed="${mode===k}"${!vtOn && k!=='tag'?' disabled':''}>${label}</button>`;
     let h=`<div class="conn-ctl"><span class="cc-label">Anslutningar</span>` +
       `<span class="seg" role="group" aria-label="Visa anslutningar">${b('tag','Tåg')}${b('buss','Buss')}${b('bada','Båda')}</span>`;
     if(vtOn) h+=`<button type="button" class="cc-alerts" data-info="conn-alerts" aria-pressed="${alerts}" title="Om varningarna, panelens rad och utropet bara gäller det som visas">Varningar: ${alerts?'bara valda':'alla'}</button>`;
     h+='</div>';
-    if(!vtOn) h+='<p class="info-hint">Bussar kräver en nyckel från Västtrafik: <button type="button" class="linkish" data-info="vt-settings">⋮ → Västtrafik (bussar)</button>.</p>';
-    else if(mode!=='tag' && infoState.vtError) h+=`<p class="info-hint err">Västtrafik: ${escapeHtml(infoState.vtError)}${infoState.vtFetchedAt?` Bussarna är från ${formatClock(infoState.vtFetchedAt)}.`:''}</p>`;
+    if(!vtOn) h+='<p class="info-hint">Bussarna från Västtrafik går inte att hämta – ladda om appen.</p>';
+    else if(mode!=='tag' && infoState.vtError) h+=`<p class="info-hint err">Västtrafik: ${escapeHtml(String(infoState.vtError).replace(/\.$/,''))}.${infoState.vtFetchedAt?` Bussarna är från ${formatClock(infoState.vtFetchedAt)}.`:''} <button type="button" class="linkish" data-info="vt-settings">⋮ → Västtrafik</button></p>`;
     else if(!alerts && mode!=='bada') h+='<p class="info-hint">Varningarna och utropet gäller alla anslutningar, även de dolda.</p>';
     if(!markedConnections().size) h+='<p class="info-hint">Tryck ☆ på en anslutning som resenärer ska byta till.</p>';
     return h;

@@ -47,9 +47,31 @@
     if (!s) return '';
     return /^https:\/\/[^\s/]+/i.test(s) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(s) ? s : '';
   }
-  // Inställningarna räcker för att fråga: nyckel och hemlighet, eller en egen server
-  function configured(s) {
+  // Egna inställningar: nyckel och hemlighet, eller en egen server
+  function ownConfigured(s) {
     return !!(s && ((s.key && s.secret) || cleanServer(s.server)));
+  }
+  /* Går det att fråga: egna inställningar, eller den gemensamma token som GitHub hämtar (vt-token.json, se
+     tools/vasttrafik-token.mjs). shared = adressen till filen. */
+  function configured(s, shared) {
+    return ownConfigured(s) || !!shared;
+  }
+  // Varifrån frågorna får token: 'server' (egen server), 'own' (egen nyckel), 'shared' (gemensam) eller 'none'
+  function sourceOf(s, shared) {
+    if (s && cleanServer(s.server)) return 'server';
+    if (s && s.key && s.secret) return 'own';
+    return shared ? 'shared' : 'none';
+  }
+  /* Den gemensamma filen { token, expiresAt, fetchedAt, cors, check, error } → { token, expiresAt } eller ett fel
+     i ord (error) */
+  function parseShared(json, now) {
+    if (!json || typeof json !== 'object') return { error: 'den gemensamma Västtrafik-nyckeln finns inte än' };
+    const exp = Number(json.expiresAt);
+    if (typeof json.token === 'string' && json.token && Number.isFinite(exp)) {
+      if (exp > now + 60000) return { token: json.token, expiresAt: exp };
+      return { error: 'den gemensamma Västtrafik-nyckeln har gått ut – GitHub har inte förnyat den' };
+    }
+    return { error: json.error ? `den gemensamma Västtrafik-nyckeln saknas (${json.error})` : 'den gemensamma Västtrafik-nyckeln finns inte än' };
   }
 
   // ── Token ──
@@ -163,8 +185,9 @@
   }
 
   // ── Klienten ──
-  /* opts: { fetch, settings: { key, secret, server, deviceId }, tokenStore: { get(), set(t) }, now, online,
-     timeoutMs }. Med egen server går alla frågor dit (server + /pr/v4/…) utan token; servern lägger till den.
+  /* opts: { fetch, settings: { key, secret, server, deviceId }, sharedTokenUrl, tokenStore: { get(), set(t) }, now,
+     online, timeoutMs }. Med egen server går alla frågor dit (server + /pr/v4/…) utan token; servern lägger till den.
+     Med egen nyckel hämtas token från Västtrafik. Annars läses den gemensamma token (sharedTokenUrl).
      Felsorter (e.kind): setup, blocked (Västtrafik tillåter inte frågan från webbläsaren), network, timeout,
      auth, http. */
   function createClient(opts) {
@@ -178,6 +201,7 @@
     const store = o.tokenStore || { get: () => mem, set: t => { mem = t; } };
     const server = cleanServer(settings.server);
     const base = server ? server + '/pr/v4' : API;
+    const source = sourceOf(settings, o.sharedTokenUrl);
 
     async function fetchT(url, init) {
       const ctl = typeof AbortController === 'function' ? new AbortController() : null;
@@ -203,10 +227,38 @@
       }
     }
 
+    // Den gemensamma token: en fil på appens egen adress, alltid förbi cachen
+    async function sharedToken() {
+      const url = o.sharedTokenUrl + (o.sharedTokenUrl.includes('?') ? '&' : '?') + 't=' + now();
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
+      let resp;
+      try {
+        resp = await doFetch(url, Object.assign({ cache: 'no-store' }, ctl ? { signal: ctl.signal } : {}));
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw vtError('timeout', 'den gemensamma nyckeln kom inte');
+        throw vtError('network', online() ? 'kunde inte hämta den gemensamma nyckeln' : 'ingen täckning');
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      let json = null;
+      if (resp.ok) { try { json = await resp.json(); } catch (e) { json = null; } }
+      else if (resp.status !== 404) throw vtError('http', `den gemensamma nyckeln: HTTP ${resp.status}`);
+      const parsed = parseShared(json, now());
+      if (parsed.error) throw vtError('setup', parsed.error);
+      return parsed;
+    }
+
     async function token(force) {
       if (server) return null;
       const t = store.get();
-      if (!force && t && t.token && t.expiresAt > now() + 60000) return t.token;
+      const sameSource = t && (t.source || 'own') === source;
+      if (!force && sameSource && t.token && t.expiresAt > now() + 60000) return t.token;
+      if (source === 'shared') {
+        const sh = await sharedToken();
+        store.set({ token: sh.token, expiresAt: sh.expiresAt, source });
+        return sh.token;
+      }
       if (!settings.key || !settings.secret) throw vtError('setup', 'nyckel och hemlighet saknas');
       const req = tokenRequest(settings.key, settings.secret, settings.deviceId);
       const resp = await fetchT(req.url, req.init);
@@ -216,7 +268,7 @@
       try { json = await resp.json(); } catch (e) { json = null; }
       const parsed = parseToken(json, now());
       if (!parsed) throw vtError('auth', 'inget token i svaret');
-      store.set(parsed);
+      store.set(Object.assign(parsed, { source }));
       return parsed.token;
     }
 
@@ -228,7 +280,7 @@
         if (tok) headers.Authorization = 'Bearer ' + tok;
         const resp = await fetchT(url, { headers });
         if (resp.status === 401 && !server && attempt === 0) { store.set(null); continue; }
-        if (resp.status === 401 || resp.status === 403) throw vtError('auth', server ? 'servern fick inte svar från Västtrafik (nyckeln?)' : 'Västtrafik godtog inte token');
+        if (resp.status === 401 || resp.status === 403) throw vtError('auth', server ? 'servern fick inte svar från Västtrafik (nyckeln?)' : source === 'shared' ? 'Västtrafik godtog inte den gemensamma nyckeln' : 'Västtrafik godtog inte token');
         if (!resp.ok) throw vtError('http', `HTTP ${resp.status}`);
         try { return await resp.json(); } catch (e) { throw vtError('http', 'svaret gick inte att läsa'); }
       }
@@ -236,7 +288,7 @@
     }
 
     return {
-      base, viaServer: !!server, token, get,
+      base, viaServer: !!server, source, token, get,
       async stopAreasNear(lat, lon, radiusM) {
         const r = radiusM || DEFAULTS.stopRadiusM;
         return parseStopAreas(await get(nearbyPath(lat, lon, r)), r, { lat, lon });
@@ -250,12 +302,12 @@
   // Felet i ord för appen och provsidan
   function errorText(e) {
     if (!e) return '';
-    if (e.kind === 'blocked') return `${e.message}. Lägg in en egen server under ⋮ → Västtrafik.`;
+    if (e.kind === 'blocked') return /^Västtrafik/.test(e.message) ? `${e.message}. Ta bort den egna nyckeln under ⋮ → Västtrafik, så används den gemensamma.` : String(e.message);
     return String(e.message || e);
   }
 
   return {
-    API, TOKEN_URL, PORTAL_URL, DEFAULTS, ms, base64, cleanServer, configured, tokenRequest, parseToken,
+    API, TOKEN_URL, PORTAL_URL, DEFAULTS, ms, base64, cleanServer, ownConfigured, configured, sourceOf, parseShared, tokenRequest, parseToken,
     nearbyPath, boardPath, haversine, parseStopAreas, parseBoard, busesOnly, uniqueCalls, townKey, createClient, errorText
   };
 });

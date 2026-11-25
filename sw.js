@@ -60,8 +60,8 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  // Versionskollen (version.json) går alltid till nätet och sparas inte
-  if (url.pathname.endsWith('/version.json')) return;
+  // Versionskollen (version.json) och Västtrafiks gemensamma token (vt-token.json) går alltid till nätet och sparas inte
+  if (url.pathname.endsWith('/version.json') || url.pathname.endsWith('/vt-token.json')) return;
 
   const network = fetch(request);
   const saved = network.then(resp => {

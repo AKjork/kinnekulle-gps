@@ -1,4 +1,5 @@
-# Gemensam Västtrafik-token för appen (se tools/vasttrafik-token.mjs).
+# Gemensam Västtrafik-token för appen (se tools/vasttrafik-token.mjs). Ett publiceringssteg: filen vt-token.json
+# läggs i main och publiceras med GitHub Pages. Inget svarar på frågor härifrån.
 # Hemligheterna VT_KEY och VT_SECRET (Klientidentifierare och Hemlighet från Västtrafiks utvecklarportal)
 # läggs in en gång i Settings → Secrets and variables → Actions. Ingen annan behöver fylla i något.
 name: Västtrafik-token
@@ -15,7 +16,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
 
 concurrency:
   group: vasttrafik-token
@@ -35,8 +35,6 @@ jobs:
           FORCE: ${{ github.event_name == 'schedule' && '0' || '1' }}
       - name: Publicera vt-token.json
         if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -44,11 +42,8 @@ jobs:
           if git diff --cached --quiet; then echo "Inget nytt token"; exit 0; fi
           git commit -q -m "Västtrafik-token (automatiskt)"
           for i in 1 2 3; do
-            if git pull -q --rebase origin main && git push -q origin HEAD:main; then
-              # GitHub Pages bygger om efter en push; begär en byggning också, ifall pushen från Actions inte räcker
-              gh api -X POST "repos/${GITHUB_REPOSITORY}/pages/builds" >/dev/null 2>&1 || true
-              exit 0
-            fi
+            # GitHub Pages publicerar filen efter pushen
+            if git pull -q --rebase origin main && git push -q origin HEAD:main; then exit 0; fi
             sleep 5
           done
           exit 1

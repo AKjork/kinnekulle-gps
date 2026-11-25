@@ -112,6 +112,13 @@ test('service workern: versionskollen (version.json) går alltid till nätet och
   assert.equal(event.handled, false);
 });
 
+test('service workern: Västtrafiks gemensamma token (vt-token.json) går alltid till nätet och sparas inte', () => {
+  const onFetch = loadServiceWorker();
+  const event = fetchEvent('GET', 'https://akjork.github.io/kinnekulle-gps/vt-token.json?t=1');
+  onFetch(event);
+  assert.equal(event.handled, false);
+});
+
 test('service workern: en ny version tar över direkt och gamla kopior tas bort', async () => {
   const calls = {};
   const onFetch = loadServiceWorker({ calls });

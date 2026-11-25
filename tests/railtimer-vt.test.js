@@ -137,7 +137,8 @@ test('klienten: Västtrafik stoppar token i webbläsaren – felet säger det, o
   const vt = fakeVt({ cors: false });
   const c = V.createClient({ fetch: vt.fetch, settings: { key: 'k', secret: 's' } });
   await assert.rejects(c.board('departures', 'G', 0, 10), e => e.kind === 'blocked' && /tillåter inte/.test(e.message));
-  assert.ok(V.errorText({ kind: 'blocked', message: 'Västtrafik tillåter inte frågan från webbläsaren' }).includes('egen server'));
+  assert.ok(V.errorText({ kind: 'blocked', message: 'Västtrafik tillåter inte frågan från webbläsaren' }).includes('så används den gemensamma'));
+  assert.equal(V.errorText({ kind: 'blocked', message: 'servern tillåter inte frågan från appen' }), 'servern tillåter inte frågan från appen');
   // Utan täckning: nätfel
   const off = V.createClient({ fetch: fakeVt({ offline: true }).fetch, settings: { key: 'k', secret: 's' }, online: () => false });
   await assert.rejects(off.board('departures', 'G', 0, 10), e => e.kind === 'network');
@@ -158,4 +159,65 @@ test('klienten: fel nyckel och saknade inställningar', async () => {
   await assert.rejects(bad.token(), e => e.kind === 'auth' && /godtog inte nyckeln/.test(e.message));
   const none = V.createClient({ fetch: fakeVt().fetch, settings: {} });
   await assert.rejects(none.token(), e => e.kind === 'setup');
+});
+
+// Den gemensamma token (vt-token.json från GitHub Actions)
+function fakeShared(files) {
+  const vt = fakeVt();
+  let i = 0;
+  const calls = [];
+  const fetch = async (url, init) => {
+    if (url.startsWith('vt-token.json')) {
+      calls.push({ url, init: init || {} });
+      const f = files[Math.min(i++, files.length - 1)];
+      if (f === 'offline') throw new TypeError('Failed to fetch');
+      if (f === 404) return { ok: false, status: 404, json: async () => ({}) };
+      if (f && f.mint) { const r = await vt.fetch('https://ext-api.vasttrafik.se/token', { method: 'POST' }); const j = await r.json(); return { ok: true, status: 200, json: async () => ({ token: j.access_token, expiresAt: 10 * 3600000 }) }; }
+      return { ok: true, status: 200, json: async () => f };
+    }
+    return vt.fetch(url, init);
+  };
+  return { fetch, calls, vt };
+}
+
+test('gemensam token: utan egna inställningar läses vt-token.json förbi cachen, och egen nyckel går före', async () => {
+  assert.equal(V.configured(null, 'vt-token.json'), true);
+  assert.equal(V.configured(null, ''), false);
+  assert.equal(V.sourceOf({ key: 'k', secret: 's' }, 'vt-token.json'), 'own');
+  assert.equal(V.sourceOf({ server: 'https://x.se' }, 'vt-token.json'), 'server');
+  assert.equal(V.sourceOf({}, 'vt-token.json'), 'shared');
+  const sh = fakeShared([{ mint: true }]);
+  const store = { t: null, get() { return this.t; }, set(t) { this.t = t; } };
+  const c = V.createClient({ fetch: sh.fetch, settings: {}, sharedTokenUrl: 'vt-token.json', tokenStore: store, now: () => 1000 });
+  assert.equal(c.source, 'shared');
+  const deps = await c.board('departures', 'G', 0, 10);
+  assert.equal(deps[0].line, '121');
+  await c.board('arrivals', 'G', 0, 10);
+  assert.equal(sh.calls.length, 1, 'filen läses en gång');
+  assert.equal(sh.calls[0].url, 'vt-token.json?t=1000');
+  assert.equal(sh.calls[0].init.cache, 'no-store');
+  assert.deepEqual(store.t, { token: 'T1', expiresAt: 36000000, source: 'shared' });
+  assert.equal(sh.vt.calls.filter(x => x.url.endsWith('/token')).length, 1, 'appen hämtar själv inget token');
+  // Med egen nyckel används den, inte det sparade gemensamma
+  const own = V.createClient({ fetch: sh.fetch, settings: { key: 'k', secret: 's' }, sharedTokenUrl: 'vt-token.json', tokenStore: store, now: () => 1000 });
+  await own.board('departures', 'G', 0, 10);
+  assert.equal(store.t.source, 'own');
+  assert.equal(sh.calls.length, 1);
+});
+
+test('gemensam token: saknas, har gått ut, ingen kontakt – felet i ord; token som inte godtas läses om en gång', async () => {
+  const mk = files => V.createClient({ fetch: fakeShared(files).fetch, settings: {}, sharedTokenUrl: 'vt-token.json', now: () => 1000 });
+  await assert.rejects(mk([404]).token(), e => e.kind === 'setup' && e.message === 'den gemensamma Västtrafik-nyckeln finns inte än');
+  await assert.rejects(mk([{ token: null, error: 'VT_KEY och VT_SECRET saknas i GitHub' }]).token(),
+    e => e.kind === 'setup' && e.message === 'den gemensamma Västtrafik-nyckeln saknas (VT_KEY och VT_SECRET saknas i GitHub)');
+  await assert.rejects(mk([{ token: 'GAMMAL', expiresAt: 1000 }]).token(), e => e.kind === 'setup' && /har gått ut/.test(e.message));
+  await assert.rejects(mk(['offline']).token(), e => e.kind === 'network' && /gemensamma/.test(e.message));
+  // Västtrafik godtar inte token: filen läses igen (GitHub kan ha förnyat det)
+  const sh = fakeShared([{ token: 'FEL', expiresAt: 36000000 }, { mint: true }]);
+  const c = V.createClient({ fetch: sh.fetch, settings: {}, sharedTokenUrl: 'vt-token.json', now: () => 1000 });
+  const deps = await c.board('departures', 'G', 0, 10);
+  assert.equal(deps.length, 1);
+  assert.equal(sh.calls.length, 2);
+  const stuck = V.createClient({ fetch: fakeShared([{ token: 'FEL', expiresAt: 36000000 }]).fetch, settings: {}, sharedTokenUrl: 'vt-token.json', now: () => 1000 });
+  await assert.rejects(stuck.board('departures', 'G', 0, 10), e => e.kind === 'auth' && /gemensamma/.test(e.message));
 });

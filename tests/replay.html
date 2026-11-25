@@ -1615,7 +1615,7 @@ test('tidtabell: hela vägen – startformuläret, tågorderns tider i resvyn oc
   const logs = rt.loadLogs();
   const saved = logs[logs.length - 1];
   assertEqual(saved.format, 3, 'format');
-  assert(/^\d{4}-\d\d-\d\d[a-z]?$/.test(saved.appVersion), 'appversion: ' + saved.appVersion); // inte en viss version: den höjs vid varje publicering
+  assert(/^\d{4}-\d\d-\d\d[a-z]{0,2}$/.test(saved.appVersion), 'appversion: ' + saved.appVersion); // inte en viss version: den höjs vid varje publicering
   assertEqual(saved.stops.map(s => s.operationalArrival ? new Date(s.operationalArrival).toISOString() : null), [null, t(5), t(10), t(15), t(23), t(30)], 'tågorderns ankomster sparas');
   assertEqual(saved.stops.map(s => s.scheduledArrival ? new Date(s.scheduledArrival).toISOString() : null), [null, t(6), t(11), t(15), t(24), t(30)], 'annonserade ankomster sparas oförändrade');
 });
@@ -2327,7 +2327,8 @@ test('info: mötande tågets position, anslutningar längs vägen och färdigt u
 /* Simulerat Västtrafik (Planera Resa v4) för resan Lidköping → Hällekis: hållplatsen Hällekis station vid Hällekis
    med bussarna B1 mot Mariestad (6 min efter vår planerade ankomst), B2 mot Götene (20 min), B3 mot Lidköping
    (längs vår linje) och Västtågen (tåg: kommer från Trafikverket). opts.cors=false: token går inte att hämta
-   från webbläsaren. opts.server: egen server som lägger till token. */
+   från webbläsaren. opts.server: egen server som lägger till token. vt-token.json: den gemensamma token från
+   GitHub (ett nytt token varje gång filen läses); opts.shared 'missing' = filen utan token, 404 = ingen fil. */
 function fakeVasttrafik(route, opts) {
   const o = opts || {};
   const M = 60000;
@@ -2343,6 +2344,12 @@ function fakeVasttrafik(route, opts) {
     const i = init || {};
     calls.push({ url, init: i });
     if (i.mode === 'no-cors') return { ok: false, status: 0, type: 'opaque' };
+    if (url.includes('vt-token.json')) {
+      if (o.shared === 404) return resp(404, {});
+      if (o.shared === 'missing') return resp(200, { token: null, expiresAt: null, error: 'VT_KEY och VT_SECRET saknas i GitHub' });
+      tokens++;
+      return resp(200, { token: 'VT' + tokens, expiresAt: Date.now() + 86400000, fetchedAt: new Date().toISOString(), cors: { tokenFromBrowser: true, apiFromBrowser: true } });
+    }
     const viaServer = o.server && url.startsWith(o.server);
     if (url.endsWith('/token')) {
       if (o.cors === false) throw new TypeError('Failed to fetch');
@@ -2364,40 +2371,82 @@ function fakeVasttrafik(route, opts) {
     if (url.includes('/arrivals')) return resp(200, { results: [] });
     return resp(404, {});
   };
-  return { fetch, calls, tokens: () => tokens, boards: () => calls.filter(c => c.url.includes('/stop-areas/')).length };
+  return { fetch, calls, tokens: () => tokens, shared: () => calls.filter(c => c.url.includes('vt-token.json')).length, boards: () => calls.filter(c => c.url.includes('/stop-areas/')).length };
 }
 // Trafikverket och Västtrafik i samma fetch
 function withVasttrafik(r, opts) {
   r.vt = fakeVasttrafik(r.rt.state.route, opts);
-  r.w.fetch = (url, init) => String(url).includes('vasttrafik') || (opts && opts.server && String(url).startsWith(opts.server)) ? r.vt.fetch(url, init) : r.trv.fetch(url, init);
+  r.w.fetch = (url, init) => String(url).includes('vasttrafik') || String(url).includes('vt-token.json') || (opts && opts.server && String(url).startsWith(opts.server)) ? r.vt.fetch(url, init) : r.trv.fetch(url, init);
   return r.vt;
 }
 const infoPaneText = r => r.w.document.getElementById('infoPane').textContent;
 const connRows = r => Array.from(r.w.document.querySelectorAll('#infoPane .conn-row')).map(e => e.textContent);
 
-test('buss: utan Västtrafik går bara Tåg att välja, och inget hämtas från Västtrafik', async () => {
+test('buss: utan inställningar används den gemensamma nyckeln från GitHub – Buss går att välja direkt', async () => {
   const r = await midJourneyWithInfo();
-  const fetched = [];
-  const trvFetch = r.trv.fetch;
-  r.w.fetch = (url, init) => { fetched.push(String(url)); return trvFetch(url, init); };
+  const vt = withVasttrafik(r);
   r.rt.setInfoTab('info');
   const d = r.w.document;
   const btn = k => d.querySelector(`[data-info="conn-${k}"]`);
   assert(btn('tag') && btn('buss') && btn('bada'), 'valet finns');
-  assertEqual(btn('tag').getAttribute('aria-pressed'), 'true', 'Tåg är valt');
-  assert(btn('buss').disabled && btn('bada').disabled, 'Buss och Båda är gråa');
-  assert(infoPaneText(r).includes('Bussar kräver en nyckel från Västtrafik'), infoPaneText(r));
+  assertEqual(btn('tag').getAttribute('aria-pressed'), 'true', 'förval: Tåg');
+  assert(!btn('buss').disabled && !btn('bada').disabled, 'Buss och Båda går att välja utan nyckel');
+  assert(!infoPaneText(r).includes('nyckel'), 'inget att fylla i: ' + infoPaneText(r));
   assert(infoPaneText(r).includes('Tryck ☆ på en anslutning som resenärer ska byta till.'), 'förklaringen till ☆');
-  assert(!d.querySelector('.cc-alerts'), 'inget varningsval utan bussar');
-  assert(!infoPaneText(r).includes('bara tåg'), 'rubrikerna som förut');
-  // Även om valet Buss sparats visas tågen och inget hämtas från Västtrafik
+  assertEqual(vt.calls.length, 0, 'med Tåg frågas inte Västtrafik');
+  // Buss: token från vt-token.json (förbi cachen), sedan bussarna
+  btn('buss').click();
+  await realSleep(80);
+  assertEqual(vt.shared(), 1, 'den gemensamma filen lästes');
+  const f = vt.calls.find(c => c.url.includes('vt-token.json'));
+  assert(/^vt-token\.json\?t=\d+$/.test(f.url) && f.init.cache === 'no-store', f.url);
+  assertEqual(r.rt.infoModel().connections.map(c => c.ident), ['B1', 'B2'], 'bussarna');
+  assertEqual(JSON.parse(r.w.localStorage.getItem('railtimer_vt_token_v1')).source, 'shared', 'token sparas som gemensamt');
+  assert(!r.w.localStorage.getItem('railtimer_vt_v1'), 'inga egna inställningar');
+  // Inställningarna säger att den gemensamma gäller
+  await r.rt.showVtSettings();
+  assert(d.getElementById('vtSharedStatus').textContent.startsWith('Gemensam nyckel från GitHub – gäller till'), d.getElementById('vtSharedStatus').textContent);
+  assert(!d.getElementById('vtOwn').open && d.getElementById('btnVtRemove').hidden, 'egen nyckel ihopfälld, inget att ta bort');
+  const res = await r.rt.saveAndTestVt();
+  assert(res.ok && res.source === 'shared', 'testet med den gemensamma');
+  assert(d.getElementById('vtTestResult').textContent.startsWith('Fungerar med den gemensamma nyckeln: 3 bussavgångar'), d.getElementById('vtTestResult').textContent);
+  assert(!r.w.localStorage.getItem('railtimer_vt_v1'), 'testet sparar inget');
+});
+
+test('buss: saknas den gemensamma nyckeln säger Info det, och en egen nyckel kan tas bort igen', async () => {
+  const r = await midJourneyWithInfo();
   r.rt.saveConnSettings({ mode: 'buss' });
-  await r.rt.refreshInfo();
-  assertEqual(r.rt.infoModel().connMode, 'tag', 'utan Västtrafik gäller Tåg');
-  assert(!fetched.some(u => u.includes('vasttrafik')), 'inget från Västtrafik');
-  // Länken öppnar inställningarna
-  d.querySelector('[data-info="vt-settings"]').click();
-  assertEqual(d.getElementById('vtSettings').style.display, 'block', 'inställningarna för Västtrafik');
+  withVasttrafik(r, { shared: 'missing' });
+  await r.rt.refreshBuses(true);
+  r.rt.setInfoTab('info');
+  const d = r.w.document;
+  const hint = d.querySelector('#infoPane .info-hint.err');
+  assert(hint && hint.textContent.includes('den gemensamma Västtrafik-nyckeln saknas (VT_KEY och VT_SECRET saknas i GitHub)'), hint ? hint.textContent : infoPaneText(r));
+  assert(hint.querySelector('[data-info="vt-settings"]'), 'länk till inställningarna');
+  assertEqual(r.rt.infoModel().connections.length, 0, 'inga bussar');
+  await r.rt.showVtSettings();
+  assert(d.getElementById('vtSharedStatus').textContent.startsWith('Bussarna fungerar inte just nu: den gemensamma'), d.getElementById('vtSharedStatus').textContent);
+  // Egen nyckel fungerar
+  d.getElementById('vtKey').value = 'k';
+  d.getElementById('vtSecret').value = 's';
+  const own = await r.rt.saveAndTestVt();
+  assert(own.ok && own.source === 'own', 'egen nyckel');
+  assert(d.getElementById('vtTestResult').textContent.startsWith('Fungerar med din egen nyckel'), d.getElementById('vtTestResult').textContent);
+  assert(!d.getElementById('btnVtRemove').hidden, 'Ta bort egen nyckel syns');
+  await realSleep(100);
+  assertEqual(r.rt.infoModel().connections.map(c => c.ident), ['B1', 'B2'], 'bussarna med egen nyckel');
+  // Bara nyckel utan hemlighet går inte
+  r.w.localStorage.removeItem('railtimer_vt_v1');
+  d.getElementById('vtKey').value = 'k';
+  d.getElementById('vtSecret').value = '';
+  assertEqual(await r.rt.saveAndTestVt(), null, 'inte sparat');
+  assert(d.getElementById('vtTestResult').textContent.startsWith('Fyll i både nyckel och hemlighet'), d.getElementById('vtTestResult').textContent);
+  // Tomma fält: tillbaka till den gemensamma
+  r.w.localStorage.setItem('railtimer_vt_v1', JSON.stringify({ key: 'k', secret: 's' }));
+  d.getElementById('vtKey').value = '';
+  const back = await r.rt.saveAndTestVt();
+  assert(!r.w.localStorage.getItem('railtimer_vt_v1'), 'den egna borttagen');
+  assert(!back.ok && back.error.kind === 'setup', 'den gemensamma saknas fortfarande');
 });
 
 test('buss: Buss visar bussarna i slutstationen och döljer tågen med antal; varningarna följer valet eller gäller alla', async () => {
@@ -2464,7 +2513,7 @@ test('buss: Västtrafik stoppar token i webbläsaren – Info säger det, och me
   await r.rt.refreshBuses(true);
   r.rt.setInfoTab('info');
   const hint = r.w.document.querySelector('#infoPane .info-hint.err');
-  assert(hint && hint.textContent.includes('Västtrafik tillåter inte frågan från webbläsaren') && hint.textContent.includes('egen server'), hint ? hint.textContent : infoPaneText(r));
+  assert(hint && hint.textContent.includes('Västtrafik tillåter inte frågan från webbläsaren') && hint.textContent.includes('så används den gemensamma'), hint ? hint.textContent : infoPaneText(r));
   assertEqual(r.rt.infoModel().connections.length, 0, 'inga bussar');
   // Inställningarna: testet säger samma sak
   r.rt.showVtSettings();
@@ -2547,7 +2596,7 @@ test('provsidan för Västtrafik: token, hållplatser och bussar vid resans stat
   });
   const vt = fakeVasttrafik([{ scheduledArrival: new Date().toISOString() }]);
   w.__vtkoll.setFetchForTest(vt.fetch);
-  assert(w.document.getElementById('setup').textContent.includes('Nyckel och hemlighet finns'), w.document.getElementById('setup').textContent);
+  assert(w.document.getElementById('setup').textContent.includes('Egen nyckel och hemlighet finns'), w.document.getElementById('setup').textContent);
   const res = await w.__vtkoll.run();
   assert(res.tokenDirect.ok && res.dataDirect.ok, 'token och frågor direkt');
   assertEqual(res.stations.map(s => s.name), STATIONS.map(s => s[0]), 'resans stationer');
@@ -2556,6 +2605,8 @@ test('provsidan för Västtrafik: token, hållplatser och bussar vid resans stat
   assertEqual(hlk.departures.length, 4, 'avgångarna');
   const text = w.document.getElementById('result').textContent;
   assert(text.includes('Token direkt från telefonenfungerar'), text);
+  assert(text.includes('Gemensam nyckel (GitHub)fungerar gäller till') && text.includes('Frågor med den gemensammafungerar'), text);
+  assert(res.shared.ok && res.shared.cors.apiFromBrowser === true && res.source === 'own', JSON.stringify(res.shared));
   assert(text.includes('Avgångar närmaste timmen: 3 bussar (1 med Västtrafiks beräknade tid), 1 andra'), text);
   assert(text.includes('Ingen hållplats inom 350 m från stationen.'), 'stationer utan hållplats');
   const fake = browserFakeGitHub(w);
@@ -2575,11 +2626,15 @@ test('provsidan för Västtrafik: token stoppas i webbläsaren – sidan säger 
   const res = await w.__vtkoll.run();
   assertEqual(res.tokenDirect.kind, 'blocked', 'stoppat');
   const text = w.document.getElementById('result').textContent;
-  assert(text.includes('docs/vasttrafik-worker.js') && text.includes('egen liten server'), text);
+  assert(text.includes('Ta bort den egna nyckeln i appen'), text);
   assert(w.document.getElementById('status').textContent.includes('gick inte att fråga'), w.document.getElementById('status').textContent);
-  // Utan inställningar
+  // Utan inställningar: den gemensamma
   const w2 = await loadVtKoll();
-  assert(w2.document.getElementById('setup').textContent.includes('Västtrafik är inte inställt'), 'säger att det saknas');
+  assert(w2.document.getElementById('setup').textContent.includes('den gemensamma nyckeln från GitHub'), w2.document.getElementById('setup').textContent);
+  w2.__vtkoll.setFetchForTest(fakeVasttrafik([{ scheduledArrival: new Date().toISOString() }]).fetch);
+  const res2 = await w2.__vtkoll.run();
+  assert(res2.source === 'shared' && res2.shared.ok && !res2.tokenDirect, JSON.stringify(res2.shared));
+  assert(w2.document.getElementById('status').textContent.includes('Västtrafik svarar'), w2.document.getElementById('status').textContent);
 });
 
 // ── Mät tidtabell | Bara info ──
@@ -3266,12 +3321,12 @@ window.prepareShot = async function (name) {
   } else if (name === 'vasttrafik-installningar') {
     const r = await midJourneyWithInfo();
     r.rt.stopJourney(false, 'test');
-    r.rt.showVtSettings();
+    withVasttrafik(r);
+    await r.rt.showVtSettings();
   } else if (name === 'vasttrafik-data') {
     const frame = document.getElementById('app');
     frame.style.height = '1600px';
     const w = await loadVtKoll(w => {
-      w.localStorage.setItem('railtimer_vt_v1', JSON.stringify({ key: 'k', secret: 's' }));
       w.localStorage.setItem('kmon_gps_logs_v1', JSON.stringify(VT_LOG));
     });
     w.__vtkoll.setFetchForTest(fakeVasttrafik([{ scheduledArrival: new Date().toISOString() }]).fetch);

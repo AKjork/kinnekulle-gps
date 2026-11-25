@@ -23,7 +23,8 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 | `railtimer-info.js` | Infofliken: möten, enkel- eller dubbelspår, prognos och anslutningar under resan |
 | `railtimer-vt.js` | Västtrafiks API (Planera Resa v4): token, hållplatser vid en station, avgångar och ankomster – bussanslutningar i Info |
 | `vasttrafik-koll.html` | Västtrafik-data: provar Västtrafiks API från telefonen (token, hållplatser, bussar) |
-| `docs/vasttrafik-worker.js` | Egen liten server för Västtrafik (Cloudflare Worker), om Västtrafik inte tillåter token från webbläsaren |
+| `vt-token.json`, `tools/vasttrafik-token.mjs`, `.github/workflows/vasttrafik-token.yml` | Västtrafiks gemensamma token: GitHub Actions hämtar den med hemligheterna `VT_KEY`/`VT_SECRET` och lägger den i `vt-token.json`, som appen läser (sedan 2026-11-25za) |
+| `docs/vasttrafik-worker.js` | Egen liten server för Västtrafik (Cloudflare Worker). Behövs inte: Västtrafik tillåter appens adress (2026-11-25za) |
 | `api-koll.html` | Trafikverket-data: visar vad API:t svarar och appens tider mot Trafikverkets |
 | `kinnekulle-gps.webmanifest` | PWA manifest |
 
@@ -1457,3 +1458,58 @@ André 2026-11-25: "Då släpper vi notiserna för nu. Det löser sig om jag få
 
 ### Tester
 - `node --test "tests/*.test.js"` och `node tests/run-browser-tests.mjs`.
+
+## Uppdatering (2026-11-25za): bussarna utan inställningar – gemensam Västtrafik-nyckel från GitHub
+
+André 2026-11-25:
+- "Tänk om jag vill att en kollega ska testa den?"
+- "Kör repor privat. Allt på GitHub."
+- "Allt som har med den här appen att göra eller detta projektet ska ligga på GitHub. Tanken är att kollegor ska kunna testa och använda appen. Då får det inte vara för krångligt."
+
+Appversion `2026-11-25za` (bokstäverna tog slut vid z; därefter za, zb …).
+
+### Hur det fungerar
+- **Hemligheterna** `VT_KEY` (Klientidentifierare) och `VT_SECRET` (Hemlighet) från Västtrafiks utvecklarportal ligger i kinnekulle-gps → Settings → Secrets and variables → Actions. André lade in dem 2026-11-25. De finns bara där, aldrig i koden eller i filerna.
+- **Workflowet** `.github/workflows/vasttrafik-token.yml` kör `tools/vasttrafik-token.mjs` var 3:e timme, vid körning för hand (*Run workflow*) och när skriptet eller workflowet ändras.
+  - Nytt token hämtas först när det gamla har mindre än 12 h kvar (`RENEW_BELOW_MS`). Ett token gäller 24 h. Det blir ungefär två commits om dygnet av `github-actions[bot]` ("Västtrafik-token (automatiskt)").
+  - Unikt scope per token (`device_railtimer<tid>`), så att Västtrafik ger ett nytt och inte det gamla som snart går ut.
+  - Skriptet provar också CORS från appens adress och kör appens egna frågor vid Lidköping. Resultatet står i filen (`cors`, `check`) och i körningens sammanfattning.
+  - Godtar Västtrafik inte nyckeln blir körningen röd, och ett gammalt token som fortfarande gäller får ligga kvar. Saknas hemligheterna skrivs `error` i filen, bara vid körning för hand eller första gången.
+- **`vt-token.json`** (`{ token, expiresAt, fetchedAt, cors, check, error }`) publiceras med GitHub Pages. Den har aldrig nyckel eller hemlighet. Ändra den aldrig för hand.
+- **Appen** (`railtimer-vt.js`): utan egna inställningar läser klienten `vt-token.json?t=<tid>` med `cache: 'no-store'` (`sharedTokenUrl`, `sourceOf` = `shared`) och sparar token med `source`.
+  - Ordning: egen server, egen nyckel, sedan den gemensamma.
+  - Svarar Västtrafik 401 läses filen igen en gång, eftersom GitHub kan ha förnyat token.
+  - Fel i ord (`parseShared`): *den gemensamma Västtrafik-nyckeln finns inte än*, *… saknas (VT_KEY och VT_SECRET saknas i GitHub)*, *… har gått ut – GitHub har inte förnyat den*, eller *kunde inte hämta den gemensamma nyckeln*.
+- **Service workern** rör inte `vt-token.json`, som `version.json`.
+
+### Provat mot Västtrafik (från GitHub, 2026-11-25)
+- Västtrafik svarar på CORS från `https://akjork.github.io`, både för token (`POST, OPTIONS`, `authorization,content-type`) och för Planera Resa v4 (`GET`, `authorization`). Även svaren på frågorna har `Access-Control-Allow-Origin: https://akjork.github.io`.
+- Den egna servern (`docs/vasttrafik-worker.js`) behövs alltså inte. Med egen nyckel går det också att hämta token direkt från telefonen.
+- Vid Lidköping finns tre hållplatsområden inom 350 m: Lidköpings resecentrum (59 m), Gamla stadens torg (279 m) och Nya stadens torg (316 m). En avgångstavla gav 15 avgångar, 13 bussar, alla med Västtrafiks beräknade tid.
+- Inte provat: telefonen mot `vt-token.json` på riktigt. Kontrollera med ⋮ → Västtrafik → Testa, eller med Provsidan.
+
+### I appen
+- **Buss och Båda går alltid att välja.** Förvalet är fortfarande Tåg. Texten *Bussar kräver en nyckel från Västtrafik* är borttagen.
+- Ett fel med bussarna står i Info med en länk till ⋮ → Västtrafik.
+- **⋮ → Västtrafik (bussar):**
+  - Överst: *Bussanslutningarna i Info kommer från Västtrafik och fungerar utan inställningar.* Under den en rad om nyckeln (`showVtStatus`): *Gemensam nyckel från GitHub – gäller till i morgon 18:03 och förnyas av sig själv*, *Bussarna hämtas med din egen nyckel*, eller felet.
+  - *Egen nyckel (behövs inte)* är ihopfälld och har nyckel, hemlighet och egen server. Den fälls ut när en egen nyckel finns.
+  - **Testa** (`saveAndTestVt`): med ifyllda fält sparas de och provas. Med tomma fält tas den egna nyckeln bort och den gemensamma provas. Bara nyckel utan hemlighet sparas inte.
+  - **Ta bort egen nyckel** syns bara när en finns.
+- **Provsidan** (`vasttrafik-koll.html`) provar den gemensamma först: om filen gäller, till när, när GitHub hämtade den och om frågorna fungerar. Resultatet har aldrig token. *Västtrafik tillåter inte …* föreslår nu att ta bort den egna nyckeln i stället för en egen server (`errorText`).
+
+### Att veta
+- Token i `vt-token.json` kan läsas av alla, eftersom repot är publikt och sidan är publicerad. Med den går det att fråga Planera Resa v4 på Andrés applikation i högst 24 h. Nyckeln och hemligheten syns aldrig. Missbrukas den: byt hemlighet i portalen och i GitHub.
+- **Gör inte kinnekulle-gps privat.** GitHub Pages för privata repon kräver GitHub Enterprise Cloud; på Andrés konto skulle appen sluta publiceras. Det som publiceras med Pages kan ändå alla läsa. Mätdatan ligger i det privata `railtimer-data`.
+- GitHubs villkor för Actions (se 2026-11-25z): workflowet är ett publiceringssteg. Det tar ca 15 s, lägger en fil i repot som publiceras med Pages och svarar inte på några frågor. Det är inte en tjänst som bevakningen var. Actions är gratis för publika repon.
+- GitHub stänger av schemalagda körningar i publika repon efter 60 dagar utan aktivitet. Slutar bussarna efter en lång paus: Actions → *Västtrafik-token* → *Enable workflow* → *Run workflow*.
+- Andra sessioner: `git pull` före commit som vanligt. `github-actions[bot]` committar `vt-token.json` ungefär två gånger om dygnet.
+
+### Tester
+- `node --test "tests/*.test.js"` (187), nya:
+  - `tests/vasttrafik-token.test.js`: nytt token, CORS, appens frågor, inget nytt när det gamla gäller, utan hemligheter och fel nyckel.
+  - *gemensam token: …* i `tests/railtimer-vt.test.js`.
+  - `vt-token.json` förbi service workern i `tests/sw.test.js`.
+- `node tests/run-browser-tests.mjs` (122), nya: *buss: utan inställningar används den gemensamma nyckeln …* och *buss: saknas den gemensamma nyckeln …*. Provsidans två tester provar även den gemensamma. Simulerat: `vt-token.json` i `fakeVasttrafik` (`opts.shared`).
+- Testet *tidtabell: hela vägen …* godtar versioner med två bokstäver (`[a-z]{0,2}`).
+- Bilder: `--shot=vasttrafik-installningar` och `--shot=vasttrafik-data` (utan egen nyckel).

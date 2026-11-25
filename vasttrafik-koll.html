@@ -42,7 +42,7 @@
   <h1>Västtrafik-data</h1>
 </header>
 <main>
-  <p class="intro">Provar Västtrafiks API (Planera Resa v4) från den här telefonen med inställningarna i appen (⋮ → Västtrafik). Sidan visar om token går att hämta direkt, vilka hållplatser som finns vid stationerna och vilka bussar Västtrafik har där nu.</p>
+  <p class="intro">Provar Västtrafiks API (Planera Resa v4) från den här telefonen, som appen gör. Sidan visar om den gemensamma nyckeln från GitHub gäller, vilka hållplatser som finns vid stationerna och vilka bussar Västtrafik har där nu.</p>
   <p id="setup" class="sub"></p>
   <div class="actions">
     <button id="btnRun" type="button">Kör kontroll</button>
@@ -66,6 +66,7 @@
   const KEY_STATIONS = 'kmon_all_stations_v1';
   const KEY_GITHUB = 'railtimer_github_v1';
   const KEY_VT = 'railtimer_vt_v1';
+  const SHARED = 'vt-token.json'; // den gemensamma token som GitHub Actions hämtar (tools/vasttrafik-token.mjs)
   // Stationer att prova när telefonen inte har några körningar: Kinnekullebanans och Västra stambanans byten
   const DEFAULT_NAMES = ['Herrljunga C', 'Vara', 'Lidköping', 'Götene', 'Mariestad', 'Skövde C'];
   const FALLBACK = [{ name: 'Herrljunga C', lat: 58.0796, lon: 13.0258 }];
@@ -105,8 +106,10 @@
   function describeSetup(){
     const s = settings();
     const server = VT.cleanServer(s.server);
-    if(!VT.configured(s)){ $('setup').innerHTML = '<span class="warn-text">Västtrafik är inte inställt.</span> Lägg in nyckel och hemlighet i appen under ⋮ → Västtrafik (bussar).'; return; }
-    $('setup').textContent = server ? `Egen server: ${server}` + (s.key ? ' (nyckel och hemlighet finns också)' : '') : 'Nyckel och hemlighet finns. Token hämtas direkt från Västtrafik.';
+    const src = VT.sourceOf(s, SHARED);
+    $('setup').textContent = src === 'server' ? `Egen server: ${server}` + (s.key ? ' (nyckel och hemlighet finns också)' : '')
+      : src === 'own' ? 'Egen nyckel och hemlighet finns. Token hämtas direkt från Västtrafik.'
+      : 'Ingen egen nyckel: appen använder den gemensamma nyckeln från GitHub.';
   }
 
   async function step(fn){
@@ -116,13 +119,29 @@
 
   async function runCheck(){
     const s = settings();
-    if(!VT.configured(s)){ setStatus('Ställ in Västtrafik i appen först (⋮ → Västtrafik).', 'err'); return null; }
     $('btnRun').disabled = true;
     $('actions').style.display = 'none';
     setStatus('Frågar Västtrafik …');
     const online = () => TEST_MODE || navigator.onLine !== false;
-    const result = { checkedAt: new Date().toISOString(), userAgent: navigator.userAgent, viaServer: !!VT.cleanServer(s.server), server: VT.cleanServer(s.server) || null };
-    // 1. Token direkt från telefonen (bara med nyckel och hemlighet)
+    const result = { checkedAt: new Date().toISOString(), userAgent: navigator.userAgent, source: VT.sourceOf(s, SHARED), viaServer: !!VT.cleanServer(s.server), server: VT.cleanServer(s.server) || null };
+    // 0. Den gemensamma nyckeln: filen från GitHub (utan token i resultatet) och frågor med den
+    {
+      const f = await step(async () => {
+        const resp = await doFetch(SHARED + '?t=' + Date.now(), { cache: 'no-store' });
+        if(!resp.ok) throw Object.assign(new Error(resp.status === 404 ? 'filen finns inte än' : `HTTP ${resp.status}`), { kind: 'setup' });
+        return resp.json();
+      });
+      const file = f.ok ? f.value || {} : null;
+      const parsed = file ? VT.parseShared(file, Date.now()) : null;
+      result.shared = file ? { ok: !parsed.error, error: parsed.error || null, expiresAt: file.expiresAt || null, fetchedAt: file.fetchedAt || null, cors: file.cors || null, check: file.check || null }
+        : { ok: false, error: f.error };
+      if(result.shared.ok){
+        const sc = VT.createClient({ fetch: doFetch, settings: {}, sharedTokenUrl: SHARED, online });
+        const q = await step(() => sc.stopAreasNear(stationsToTry()[0].lat, stationsToTry()[0].lon));
+        result.sharedData = q.ok ? { ok: true } : { ok: false, kind: q.kind, error: q.error };
+      }
+    }
+    // 1. Token direkt från telefonen (bara med egen nyckel och hemlighet)
     if(s.key && s.secret){
       const direct = VT.createClient({ fetch: doFetch, settings: { key: s.key, secret: s.secret, deviceId: s.deviceId }, online });
       const t = await step(async () => { await direct.token(); return true; });
@@ -139,7 +158,7 @@
       result.serverCheck = q.ok ? { ok: true } : { ok: false, kind: q.kind, error: q.error };
     }
     // 3. Hållplatser och bussar, med det som appen använder (egen server om den finns)
-    const client = VT.createClient({ fetch: doFetch, settings: s, online });
+    const client = VT.createClient({ fetch: doFetch, settings: s, sharedTokenUrl: SHARED, online });
     const now = Date.now();
     result.stations = [];
     for(const st of stationsToTry()){
@@ -158,6 +177,7 @@
     lastResult = result;
     render(result);
     const works = result.stations.some(x => x.areas);
+    result.source = client.source;
     setStatus(works ? 'Klart. Västtrafik svarar från telefonen.' : 'Klart, men Västtrafik gick inte att fråga – se nedan.', works ? 'ok' : 'err');
     $('actions').style.display = '';
     $('btnRun').disabled = false;
@@ -171,12 +191,18 @@
 
   function render(r){
     let h = '<section class="card"><h2>Vägen till Västtrafik</h2><div class="scroll"><table><tbody>';
+    if(r.shared){
+      const sh = r.shared;
+      const when = sh.ok && sh.expiresAt ? ` <span class="mut">gäller till ${clock(sh.expiresAt)}, hämtad av GitHub ${clock(Date.parse(sh.fetchedAt))}</span>` : '';
+      h += `<tr><td>Gemensam nyckel (GitHub)</td><td style="white-space:normal">${verdict(sh)}${when}</td></tr>`;
+      if(r.sharedData) h += `<tr><td>Frågor med den gemensamma</td><td>${verdict(r.sharedData)}</td></tr>`;
+    }
     if(r.tokenDirect) h += `<tr><td>Token direkt från telefonen</td><td>${verdict(r.tokenDirect)}</td></tr>`;
     if(r.dataDirect) h += `<tr><td>Frågor direkt från telefonen</td><td>${verdict(r.dataDirect)}</td></tr>`;
     if(r.server) h += `<tr><td>Egen server</td><td>${verdict(r.serverCheck)}</td></tr>`;
     h += '</tbody></table></div>';
     if(r.tokenDirect && !r.tokenDirect.ok && r.tokenDirect.kind === 'blocked'){
-      h += '<p class="sub">Västtrafik tillåter inte att token hämtas från webbläsaren. Appen behöver då en egen liten server som har nyckeln och hemligheten och lägger till token. Den finns färdig i appens repo, <code>docs/vasttrafik-worker.js</code>, och kan köras gratis hos Cloudflare. Lägg sedan in serverns adress i appen under ⋮ → Västtrafik.</p>';
+      h += '<p class="sub">Västtrafik tillåter inte att token hämtas från webbläsaren med den egna nyckeln. Ta bort den egna nyckeln i appen (⋮ → Västtrafik), så används den gemensamma från GitHub.</p>';
     }
     h += '</section>';
     for(const st of r.stations){
