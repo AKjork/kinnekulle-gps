@@ -1678,3 +1678,25 @@ Leave-one-out på `railtimer-data` (55 spår, 2 467 lägen mitt på sträckor, v
 - `node tests/run-browser-tests.mjs` (126), nytt: *gångprofil: GPS-spåren från GitHub ger beräknad ankomst …*. En hel resa läggs i GitHub tre gånger, och nästa resa räknar Blomberg inom 3 s från förra ankomsten. Testet provar panelen, Info, Uppladdning och att spåren inte hämtas igen.
 - Bild: `--shot=resa-beraknat`.
 
+## Uppdatering (2026-11-25ze): åt vilket håll bytet går i Info
+
+André 2026-11-25: "Det är lite otydligt om vi ska vänta på en buss. Om vi har anslutningar med en buss eller om bussen har anslutning med oss. Går det att göra tydligare?" Appversion `2026-11-25ze`. Beräkningen är oförändrad, bara texterna i Info.
+
+- **Rubrikerna** säger riktningen:
+  - *Byter från oss i Hällekis* (förut *Anslutningar i Hällekis*): resenärer från vårt tåg byter till tåget eller bussen. Där är det de som kan behöva vänta på oss.
+  - *Byter till oss i Lidköping* (förut *Ansluter till oss i Lidköping*): resenärer från tåget eller bussen byter till vårt tåg. Där är det vi som kan behöva vänta.
+  - *Byten längs vägen* (förut *Anslutningar längs vägen*), med *Blomberg · vi är där ca 05:15* per station som förut.
+- **Raderna** börjar med en pil: *→ Mariestad Resecentrum* (vidare från oss) eller *← från Skara* (till oss), också längs vägen där båda hållen står under samma station (`connOutTitle`, `connInTitle`). Förut *Blomberg → Mariestad* och *Blomberg: från Skara till oss*.
+- **Statusen** (`connectionStatusHtml`):
+  - från oss: *9 min att byta*, *2 min knappt att byta*, *missas – går före vi är framme* eller *går när vi kommer fram*;
+  - till oss: *6 min hinner till oss*, *2 min knappt till oss*, *hinner inte till oss – kommer efter vi gått* eller *kommer när vi går*.
+  - Förut *missas – 0 min att byta* och *hinner*, som inte sa åt vilket håll.
+- Under valet Tåg | Buss | Båda: *→ resenärer byter från oss · ← resenärer byter till oss*. Förklaringen till ☆ säger *Tryck ☆ på ett byte som resenärer gör.*
+- *Så räknas det* förklarar båda hållen och vem som kan behöva vänta.
+- Meddelandena, uppläsningen, utropet och ☎-förslaget hade redan riktningen (*… hinner inte till oss*, *kan vi vänta på …*, *kan 3051 vänta …*) och är oförändrade.
+
+### Tester
+- `node --test "tests/*.test.js"`.
+- `node tests/run-browser-tests.mjs`: *info: mötande tågets position, anslutningar längs vägen …* har även ett tåg som byter till oss i Blomberg och kontrollerar pilarna, statusen och förklaringen. *buss: Buss visar bussarna …* kontrollerar *Byter från oss i Hällekis* och *→ … missas – går när vi kommer fram*.
+- Bilder: `--shot=info-buss` och `--shot=info-utrop` (båda hållen vid Blomberg).
+

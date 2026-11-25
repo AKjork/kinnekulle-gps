@@ -1008,7 +1008,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25zd'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-25ze'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -3996,17 +3996,22 @@
     return infoRow(m.level, roundClock(planned), `${escapeHtml(sigName(at))} · möte ${escapeHtml(train)}`, sub, status);
   }
 
+  // Statusen säger åt vilket håll bytet går: från oss (de ska hinna till tåget eller bussen) eller till oss
+  // (resenärerna ska hinna till vårt tåg – där är det vi som kan behöva vänta)
   function connectionStatusHtml(c, incoming){
     if(c.status==='inställt') return '<span class="dl-late">inställt</span>';
     if(c.status==='avgått') return '<span class="dl-very-late">avgått</span>';
     if(c.status==='missas'){
-      const why = c.transferMin<0 ? (incoming?'efter vår avgång':'före vår ankomst') : `${c.transferMin} min att byta`;
-      return `<span class="dl-very-late">${incoming?'hinner inte':'missas'}</span><small>${why}</small>`;
+      const why = c.transferMin<0 ? (incoming?'kommer efter vi gått':'går före vi är framme') : (incoming?'kommer när vi går':'går när vi kommer fram');
+      return `<span class="dl-very-late">${incoming?'hinner inte till oss':'missas'}</span><small>${why}</small>`;
     }
     const cls = c.status==='knappt' ? 'dl-late' : 'dl-live';
-    const word = c.status==='knappt' ? 'knappt' : (incoming?'hinner':'att byta');
+    const word = incoming ? (c.status==='knappt' ? 'knappt till oss' : 'hinner till oss') : (c.status==='knappt' ? 'knappt att byta' : 'att byta');
     return `<span class="${cls}">${c.transferMin} min</span><small>${word}</small>`;
   }
+  // Radens rubrik: → dit resenärerna åker vidare från oss, ← varifrån de kommer till oss
+  const connOutTitle = c => `→ ${escapeHtml(connTo(c)||'?')}`;
+  const connInTitle = c => `← från ${escapeHtml(connFrom(c)||'?')}`;
   function connectionSub(c){
     const delay = c.status==='avgått' ? `avgick ${roundClock(c.dep)}` : (c.delayMin>0 ? `${c.delayMin} min sent` : (c.delayMin<0 ? `${-c.delayMin} min tidigt` : 'i tid'));
     return [escapeHtml(trainText(c)), c.track?`${c.kind==='buss'?'läge':'spår'} ${escapeHtml(c.track)}`:'', delay].filter(Boolean).join(' · ');
@@ -4035,7 +4040,8 @@
     if(!vtOn) h+='<p class="info-hint">Bussarna från Västtrafik går inte att hämta – ladda om appen.</p>';
     else if(mode!=='tag' && infoState.vtError) h+=`<p class="info-hint err">Västtrafik: ${escapeHtml(String(infoState.vtError).replace(/\.$/,''))}.${infoState.vtFetchedAt?` Bussarna är från ${formatClock(infoState.vtFetchedAt)}.`:''} <button type="button" class="linkish" data-info="vt-settings">Västtrafik-inställningar</button></p>`;
     else if(!alerts && mode!=='bada') h+='<p class="info-hint">Varningarna och utropet gäller alla anslutningar, även de dolda.</p>';
-    if(!markedConnections().size) h+='<p class="info-hint">Tryck ☆ på en anslutning som resenärer ska byta till.</p>';
+    h+='<p class="info-hint conn-legend">→ resenärer byter från oss · ← resenärer byter till oss</p>';
+    if(!markedConnections().size) h+='<p class="info-hint">Tryck ☆ på ett byte som resenärer gör.</p>';
     return h;
   }
   // Rubriken för ett anslutningsavsnitt, med valet och hur många som är dolda: "· bara buss · 2 tåg dolda"
@@ -4133,14 +4139,14 @@
 
     // Vid stationerna längs vägen: tåg och bussar därifrån efter vår ankomst, och de som ansluter till oss där
     if((m.stops && m.stops.length) || anyHidden(m.stopsHidden)){
-      html+=connSecHtml('Anslutningar längs vägen', mode, m.stopsHidden, `stationer inom ${D.midHorizonMin} min`);
+      html+=connSecHtml('Byten längs vägen', mode, m.stopsHidden, `stationer inom ${D.midHorizonMin} min`);
       for(const st of m.stops){
         const where=escapeHtml(sigName(st.sig));
         // Bytena räknas från när vi är framme där, inte från nu: säg det
         const eta=m.preds && m.preds[st.i] ? m.preds[st.i].arr : null;
         if(eta!=null) html+=`<div class="info-stop">${where} · vi är där ca ${roundClock(eta)}</div>`;
-        for(const c of st.connections) html+=connRow(c, `${where} → ${escapeHtml(connTo(c)||'?')}`, false);
-        for(const c of st.incoming) html+=connRow(c, `${where}: från ${escapeHtml(connFrom(c)||'?')} till oss`, true);
+        for(const c of st.connections) html+=connRow(c, connOutTitle(c), false);
+        for(const c of st.incoming) html+=connRow(c, connInTitle(c), true);
       }
       if(!m.stops.length) html+=`<div class="info-empty">Inga ${connNoun(mode)} längs vägen.</div>`;
     }
@@ -4149,23 +4155,23 @@
     // om det inte finns några – och varför.
     if(m.incoming && (m.incoming.length || anyHidden(m.incomingHidden) || mode!=='tag')){
       const startName=sigName(line[0].sig);
-      html+=connSecHtml(`Ansluter till oss i ${startName}`, mode, m.incomingHidden);
+      html+=connSecHtml(`Byter till oss i ${startName}`, mode, m.incomingHidden);
       html+= m.incoming.length
-        ? m.incoming.map(c=>connRow(c, `Från ${escapeHtml(connFrom(c)||'?')}`, true)).join('')
+        ? m.incoming.map(c=>connRow(c, connInTitle(c), true)).join('')
         : `<div class="info-empty">${busEmptyText(line[0].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} kommer till ${escapeHtml(startName)} ${D.transferMin}–${D.incomingWindowMin} min före vår avgång.`}</div>`;
     }
 
     // Anslutningar i slutstationen. Ingen egen bytestid: minuterna att byta visas (se connectionStatus i railtimer-info.js)
-    html+=connSecHtml(`Anslutningar i ${endName}`, mode, m.connectionsHidden);
+    html+=connSecHtml(`Byter från oss i ${endName}`, mode, m.connectionsHidden);
     html+= m.connections.length
-      ? m.connections.map(c=>connRow(c, escapeHtml(connTo(c)||'?'), false)).join('')
+      ? m.connections.map(c=>connRow(c, connOutTitle(c), false)).join('')
       : `<div class="info-empty">${busEmptyText(line[line.length-1].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst enligt tidtabell.`}</div>`;
 
     const basis = (m.recoveryObs ? `Trafikverkets tider och egna gångtider (upp till ${m.recoveryObs} körningar per sträcka)` : 'Trafikverkets tider och tidtabellen') +
       (legProfiles.size ? '. Till nästa station räknas tiden från var vi är, ur tidigare GPS-spår på samma sträcka' : '');
     const notShown=(m.messagesHidden||[]).filter(h=>h.reason!=='inte under resan').length;
     const what = mode==='buss' ? 'bussar' : (mode==='bada' ? 'tåg och bussar' : 'tåg');
-    const transferNote=`Anslutningar: ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. ` +
+    const transferNote=`Byter från oss (→): ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll; där är det de som kan behöva vänta på oss. Byter till oss (←): ${what} som kommer före vår avgång; där är det vi som kan behöva vänta. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. ` +
       (mode!=='tag' ? `Bussarna kommer från Västtrafik (hållplatser inom ${VT ? VT.DEFAULTS.stopRadiusM : 350} m från stationen), tågen från Trafikverket. ` : '');
     // Felet syns alltid. Förklaringen av reglerna är ihopfälld: den behövs sällan under resan.
     if(infoState.error) html+=`<p class="info-hint err">Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).</p>`;

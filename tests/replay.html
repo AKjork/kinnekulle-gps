@@ -2501,7 +2501,8 @@ test('info: mötande tågets position, anslutningar längs vägen och färdigt u
   const B = Date.parse(route[3].scheduledArrival);
   const trv = fakeTrafikverketInfo(route, {
     positions: [{ Train: { OperationalTrainNumber: '3347' }, Position: { WGS84: `POINT (${STATIONS[5][2]} ${STATIONS[5][1]})` }, TimeStamp: new Date(now - 30000).toISOString(), Speed: 0 }],
-    extraRows: (row, dest) => [row('3071', 'Bmb', 'Avgang', B + 6 * 60000, dest('Mst'))]
+    extraRows: (row, dest) => [row('3071', 'Bmb', 'Avgang', B + 6 * 60000, dest('Mst')),
+      row('3070', 'Bmb', 'Ankomst', B - 6 * 60000, { FromLocation: [{ LocationName: 'Mst', Priority: 1, Order: 0 }], ProductInformation: [{ Code: 'PNA054', Description: 'Västtågen' }], TrackAtLocation: '1' })]
   });
   r0.w.fetch = trv.fetch;
   await r0.rt.refreshInfo();
@@ -2510,7 +2511,12 @@ test('info: mötande tågets position, anslutningar längs vägen och färdigt u
   const pane = () => r0.w.document.getElementById('infoPane').textContent;
   assert(trv.calls.some(b => b.includes('objecttype="TrainPosition"') && b.includes('value="3347"')), 'positionen för det mötande tåget hämtas');
   assert(/km från Råbäck · 0 km\/h · 30 s sedan/.test(pane()), pane());
-  assert(pane().includes('Anslutningar längs vägen') && pane().includes('Blomberg → Mariestad'), pane());
+  // Byten längs vägen: åt vilket håll bytet går står i varje rad (→ från oss, ← till oss) och i statusen
+  assert(pane().includes('Byten längs vägen') && /Blomberg · vi är där ca \d\d:\d\d/.test(pane()), pane());
+  const midRows = Array.from(r0.w.document.querySelectorAll('#infoPane .conn-row')).map(e => e.textContent);
+  assert(midRows.some(t => t.includes('→ Mariestad') && t.includes('Västtågen 3071') && /att byta|missas/.test(t)), midRows.join(' | '));
+  assert(midRows.some(t => t.includes('← från Mariestad') && t.includes('Västtågen 3070') && t.includes('till oss')), midRows.join(' | '));
+  assert(pane().includes('→ resenärer byter från oss · ← resenärer byter till oss'), 'förklaringen av pilarna');
   // Utropet: sena på grund av mötet, och anslutningen i Hällekis som missas
   const sv = r0.w.document.getElementById('utropText').textContent;
   assert(sv.startsWith('Vi är cirka') && sv.includes('på grund av möte med ett försenat tåg') && sv.includes('Beräknad ankomst till Hällekis'), sv);
@@ -2601,7 +2607,7 @@ test('buss: utan inställningar används den gemensamma nyckeln från GitHub –
   assertEqual(btn('tag').getAttribute('aria-pressed'), 'true', 'förval: Tåg');
   assert(!btn('buss').disabled && !btn('bada').disabled, 'Buss och Båda går att välja utan nyckel');
   assert(!infoPaneText(r).includes('nyckel'), 'inget att fylla i: ' + infoPaneText(r));
-  assert(infoPaneText(r).includes('Tryck ☆ på en anslutning som resenärer ska byta till.'), 'förklaringen till ☆');
+  assert(infoPaneText(r).includes('Tryck ☆ på ett byte som resenärer gör.'), 'förklaringen till ☆');
   assertEqual(vt.calls.length, 0, 'med Tåg frågas inte Västtrafik');
   // Buss: token från vt-token.json (förbi cachen), sedan bussarna
   btn('buss').click();
@@ -2665,7 +2671,7 @@ test('buss: Buss visar bussarna i slutstationen och döljer tågen med antal; va
   r.rt.setInfoTab('info');
   const d = r.w.document;
   assert(!d.querySelector('[data-info="conn-buss"]').disabled, 'Buss går att välja med nyckel');
-  assert(infoPaneText(r).includes('Anslutningar i Hällekis · bara tåg'), 'rubriken säger valet: ' + infoPaneText(r));
+  assert(infoPaneText(r).includes('Byter från oss i Hällekis · bara tåg'), 'rubriken säger valet: ' + infoPaneText(r));
   const vibBefore = r.vibrations.length;
   d.querySelector('[data-info="conn-buss"]').click();
   await realSleep(80);
@@ -2676,9 +2682,9 @@ test('buss: Buss visar bussarna i slutstationen och döljer tågen med antal; va
   assertEqual(m.connections[0].status, 'missas', 'B1 hinns inte när vi är 6 min sena');
   assertEqual(m.connections[1].delayMin, 2, 'B2 med Västtrafiks beräknade tid');
   assertEqual(m.connectionsHidden, { 'tåg': 2, buss: 0 }, 'två tåg dolda');
-  assert(infoPaneText(r).includes('Anslutningar i Hällekis · bara buss · 2 tåg dolda'), infoPaneText(r));
+  assert(infoPaneText(r).includes('Byter från oss i Hällekis · bara buss · 2 tåg dolda'), infoPaneText(r));
   const rows = connRows(r);
-  assert(rows.some(t => t.includes('Mariestad Resecentrum') && t.includes('Buss B1') && t.includes('läge A') && t.includes('missas')), rows.join(' | '));
+  assert(rows.some(t => t.includes('→ Mariestad Resecentrum') && t.includes('Buss B1') && t.includes('läge A') && t.includes('missas') && t.includes('går när vi kommer fram')), rows.join(' | '));
   assert(!rows.some(t => t.includes('Västtågen')), 'tågen syns inte');
   assertEqual(vt.tokens(), 1, 'ett token');
   assert(vt.calls.some(c => c.url.includes('/stop-areas/G-HLK/departures?startDateTime=')), 'avgångarna i Hällekis');
@@ -3535,7 +3541,8 @@ window.prepareShot = async function (name) {
     const B = Date.parse(route[3].scheduledArrival);
     const trv = fakeTrafikverketInfo(route, {
       positions: [{ Train: { OperationalTrainNumber: '3347' }, Position: { WGS84: `POINT (${STATIONS[5][2]} ${STATIONS[5][1]})` }, TimeStamp: new Date(now - 30000).toISOString(), Speed: 0 }],
-      extraRows: (row, dest) => [row('3071', 'Bmb', 'Avgang', B + 6 * 60000, dest('Mst'))]
+      extraRows: (row, dest) => [row('3071', 'Bmb', 'Avgang', B + 6 * 60000, dest('Mst')),
+        row('3070', 'Bmb', 'Ankomst', B - 6 * 60000, { FromLocation: [{ LocationName: 'Mst', Priority: 1, Order: 0 }], ProductInformation: [{ Code: 'PNA054', Description: 'Västtågen' }], TrackAtLocation: '1' })]
     });
     r0.w.fetch = trv.fetch;
     if (name === 'info-tagvard') r0.rt.state.purpose = 'info'; // Bara info: utropet är öppet från början
