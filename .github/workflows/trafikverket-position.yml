@@ -1,0 +1,40 @@
+# Prov mot Trafikverkets riktiga API (utvecklingsmiljön når det inte): går det att se var tåget är utan att vara på
+# tåget? Tågpositionen (fordonens GPS, TrainPosition) och rapporterna (TrainAnnouncement) för tågen på
+# Kinnekullebanan och Älvsborgsbanan i några minuter. Ett teststeg: skriptet frågar, skriver ut svaret i körningens
+# logg och sammanfattning och avslutas. Inget publiceras och inget svarar på frågor härifrån.
+# Körs när skriptet ändras, eller för hand: Actions → Tågposition-prov → Run workflow.
+name: Tågposition-prov
+
+on:
+  workflow_dispatch:
+    inputs:
+      numbers:
+        description: 'Bara de här tågnumren (mellanslag emellan); tomt = alla tåg på linjen nu'
+        required: false
+      duration:
+        description: 'Hur länge positionen läses av (sekunder)'
+        required: false
+        default: '240'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/trafikverket-position.yml'
+      - 'tools/trafikverket-position.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  position:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tågposition och rapporter
+        run: node tools/trafikverket-position.mjs
+        env:
+          NUMBERS: ${{ github.event.inputs.numbers }}
+          DURATION_S: ${{ github.event.inputs.duration || '240' }}
