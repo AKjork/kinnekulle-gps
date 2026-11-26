@@ -50,6 +50,12 @@
       "short_name": "Bara info",
       "url": "./index.html#ny=info",
       "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Var är tåget?",
+      "short_name": "Var är tåget?",
+      "url": "./index.html#ny=folj",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }

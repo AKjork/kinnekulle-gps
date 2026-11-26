@@ -1171,3 +1171,19 @@ test('plattformar i Info: samma eller annan plattform i anslutningen, förslaget
   assert.match(I.announcement(m0, opts).sv, /det går från spår 3\.$/);
 });
 
+
+test('tågpositioner: bara dagens körning när avgångsdatumet anges, och raderade räknas inte', () => {
+  // Provet 2026-11-26: Trafikverket hade gårdagens 23248 bredvid dagens
+  const list = [
+    { Train: { OperationalTrainNumber: '23248', OperationalTrainDepartureDate: '2026-11-25T00:00:00.000+01:00' }, Position: { WGS84: 'POINT (15.11 59.07)' }, TimeStamp: '2026-11-25T08:57:01.000+01:00', Speed: 0 },
+    { Train: { OperationalTrainNumber: '23248', OperationalTrainDepartureDate: '2026-11-26T00:00:00.000+01:00' }, Position: { WGS84: 'POINT (14.61 58.99)' }, TimeStamp: '2026-11-26T08:36:28.000+01:00', Speed: 0, Bearing: 73 },
+    { Train: { OperationalTrainNumber: '23248', OperationalTrainDepartureDate: '2026-11-26T00:00:00.000+01:00' }, Position: { WGS84: 'POINT (14.70 59.00)' }, TimeStamp: '2026-11-26T08:40:00.000+01:00', Deleted: true }
+  ];
+  const today = I.parsePositions(list, { date: '2026-11-26' }).get('23248');
+  assert.equal(today.date, '2026-11-26');
+  assert.equal(today.lon, 14.61);
+  assert.equal(today.bearing, 73);
+  assert.equal(I.parsePositions(list, { date: '2026-11-24' }).size, 0, 'ingen position för en annan dag');
+  assert.equal(I.parsePositions(list).get('23248').t, Date.parse('2026-11-26T08:36:28.000+01:00'), 'utan datum: den senaste som inte är raderad');
+  assert.ok(I.queryPositions(['23248']).includes('<INCLUDE>Train.OperationalTrainDepartureDate</INCLUDE>'));
+});

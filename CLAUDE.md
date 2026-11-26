@@ -21,6 +21,8 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 | `railtimer-avbrott.js`, `railtimer-github.js`, `railtimer-karta.js`, `railtimer-analys.js` | Avbrott, uppladdning, kartans linje längs spåret, analysens beräkningar |
 | `railtimer-trv.js` | Trafikverkets API: frågor, rapporterade tider för en körning, jämförelse, kontrollen |
 | `railtimer-info.js` | Infofliken: möten, enkel- eller dubbelspår, prognos och anslutningar under resan |
+| `railtimer-folj.js` | Var är tåget?: var ett tåg är utan telefonens GPS, ur Trafikverkets tågposition (tågets egen GPS) och rapporter. Rena funktioner (sedan 2026-11-26d) |
+| `tools/trafikverket-position.mjs`, `.github/workflows/trafikverket-position.yml` | Prov mot Trafikverkets riktiga API från GitHub Actions: tågpositionen och rapporterna för tågen på Kinnekullebanan i några minuter. Körs när skriptet ändras eller för hand; skriver bara i körningens logg och sammanfattning (sedan 2026-11-26d) |
 | `railtimer-infra.js` | Trafikverkets uppgifter om infrastrukturen: linjebokens spårtyp mellan platserna, mötesplatser och plattformar. Genereras av `tools/infrastruktur.mjs`, ändras inte för hand (sedan 2026-11-26b) |
 | `tools/infrastruktur.mjs`, `tools/infrastruktur-hamta.sh`, `.github/workflows/infrastruktur-prov.yml` | Hämtar linjeboken och järnvägsnätsbeskrivningens bilagor 2 A och 2 B från GitHub Actions (utvecklingsmiljön når inte bransch.trafikverket.se), gör om dem till `railtimer-infra.js` och kontrollerar att filen stämmer (sedan 2026-11-26b) |
 | `railtimer-vt.js` | Västtrafiks API (Planera Resa v4): token, hållplatser vid en station, avgångar och ankomster – bussanslutningar i Info |
@@ -2039,3 +2041,66 @@ André 2026-11-26 lade till appen på hemskärmen och ville ha en annan ikon än
 
 ### Tester
 - `node --test "tests/*.test.js"` och `node tests/run-browser-tests.mjs "app:"` (manifestet och ikonerna finns, guiden).
+
+## Uppdatering (2026-11-26d): Var är tåget? – följa ett tåg utan telefonens GPS
+
+André 2026-11-26: "om jag tex skulle vilja se/följa ett tåg som jag inte jobbar på, tex att jag vill visa en kollega när jag är i rastlokalen. Då ska appen kunna följa tåget men utan med användarens … gps." "Det är också bra om säg gps inte fungerar av någon anledning." Och: på System M vet Trafikverket bara att tåget lämnat till exempel Lidköping och är mellan Lidköping och Mariestad, medan tågkartan använder fordonens GPS. "Så viktig med kontroll att vi faktiskt kan se vart tåget är. Vi kanske också ska införa en funktion som heter, var är tåget eller liknande. tex, jag ska köra ett tåg som anländer lidköping men jag vill kolla mer exakt vart det befinner sig och hur det ligger till i tid." Appversion `2026-11-26d`. Logiken för ankomst och avgång är oförändrad.
+
+### Provat mot Trafikverket (från GitHub, 2026-11-26 kl. 08:36, workflow *Tågposition-prov*, körning 45776497750)
+`tools/trafikverket-position.mjs` läste av TrainPosition var 10:e sekund i 4 min för 14 av de 28 tåg som var på Kinnekullebanan och Älvsborgsbanan.
+- **Tågpositionen (TrainPosition 1.1, `järnväg.trafikinfo`) är fordonens egen GPS**, samma som tågkartan. 14 av 14 tåg hade en position, men för 24347 (3347) var den 20 min gammal. Fältet `Speed` fanns för de flesta.
+- **Ny position i median var 11,5:e sekund, P90 22 s.** Positionen var i median 11 s gammal när den hämtades, P90 57 s. CORS från appens adress: `*`.
+- **Rapporterna räcker inte på System M:** 53346 (3346) stod enligt sin GPS still i Mariestad i 4 min, medan senaste rapporten var *Forshem avg 08:18:00*. På Kinnekullebanan var alla rapporter i hela minuter.
+- **Gårdagens position finns kvar** för samma tågnummer: frågan utan INCLUDE gav 23248 med `OperationalTrainDepartureDate` 2026-11-25. Därför räknas bara positioner för tågets avgångsdatum (`parsePositions(list, { date })`).
+- Fälten: `Train.OperationalTrainNumber`, `Train.AdvertisedTrainNumber`, `Train.OperationalTrainDepartureDate`, `Train.JourneyPlanNumber`, `Position.WGS84`, `Position.SWEREF99TM`, `TimeStamp`, `Speed`, `Bearing`, `Status.Active`, `ModifiedTime` och `Deleted`.
+- SSE (`sseurl="true"`): adressen kom och strömmen öppnades (HTTP 200, CORS `*`), men gav inga händelser på 90 s. Inte undersökt vidare; att fråga var 15:e sekund räcker.
+
+### Beräkningen (`railtimer-folj.js`, rena funktioner)
+- `buildRouteAxis(stations, legPaths)`: linjen längs rutten, med kartans spår från OpenStreetMap per sträcka eller raka linjer. `fromInfoAxis` gör samma sak av gångprofilernas linje. `locate` ger meter längs linjen, och linjen förlängs före start och efter slut (ett tåg på väg till startstationen).
+- `follow({ route, line, axis, pos, memo, now })`:
+  - **Rapporterna:** stationer före den senaste rapporten är passerade. Det gäller också en rapport på en driftplats som inte är med i rutten.
+  - **Positionen** gäller när den är högst 5 min gammal, högst 1,5 km från linjen och inte mer än 2 km bakom det tåget redan passerat.
+    - En station är passerad när tåget är 400 m förbi mitten. Står tåget still, eller saknas farten, krävs 1 200 m (utfartssignalen).
+    - Vid stationen: inom 500 m och står still (vid startstationen oavsett fart).
+  - **Tåget går aldrig bakåt** (`memo.passedIdx`).
+  - **Tider:** rapportens tid (`src: 'rapport'`). Annars en ungefärlig tid ur positionerna (`ca`): när tåget passerar stationens mitt mellan två positioner högst 4 min isär, eller vid ett stopp första positionen stilla och mitt emellan sista stilla och första i rörelse.
+  - **Ankomsten rapporterad men inte avgången**, mer än 3 min efter planerad (eller Trafikverkets beräknade) avgång och utan position: `unsure`. Appen säger *vid eller efter* stationen, aldrig att tåget står där.
+  - **Beräknad ankomst** (`est`). Med position: resten av sträckan i planerad gångtid från positionens tid. Utan position: tidtabellen plus förseningen vid senaste rapporten. Den första station som tåget enligt den inte hunnit till är *nästa enligt tidtabellen* (`behind`: stationerna före den bör ha passerats). De räknas inte som passerade.
+  - `between`: utan position bara mellan vilka stationer tåget är. `source`: `position`, `rapport` eller `ingen`.
+
+### Var är tåget? i appen
+- **Tredje valet** i startformuläret: *Mät tidtabell | Bara info | Var är tåget?* (`purpose` `follow`).
+  - Fordon, anteckning och dagens tur döljs. Start och slut är valfria: tomt ger tågets hela väg, och slutstationen kan vara där man tar över tåget.
+  - Tågnumret behövs (ATN eller OTN). En station som inte är på tågets väg, eller fel håll, ger ett fel.
+  - Knappen heter *Visa var tåget är*. Startar aldrig av sig själv, och GPS-uppvärmningen är avstängd.
+- **Telefonens GPS används inte alls** (`handlePosition` gör ingenting). Tågets position hämtas var 15:e sekund medan appen syns (`refreshFollow`, `ourOtns`: alla OTN när numret byts längs vägen), och rapporterna med Info varje minut.
+- **Samma vy som en resa** (`applyFollowResult`):
+  - stationerna får Trafikverkets tider (`arrivalSource` `trv`, eller `trvca` för ungefär, visas *≈07:54*) och `followPassed`, även utan tid (*passerad – ingen tid*);
+  - panelen visar nästa station, avståndet längs spåret eller fågelvägen och beräknad ankomst;
+  - kartans markör är tågets position i blått (`#mapPos.trv`).
+- **Raden om källan** i panelen (`#npSource`, `followSourceHtml`): André ville ha kontroll på att appen faktiskt ser var tåget är.
+  - *📡 Tågets GPS · 12 s sedan · avstånd längs spåret*, eller varför positionen inte används: *senaste positionen är 20 min gammal*, *… från linjen* eller *positionen hoppade bakåt*.
+  - *Senaste rapport: avg. Lidköping 07:49 (+1 min)*.
+  - Utan position: *Inga rapporter sedan dess. Enligt tidtabellen och förseningen bör tåget nu vara mellan Filsbäck och Källby.*, *Någonstans mellan … – var exakt syns inte i rapporterna.* eller *Ankom Källby, men avgången är inte rapporterad …*.
+  - Panelen säger då *Nästa enligt tidtabellen* och *avstånd okänt*. Kartan markerar sträckan där tåget kan vara (`followSpan`, blå prickar), utan markör.
+- **Info räknar från var tåget är:** `posAt` från tågets position, eller från *bör vara* enligt tidtabellen. Förut hade Info räknat från den senast rapporterade stationen med *aldrig före nu*, och utan rapporter däremellan (System M) blivit för sen. Info säger *räknat från var tåget är*. Utrop, förslaget att ringa trafikledningen, vibration och uppläsning finns inte här, eftersom man inte är på tåget.
+- **Framme:** när ankomsten till slutstationen rapporteras, eller tåget står där, slutar appen följa. *Tåg 3 3 4 7 är framme i Hällekis.* Rapporten säger *Tåget är framme i …* eller *Slutade följa tåget*.
+- **Inget sparas:** ingen körning, ingen uppladdning, inget GPS-spår och inte med i dagens tur. *Återuppta* fungerar (`followMemo` sparas med resan).
+- *Sluta följa tåget* i stället för Avsluta. Knapparna för manuell tid, Halt?, kryssrutorna, anteckningar och platsminnen döljs (`#journey.follow-only`).
+- Genvägen *Var är tåget?* på ikonen (Android, `#ny=folj`).
+
+### När telefonens GPS inte svarar under en resa
+- `checkGpsFallback` körs varje sekund. Trafikverket tar över när GPS:en är nekad eller saknas, eller inte gett en position säkrare än ±100 m på 45 s (`GPS_LOST_MS`, räknat från start eller från att appen syns igen). Det kräver tågnumret.
+- **Bara info:** *GPS:en svarar inte – tåget följs med Trafikverkets uppgifter*. Stationerna fylls i som i Var är tåget?, men bara framåt och aldrig över telefonens egna tider. När GPS:en är tillbaka tar den över (*GPS:en är tillbaka*), och avbrottet hanteras som förut.
+- **Mät tidtabell:** *GPS:en svarar inte – mätningen väntar på GPS:en. Kartan och Info visar tåget enligt Trafikverket.* Trafikverkets tider och läge skrivs **aldrig** in i mätningen; körningen har bara telefonens tider, och tiderna under glappet blir avbrott som förut. Panelen visar källan, kartan tågets position och Info räknar från den.
+- `currentFix()`: telefonens GPS när den är färsk, annars tågets position (högst 90 s gammal). Den används för gångprofilerna (`nextArrivalEstimate`), Info (`ourPos`) och kartan (`mapMarker`).
+
+### Inte provat
+- På telefon, och mot riktiga tåg under en hel resa. Positionerna och rapporterna är provade från GitHub, och appen mot simulerade svar.
+- Hur tåg utan position (24347 i provet) ser ut över tid: om positionen kommer tillbaka, eller om tåget bara har rapporter hela vägen.
+- Reserven när GPS:en inte svarar: att 45 s är lagom, och att Safari och Chrome slutar skicka positioner i stället för att skicka dåliga. Bara simulerat.
+
+### Tester
+- `node --test "tests/*.test.js"` (238), nya: `tests/railtimer-folj.test.js` (10: linjen, bara rapporter, driftplats, ankomst utan avgång, positionen med ca-tider och stopp, gammal och långt från linjen, före avgång, framme, gångprofilernas linje, beräknad ankomst) och *tågpositioner: bara dagens körning …* i `tests/railtimer-info.test.js`.
+- `node tests/run-browser-tests.mjs`, nya: *var är tåget: startformuläret …*, *var är tåget: tågets GPS från Trafikverket …*, *var är tåget: utan tågets position bara rapporterna …*, *reserv: Bara info …* och *reserv: Mät tidtabell …*. Simulerat: `fakeFollowTrv` i `tests/replay.html`. *app: genvägarna …* har nu Var är tåget?.
+- Bilder: `--shot=startformular-var-ar-taget`, `--shot=var-ar-taget` och `--shot=var-ar-taget-rapport`.

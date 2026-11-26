@@ -3223,6 +3223,275 @@ test('bara info: GPS:en följer tåget hela vägen, Halt? syns inte, och vid slu
   assertEqual(r2.w.document.getElementById('btnFinish').textContent, 'Avsluta resan', 'inget sparas: knappen säger bara Avsluta');
 });
 
+// ── Var är tåget? (2026-11-26d): ett tåg man inte är på, utan telefonens GPS ──
+/* Simulerat Trafikverket för ATN 3347 (OTN 23347) Lidköping → Hällekis, med riktig klocka: planerade tider
+   (minuter efter base) och det som testet lägger i st.reports ('Lkp:dep' → tid) och st.positions
+   ([{ at: [stationsindex, andel av sträckan], t, speed, date }]). */
+const FOLLOW_PLAN = { Lkp: [null, 0], 'Fiä': [6, 6], Kll: [11, 11], Bmb: [15, 16], Rbk: [24, 24], Hlk: [30, null] };
+function fakeFollowTrv(st) {
+  const iso = t => new Date(t).toISOString();
+  const date = new Date(st.base).toISOString().slice(0, 10);
+  const rows = () => {
+    const list = [];
+    for (const [sig, [a, d]] of Object.entries(FOLLOW_PLAN)) {
+      for (const [act, m, key] of [['Ankomst', a, 'arr'], ['Avgang', d, 'dep']]) {
+        if (m == null) continue;
+        const t = st.base + m * 60000;
+        const rep = st.reports[`${sig}:${key}`];
+        list.push(Object.assign({ OperationalTrainNumber: '23347', AdvertisedTrainIdent: '3347', DepartureDateOTN: date + 'T00:00:00.000+01:00',
+          LocationSignature: sig, ActivityType: act, Advertised: true, AdvertisedTimeAtLocation: iso(t), LocationDateTimeOTN: iso(t),
+          ProductInformation: [{ Code: 'PNA054', Description: 'Västtågen' }], ToLocation: [{ LocationName: 'Hlk', Priority: 1, Order: 0 }] },
+          rep != null ? { TimeAtLocation: iso(Math.floor(rep / 60000) * 60000), TimeAtLocationWithSeconds: iso(rep) } : {}));
+      }
+    }
+    return list;
+  };
+  const where = ([i, f]) => {
+    const A = STATIONS[i], B = STATIONS[Math.min(i + 1, STATIONS.length - 1)];
+    return { lat: A[1] + (B[1] - A[1]) * f, lon: A[2] + (B[2] - A[2]) * f };
+  };
+  const calls = [];
+  const resp = obj => ({ ok: true, status: 200, json: async () => obj });
+  const fetch = async (url, init) => {
+    const body = String(init && init.body || '');
+    calls.push(body);
+    if (body.includes('objecttype="TrainPosition"')) {
+      return resp({ RESPONSE: { RESULT: [{ TrainPosition: (st.positions || []).map(p => {
+        const c = where(p.at);
+        return { Train: { OperationalTrainNumber: '23347', OperationalTrainDepartureDate: (p.date || date) + 'T00:00:00.000+01:00' },
+          Position: { WGS84: `POINT (${c.lon} ${c.lat})` }, TimeStamp: iso(p.t), ...(p.speed != null ? { Speed: p.speed } : {}) };
+      }) }] } });
+    }
+    if (body.includes('objecttype="OperativeEvent"')) return resp({ RESPONSE: { RESULT: [{ OperativeEvent: [] }] } });
+    if (body.includes('objecttype="TrainStation"')) return resp({ RESPONSE: { RESULT: [{ TrainStation: [] }] } });
+    if (body.includes('TrainAnnouncement')) return resp({ RESPONSE: { RESULT: [{ TrainAnnouncement: rows() }] } });
+    throw new TypeError('Failed to fetch');
+  };
+  return { fetch, calls };
+}
+async function followApp(st) {
+  const r = await appWithStations(1, (url, init) => r.trv.fetch(url, init));
+  r.trv = fakeFollowTrv(st);
+  r.w.fetch = (url, init) => r.trv.fetch(url, init);
+  return r;
+}
+const hm = t => new Date(t).toTimeString().slice(0, 5);
+
+test('var är tåget: startformuläret – inget fordon, ingen tur, valfri rutt; tågnumret behövs och stationerna ska vara på tågets väg', async () => {
+  const st = { base: Math.floor(Date.now() / 60000) * 60000 + 10 * 60000, reports: {}, positions: [] };
+  const { w, rt } = await followApp(st);
+  const d = w.document;
+  d.getElementById('purposeFollow').click();
+  assertEqual(w.localStorage.getItem('railtimer_purpose_v1'), 'follow', 'valet sparas');
+  assertEqual(d.getElementById('purposeFollow').getAttribute('aria-pressed'), 'true', 'valt');
+  assert(d.getElementById('vehicleGroup').hidden && d.getElementById('notesGroup').hidden && d.getElementById('tourGroup').hidden, 'fordon, anteckning och dagens tur döljs');
+  assert(Array.from(d.querySelectorAll('.follow-opt')).every(e => !e.hidden), 'start och slut är valfria');
+  assert(/din GPS används inte/.test(d.getElementById('purposeHint').textContent), d.getElementById('purposeHint').textContent);
+  assertEqual(d.getElementById('btnStart').textContent, 'Visa var tåget är', 'knappen');
+  assertEqual(rt.autoStartArmed(), null, 'startar aldrig av sig själv');
+  await rt.startJourney();
+  assert(/Skriv tågnumret/.test(d.getElementById('setupError').textContent), d.getElementById('setupError').textContent);
+  // Fel håll: Hällekis → Lidköping
+  d.getElementById('trainNumber').value = '3347';
+  pickStation(w, 'startStation', 'Hällekis');
+  pickStation(w, 'endStation', 'Lidköping');
+  await rt.startJourney();
+  assert(/åt andra hållet/.test(d.getElementById('setupError').textContent), d.getElementById('setupError').textContent);
+  assert(!rt.state.running, 'startar inte');
+  // Slutstation där man tar över tåget: Blomberg
+  d.getElementById('startStation').value = '';
+  d.getElementById('startStation').dispatchEvent(new w.Event('input'));
+  pickStation(w, 'endStation', 'Blomberg');
+  await rt.startJourney();
+  assert(rt.state.running, 'startar');
+  assertEqual(rt.state.purpose, 'follow', 'Var är tåget?');
+  assertEqual(rt.state.route.map(s => s.name), ['Lidköping', 'Filsbäck', 'Källby', 'Blomberg'], 'från tågets start till min station');
+  assert(d.getElementById('journeyTitle').textContent.includes('Var är tåget?'), d.getElementById('journeyTitle').textContent);
+  assert(d.getElementById('journey').classList.contains('follow-only'), 'förarens och mätningens saker döljs');
+  assertEqual(d.getElementById('btnFinish').textContent, 'Sluta följa tåget', 'knappen');
+  assert(rt.spoken().some(t => t === 'Följer tåg 3 3 4 7.'), rt.spoken().join(' | '));
+  // Telefonens GPS används inte
+  rt.handlePosition({ coords: { latitude: 58.6, longitude: 13.3, accuracy: 5, speed: 20 }, timestamp: Date.now() });
+  assertEqual(rt.state.lastPosition, null, 'positionen räknas inte');
+  rt.stopJourney(false, 'Avslutad manuellt');
+  assertEqual(rt.loadLogs().length, 0, 'inget sparas');
+  assert(/Slutade följa tåget/.test(d.getElementById('reportHTML').textContent), d.getElementById('reportHTML').textContent);
+  assertEqual(d.getElementById('btnNew').textContent, 'Följ ett annat tåg', 'knappen i rapporten');
+});
+
+test('var är tåget: tågets GPS från Trafikverket – nästa station, avstånd, källan i panelen, ca-tid och framme', async () => {
+  const now = Date.now();
+  const st = { base: Math.floor(now / 60000) * 60000 - 12 * 60000, reports: {}, positions: [] };
+  const { w, rt } = await followApp(st);
+  const d = w.document;
+  rt.setPurpose('follow');
+  d.getElementById('trainNumber').value = '3347';
+  await rt.startJourney();
+  assertEqual(rt.state.route.length, 6, 'tomma fält: tågets hela väg');
+  assert(!d.getElementById('npSource').hidden, 'källan visas');
+  // Avgått från Lidköping 1 min sent; tåget 60 % mellan Källby och Blomberg i 70 km/h, positionen 10 s gammal
+  st.reports['Lkp:dep'] = st.base + 60000;
+  st.positions = [{ at: [2, 0.6], t: now - 10000, speed: 70 }];
+  await rt.refreshInfo();
+  await rt.refreshFollow();
+  const res = rt.followRes();
+  assertEqual(res.source, 'position', 'tågets position används');
+  assertEqual(d.getElementById('nextStop').textContent, 'Blomberg', 'nästa station');
+  assert(/km|m$/.test(d.getElementById('nextValue1').textContent) && d.getElementById('nextValue1').textContent !== '–', 'avståndet: ' + d.getElementById('nextValue1').textContent);
+  const src = d.getElementById('npSource').textContent;
+  assert(/Tågets GPS · 1\d s sedan/.test(src), src);
+  assert(src.includes('Senaste rapport: avg. Lidköping') && src.includes('+1 min'), src);
+  assert(/70 km\/h/.test(d.getElementById('gpsSpeed').textContent) && /tågets GPS/.test(d.getElementById('gpsAccuracy').textContent), 'farten från Trafikverket');
+  assert(rt.state.route[1].followPassed && rt.state.route[2].followPassed, 'Filsbäck och Källby passerade');
+  assert(d.querySelectorAll('#cards .card')[1].className.includes('done'), 'Filsbäck klar i listan');
+  assert(d.querySelectorAll('#cards .card')[1].textContent.includes('passerad – ingen tid'), 'utan tid: ' + d.querySelectorAll('#cards .card')[1].textContent);
+  assertEqual(rt.state.route[0].departSource, 'trv', 'avgången från Lidköping är Trafikverkets');
+  assert(d.getElementById('mapPos').classList.contains('trv'), 'kartans markör är tågets position (blå)');
+  assert(rt.mapMarker() && rt.mapMarker().trv, 'markören');
+  assert(rt.currentFix() && rt.currentFix().trv, 'Info och gångprofilerna räknar från tågets position');
+  // Förbi Blomberg: ca-tid ur positionerna före och efter
+  st.positions = [{ at: [3, 0.3], t: now + 50000, speed: 75 }];
+  installClock(w, now + 55000);
+  await rt.refreshFollow();
+  assertEqual(rt.state.nextIndex, 4, 'nästa är Råbäck');
+  assertEqual(rt.state.route[3].arrivalSource, 'trvca', 'Blomberg ungefär');
+  assert(d.querySelectorAll('#cards .card')[3].querySelector('.st-t.ca').textContent.startsWith('≈'), 'visas med ≈');
+  // Positionen hoppar bakåt: används inte, och tåget går inte tillbaka
+  st.positions = [{ at: [0, 0.5], t: now + 60000, speed: 75 }];
+  installClock(w, now + 62000);
+  await rt.refreshFollow();
+  assertEqual(rt.state.nextIndex, 4, 'fortfarande Råbäck');
+  assert(d.getElementById('npSource').textContent.includes('positionen hoppade bakåt – används inte'), d.getElementById('npSource').textContent);
+  // Återuppta efter omladdning: samma tåg följs vidare, utan GPS
+  rt.saveActiveJourney();
+  const saved = rt.loadActiveJourney();
+  assertEqual(saved.purpose, 'follow', 'sparas som Var är tåget?');
+  // Framme: ankomsten till Hällekis rapporterad
+  st.reports['Hlk:arr'] = now + 30000;
+  await rt.refreshInfo();
+  await realSleep(50);
+  assertEqual(rt.state.running, false, 'slut när tåget är framme');
+  assert(/Tåget är framme i Hällekis/.test(d.getElementById('reportHTML').textContent), d.getElementById('reportHTML').textContent);
+  assertEqual(rt.loadLogs().length, 0, 'inget sparas');
+  assertEqual(rt.loadInfoTrips().length, 0, 'inte med i dagens tur');
+  assert(rt.spoken().some(t => t === 'Tåg 3 3 4 7 är framme i Hällekis.'), rt.spoken().join(' | '));
+});
+
+test('var är tåget: utan tågets position bara rapporterna – "bör vara" enligt tidtabellen, aldrig ett exakt läge, och Info räknar därifrån', async () => {
+  const now = Date.now();
+  // Avgick Lidköping 2 min sent för 12 min sedan. Enligt tidtabellen + 2 min: Filsbäck 8, Källby 13 → nu mellan dem
+  const st = { base: Math.floor(now / 60000) * 60000 - 12 * 60000, reports: {}, positions: [] };
+  st.reports['Lkp:dep'] = st.base + 2 * 60000;
+  // Tågets senaste position är 20 min gammal (vid Lidköping): används inte
+  st.positions = [{ at: [0, 0], t: now - 20 * 60000, speed: 0 }];
+  const { w, rt } = await followApp(st);
+  const d = w.document;
+  rt.setPurpose('follow');
+  d.getElementById('trainNumber').value = '3347';
+  await rt.startJourney();
+  await rt.refreshInfo();
+  await rt.refreshFollow();
+  const res = rt.followRes();
+  assertEqual(res.source, 'rapport', 'bara rapporter');
+  assertEqual(d.getElementById('nextLabel').textContent, 'Nästa enligt tidtabellen', 'etiketten');
+  assertEqual(d.getElementById('nextStop').textContent, 'Källby', 'nästa enligt tidtabellen');
+  assertEqual([d.getElementById('nextValue1').textContent, d.getElementById('nextSub1').textContent], ['–', 'avstånd okänt'], 'inget avstånd');
+  assertEqual(d.getElementById('nextCountdownSub').textContent, `beräknat ${hm(st.base + 13 * 60000)}`, 'beräknad ankomst: plan + förseningen');
+  const src = d.getElementById('npSource').textContent;
+  assert(src.includes('senaste positionen är 20 min gammal – används inte'), src);
+  assert(src.includes('bör tåget nu vara mellan Filsbäck och Källby'), src);
+  assert(!rt.state.route[1].followPassed && !rt.state.route[1].actualArrival, 'Filsbäck räknas inte som passerad');
+  assert(d.querySelectorAll('#cards .card')[1].textContent.includes('bör ha passerats – ingen rapport'), d.querySelectorAll('#cards .card')[1].textContent);
+  assert(d.getElementById('mapPos').style.display === 'none', 'ingen markör utan position');
+  assert(d.querySelector('#routeMap .map-span'), 'sträckan där tåget kan vara är markerad');
+  // Info räknar från "bör vara", inte från Lidköping med "aldrig före nu": 2 min sent till Hällekis
+  rt.updateInfo();
+  const m = rt.infoModel();
+  assert(m && m.posAt && m.posAt.sig === 'Kll', 'Info: ' + JSON.stringify(m && m.posAt));
+  assert(m.end.delayMin >= 1 && m.end.delayMin <= 3, 'Hällekis: ' + m.end.delayMin);
+  assert(d.getElementById('infoPane').textContent.includes('räknat från var tåget är'), 'Info säger varifrån');
+  assert(!d.getElementById('infoPane').textContent.includes('Utrop'), 'inget utrop – man är inte på tåget');
+  // Ankomsten till Källby rapporterad men inte avgången, långt efter planerad avgång: "vid eller efter"
+  st.reports['Kll:arr'] = st.base + 13 * 60000;
+  installClock(w, st.base + 17 * 60000);
+  await rt.refreshInfo();
+  const src2 = d.getElementById('npSource').textContent;
+  assert(src2.includes('Ankom Källby, men avgången är inte rapporterad – tåget är vid eller efter Källby.'), src2);
+  assertEqual(rt.state.awaitingDepartureIndex, null, 'appen säger inte att tåget står i Källby');
+});
+
+test('reserv: Bara info – GPS:en svarar inte, Trafikverket tar över, och GPS:en tar tillbaka när den kommer', async () => {
+  const fixes = buildJourney();
+  const stopT = fixes.find(f => f.leg === 2 && f.frac > 0.55).t;
+  const back = fixes.find(f => f.leg === 3 && f.frac > 0.3);
+  const r = await runJourney(fixes, { trainNumber: '3344', purpose: 'info', drop: f => f.t > stopT, route: scheduleFor(fixes) });
+  const { w, rt } = r;
+  const d = w.document;
+  // Tåget enligt Trafikverket: förbi Blomberg mot Råbäck
+  const A = STATIONS[3], B = STATIONS[4];
+  const at = f => `POINT (${A[2] + (B[2] - A[2]) * f} ${A[1] + (B[1] - A[1]) * f})`;
+  const trv = fakeTrafikverketInfo(rt.state.route, { meetLateMin: 0, positions: [
+    { Train: { OperationalTrainNumber: '3344' }, Position: { WGS84: at(0.25) }, TimeStamp: new Date(stopT + 140000).toISOString(), Speed: 70 }] });
+  w.fetch = trv.fetch;
+  await rt.refreshInfo();
+  rt.setGpsFallbackForTest(true);
+  installClock(w, stopT + 30000);
+  rt.checkGpsFallback();
+  assertEqual(rt.followInfo().fallback, false, 'efter 30 s väntar appen fortfarande på GPS:en');
+  installClock(w, stopT + 150000);
+  rt.checkGpsFallback();
+  assertEqual(rt.followInfo().fallback, true, 'efter 45 s tar Trafikverket över');
+  assert(d.getElementById('journeyMsg').textContent.includes('GPS:en svarar inte – tåget följs med Trafikverkets uppgifter'), d.getElementById('journeyMsg').textContent);
+  await rt.refreshFollow();
+  assertEqual(rt.state.nextIndex, 4, 'nästa är Råbäck enligt tågets position');
+  assert(rt.state.route[3].followPassed, 'Blomberg passerad');
+  assert(d.getElementById('npSource').textContent.startsWith('GPS:en svarar inte – Trafikverket följer tåget.'), d.getElementById('npSource').textContent);
+  assert(d.getElementById('mapPos').classList.contains('trv'), 'tågets position på kartan');
+  // GPS:en kommer tillbaka
+  const clock = installClock(w, back.t);
+  const rest = fixes.filter(f => f.t >= back.t);
+  for (const f of rest) {
+    clock.set(f.t);
+    rt.handlePosition({ coords: { latitude: f.lat, longitude: f.lon, accuracy: 5, speed: f.speed, heading: null }, timestamp: f.t });
+    rt.checkGpsFallback();
+    await realSleep(0);
+    if (!rt.state.running) break;
+  }
+  assertEqual(rt.followInfo().fallback, false, 'GPS:en tog tillbaka');
+  assertEqual(rt.state.running, false, 'resan slutade vid Hällekis');
+  assertEqual(rt.loadLogs().length, 0, 'Bara info sparar inget');
+});
+
+test('reserv: Mät tidtabell – Trafikverkets läge syns på kartan och i panelen men skrivs aldrig in i mätningen', async () => {
+  const fixes = buildJourney();
+  const stopT = fixes.find(f => f.leg === 2 && f.frac > 0.55).t;
+  const r = await runJourney(fixes, { trainNumber: '3344', drop: f => f.t > stopT, route: scheduleFor(fixes) });
+  const { w, rt } = r;
+  const d = w.document;
+  const A = STATIONS[3], B = STATIONS[4];
+  const trv = fakeTrafikverketInfo(rt.state.route, { meetLateMin: 0, positions: [
+    { Train: { OperationalTrainNumber: '3344' }, Position: { WGS84: `POINT (${A[2] + (B[2] - A[2]) * 0.25} ${A[1] + (B[1] - A[1]) * 0.25})` }, TimeStamp: new Date(stopT + 140000).toISOString(), Speed: 70 }] });
+  w.fetch = trv.fetch;
+  await rt.refreshInfo();
+  const before = JSON.stringify(rt.state.route.map(s => [s.actualArrival, s.actualDeparture, s.arrivalSource, s.departSource]));
+  const nextBefore = rt.state.nextIndex;
+  rt.setGpsFallbackForTest(true);
+  installClock(w, stopT + 150000);
+  rt.checkGpsFallback();
+  await rt.refreshFollow();
+  assert(rt.followInfo().fallback, 'Trafikverket följer tåget');
+  assert(d.getElementById('journeyMsg').textContent.includes('mätningen väntar på GPS:en'), d.getElementById('journeyMsg').textContent);
+  assert(d.getElementById('npSource').textContent.startsWith('GPS:en svarar inte – mätningen väntar.'), d.getElementById('npSource').textContent);
+  assert(d.getElementById('mapPos').classList.contains('trv'), 'tågets position på kartan');
+  assertEqual(JSON.stringify(rt.state.route.map(s => [s.actualArrival, s.actualDeparture, s.arrivalSource, s.departSource])), before, 'mätningen är orörd');
+  assertEqual(rt.state.nextIndex, nextBefore, 'nästa station enligt mätningen');
+  assert(!rt.state.route.some(s => s.followPassed), 'inget markeras som passerat');
+  rt.stopJourney(false, 'test');
+  await realSleep(100);
+  const log = rt.loadLogs().pop();
+  assert(log && !log.stops.some(s => /trv/.test(s.arrivalSource || '') || /trv/.test(s.departSource || '')), 'inga tider från Trafikverket i körningen');
+});
+
 // ── Platsminnen och halt (2026-11-25t) ──
 test('platsminne: visas i stationsraden, läses upp när tåget är nära och synkas med GitHub', async () => {
   const fixes = buildJourney();
@@ -3866,7 +4135,7 @@ test('app: bakåtknappen på riktigt – vårt steg i historiken finns bara när
   assertEqual(rt.currentView(), 'setup', 'startformuläret');
 });
 
-test('app: genvägarna på ikonen väljer Mät tidtabell eller Bara info, men inte under en resa', async () => {
+test('app: genvägarna på ikonen väljer Mät tidtabell, Bara info eller Var är tåget?, men inte under en resa', async () => {
   const w = await loadApp();
   await clearAppStorage(w);
   const rt = w.__railtimer;
@@ -3874,6 +4143,9 @@ test('app: genvägarna på ikonen väljer Mät tidtabell eller Bara info, men in
   assert(rt.consumeShortcut(), 'genvägen används');
   assertEqual(rt.purpose(), 'info', 'Bara info');
   assertEqual(w.location.hash, '', '#-delen tas bort');
+  w.history.replaceState(null, '', w.location.pathname + w.location.search + '#ny=folj');
+  rt.consumeShortcut();
+  assertEqual(rt.purpose(), 'follow', 'Var är tåget?');
   w.history.replaceState(null, '', w.location.pathname + w.location.search + '#ny=mat');
   rt.consumeShortcut();
   assertEqual(rt.purpose(), 'measure', 'Mät tidtabell');
@@ -3891,7 +4163,7 @@ test('app: manifestet – maskable ikon, genvägar och ikonerna finns', async ()
   assertEqual(m.id, './index.html', 'samma id som förut (start_url), så att installerade appar känns igen');
   assertEqual(m.display, 'standalone', 'helskärm utan adressfält');
   assert(m.icons.some(i => i.purpose === 'maskable' && i.sizes === '512x512'), 'maskable 512');
-  assertEqual(m.shortcuts.map(s => s.url), ['./index.html#ny=mat', './index.html#ny=info'], 'genvägarna');
+  assertEqual(m.shortcuts.map(s => s.url), ['./index.html#ny=mat', './index.html#ny=info', './index.html#ny=folj'], 'genvägarna');
   const files = new Set([...m.icons, ...m.shortcuts.flatMap(s => s.icons)].map(i => i.src).concat(['icons/apple-touch-icon.png']));
   for (const f of files) {
     const r2 = await fetch('../' + f, { cache: 'no-store' });
@@ -3948,6 +4220,22 @@ window.prepareShot = async function (name) {
     const r = await midJourneyWithInfo();
     r.w.document.getElementById('journeyMsg').style.display = 'none';
     r.rt.setInfoTab(name === 'info' ? 'info' : 'stations');
+  } else if (name === 'var-ar-taget' || name === 'var-ar-taget-rapport' || name === 'startformular-var-ar-taget') {
+    // Var är tåget?: tågets GPS från Trafikverket, eller bara rapporterna
+    const now = Date.now();
+    const st = { base: Math.floor(now / 60000) * 60000 - 12 * 60000, reports: {}, positions: [] };
+    const gps = name === 'var-ar-taget';
+    st.reports['Lkp:dep'] = st.base + (gps ? 60000 : 2 * 60000);
+    if (gps) st.positions = [{ at: [2, 0.6], t: now - 12000, speed: 70 }];
+    const { w, rt } = await followApp(st);
+    rt.setPurpose('follow');
+    w.document.getElementById('trainNumber').value = '3347';
+    if (name !== 'startformular-var-ar-taget') {
+      await rt.startJourney();
+      await rt.refreshInfo();
+      await rt.refreshFollow();
+      w.document.getElementById('journeyMsg').style.display = 'none';
+    }
   } else if (name === 'resa-beraknat') {
     // Mitt på sträckan med gångprofiler: panelen visar tid kvar till beräknad ankomst
     const { r } = await journeyWithProfiles();

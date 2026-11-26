@@ -18,6 +18,7 @@ const ASSETS = [
   './api-koll.html',
   './railtimer-infra.js',
   './railtimer-info.js',
+  './railtimer-folj.js',
   './railtimer-vt.js',
   './vasttrafik-koll.html',
   './kinnekulle-gps.webmanifest',

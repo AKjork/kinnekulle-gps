@@ -521,8 +521,19 @@
   /* En rad om läget framåt (från infofliken); tryck öppnar fliken */
   /* Mät tidtabell | Bara info i startformuläret; i Bara info döljs förarens saker */
   .purpose-seg{display:flex;width:100%;margin:.1rem 0 .35rem}
-  .purpose-seg button{flex:1;min-height:2.6rem;font-size:.95rem}
+  .purpose-seg button{flex:1;min-height:2.6rem;font-size:.95rem;padding-left:.3rem;padding-right:.3rem}
   #journey.info-only #npHalt, #journey.info-only .halt-row{display:none !important}
+  /* Var är tåget? (2026-11-26d): ett tåg man inte är på. Förarens saker och mätningens knappar behövs inte. */
+  #journey.follow-only #npHalt, #journey.follow-only .halt-row, #journey.follow-only .manual-actions,
+  #journey.follow-only .control-row, #journey.follow-only .station-note, #journey.follow-only .place-note,
+  #journey.follow-only .card-foot, #journey.follow-only #btnAbort{display:none !important}
+  .np-source{margin-top:.4rem;padding-top:.35rem;border-top:1px solid var(--b);color:var(--ink-dim);font-size:.82rem;line-height:1.35;font-variant-numeric:tabular-nums}
+  .np-source[hidden]{display:none}
+  .np-source b{color:var(--ink);font-weight:600}
+  .np-source .src-gps{color:var(--blue)}
+  .np-source .src-warn{color:var(--warn)}
+  .st-t.trv b{color:var(--ink)}
+  .st-t.ca b{font-style:italic}
   .np-halt{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;margin-top:.45rem;padding-top:.45rem;border-top:1px solid var(--b)}
   .np-halt[hidden]{display:none}
   .np-halt-q{color:var(--ink-dim);font-size:.82rem;margin-right:.1rem}
@@ -658,6 +669,8 @@
   #routeMapContainer.collapsed .map-note{display:none}
   #routeMapContainer.collapsed .map-show{display:block}
   .map-pos-marker{filter:drop-shadow(0 0 4px var(--pri))}
+  #mapPos.trv .map-pos-marker{fill:var(--blue);filter:drop-shadow(0 0 4px var(--blue))}
+  #mapPos.trv circle:first-child{fill:rgba(59,130,246,.25)}
 
   /* Liggande telefon och bredare skärmar: panel och karta till vänster, stationslistan till höger */
   @media (orientation:landscape) and (max-height:540px), (min-width:820px){
@@ -776,8 +789,9 @@
     <div class="seg purpose-seg" role="group" aria-label="Vad resan är till för">
       <button type="button" id="purposeMeasure" aria-pressed="true">Mät tidtabell</button>
       <button type="button" id="purposeInfo" aria-pressed="false">Bara info</button>
+      <button type="button" id="purposeFollow" aria-pressed="false">Var är tåget?</button>
     </div>
-    <p id="purposeHint" class="hint" hidden>GPS:en följer tåget och Info visar läget framåt. Resan sparas inte som mätning.</p>
+    <p id="purposeHint" class="hint" hidden></p>
     <div class="row">
       <div class="form-group grow">
         <label for="trainNumber">Tågnummer</label>
@@ -828,7 +842,7 @@
     </div>
     <div class="hint" id="trainHint">Ger tidtabellen och stationerna längs vägen. Utan tågnummer mäts bara start och slut.</div>
     <div class="hint train-ident" id="trainIdent" hidden></div>
-    <div class="form-group tour-group">
+    <div class="form-group tour-group" id="tourGroup">
       <label for="tourInput">Dagens tur <span class="label-note">valfritt</span></label>
       <input id="tourInput" type="text" inputmode="numeric" autocomplete="off" placeholder="t.ex. 23349 23334 23351">
       <button type="button" id="tourSuggest" class="chip" hidden></button>
@@ -847,12 +861,12 @@
     </div>
     <div class="row">
       <div class="form-group station-search-container">
-        <label for="startStation">Startstation</label>
+        <label for="startStation">Startstation<span class="label-note follow-opt" hidden> valfritt</span></label>
         <input type="text" id="startStation" class="station-search" placeholder="Sök station..." autocomplete="off">
         <div id="startStationDropdown" class="station-dropdown"></div>
       </div>
       <div class="form-group station-search-container">
-        <label for="endStation">Slutstation</label>
+        <label for="endStation">Slutstation<span class="label-note follow-opt" hidden> valfritt</span></label>
         <input type="text" id="endStation" class="station-search" placeholder="Sök station..." autocomplete="off">
         <div id="endStationDropdown" class="station-dropdown"></div>
       </div>
@@ -888,6 +902,7 @@
         <div><span class="np-val" id="nextDelay">–</span><span class="next-sub">avvikelse</span></div>
         <div><span class="np-val" id="gpsSpeed">–</span><span class="next-sub" id="gpsAccuracy">väntar på GPS</span><span id="gpsExtra" hidden></span></div>
       </div>
+      <div class="np-source" id="npSource" role="status" hidden></div>
       <button type="button" class="np-info" id="npInfo" hidden></button>
       <div class="np-halt" id="npHalt" hidden>
         <span class="np-halt-q">Halt?</span>
@@ -1092,12 +1107,13 @@
 <script src="railtimer-trv.js"></script>
 <script src="railtimer-infra.js"></script>
 <script src="railtimer-info.js"></script>
+<script src="railtimer-folj.js"></script>
 <script src="railtimer-vt.js"></script>
 <script>
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-26c'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-26d'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1126,7 +1142,7 @@
   const STORAGE_KEY_RECENT_STATIONS = 'kmon_recent_stations_v1';
   const STORAGE_KEY_SOUND_ENABLED = 'railtimer_sound_v1';
   const STORAGE_KEY_LARGE_TEXT = 'railtimer_large_text_v1';
-  const STORAGE_KEY_PURPOSE = 'railtimer_purpose_v1';       // 'measure' (förval) eller 'info' (Bara info)
+  const STORAGE_KEY_PURPOSE = 'railtimer_purpose_v1';       // 'measure' (förval), 'info' (Bara info) eller 'follow' (Var är tåget?)
   const STORAGE_KEY_INFO_TRIPS = 'railtimer_info_trips_v1'; // resor med Bara info: [{ trainNumber, startedAt, … }], 40 dagar
   const STORAGE_KEY_SPEECH = 'railtimer_speech_v1';         // uppläsning på (förval) eller 'false'
   const STORAGE_KEY_INSTALL_HINT = 'railtimer_install_hint_v1'; // 'closed' när tipset om hemskärmen stängts
@@ -1304,7 +1320,10 @@
       setPlatformForTest: p => { platformForTest = p; renderInstallOffer(); }, renderInstallOffer, showInstallGuide, promptInstall,
       setInstallPromptForTest: ev => { deferredInstallPrompt = ev; renderInstallOffer(); },
       backTarget, handleBack, setupBackGuard, backGuardState: () => ({ guard: backGuard, consuming: backConsuming, exitUntil: backExitUntil }),
-      consumeShortcut, toggleMenu, closeAllMenus
+      consumeShortcut, toggleMenu, closeAllMenus,
+      // Var är tåget? och reserven när GPS:en inte svarar
+      refreshFollow, applyFollowNow, followRes: () => followState.res, followInfo: () => ({ fallback: followState.fallback, pos: followState.pos, off: followState.off, error: followState.error }),
+      setGpsFallbackForTest: on => { followState.testFallback = !!on; }, checkGpsFallback, startFollowJourney, currentFix, mapMarker, followSpan
     };
   }
 
@@ -1990,6 +2009,7 @@
     });
     document.getElementById('purposeMeasure').addEventListener('click', () => setPurpose('measure'));
     document.getElementById('purposeInfo').addEventListener('click', () => setPurpose('info'));
+    document.getElementById('purposeFollow').addEventListener('click', () => setPurpose('follow'));
     renderPurpose();
     document.getElementById('btnVtSettings').addEventListener('click', () => {
       closeAllMenus();
@@ -2077,29 +2097,53 @@
      fungerar. Info öppnas direkt, förarens saker (Halt?) döljs, fordonstyp och anteckningar behövs inte, och
      resan sparas inte som mätning: ingen körning, ingen uppladdning, GPS-spåret tas bort. Bara tågnummer och tid
      sparas (railtimer_info_trips_v1), så att dagens tur vet vilka tåg som körts. Kräver tågnummer. */
+  /* Var är tåget? (purpose 'follow', 2026-11-26d): ett tåg man inte är på, till exempel det man ska ta över i
+     Lidköping eller ett man vill visa en kollega. Telefonens GPS används inte alls. Var tåget är kommer från
+     Trafikverket: tågets egen GPS (TrainPosition) och rapporterna (TrainAnnouncement), se railtimer-folj.js.
+     Fordon, anteckningar och dagens tur behövs inte; start och slut är valfria (tomt = tågets hela väg).
+     Inget sparas, och resan finns inte i dagens tur. */
+  const PURPOSES = ['measure', 'info', 'follow'];
+  function normPurpose(p){ return PURPOSES.includes(p) ? p : 'measure'; }
   function purpose(){
-    try{ return localStorage.getItem(STORAGE_KEY_PURPOSE)==='info' ? 'info' : 'measure'; }catch(e){ return 'measure'; }
+    try{ return normPurpose(localStorage.getItem(STORAGE_KEY_PURPOSE)); }catch(e){ return 'measure'; }
   }
   function setPurpose(p){
-    try{ localStorage.setItem(STORAGE_KEY_PURPOSE, p==='info' ? 'info' : 'measure'); }catch(e){}
+    try{ localStorage.setItem(STORAGE_KEY_PURPOSE, normPurpose(p)); }catch(e){}
     renderPurpose();
     hideSetupError();
     renderAutoStartStatus();
+    // Var är tåget? behöver inte telefonens GPS: uppvärmningen stängs av, och slås på igen för de andra
+    if(purpose()==='follow') stopGpsWarmup();
+    else if(wantsGpsWarmup()) startGpsWarmup();
   }
+  const PURPOSE_HINT = {
+    info:'GPS:en följer tåget och Info visar läget framåt. Resan sparas inte som mätning. Fungerar inte GPS:en följs tåget med Trafikverkets uppgifter.',
+    follow:'För ett tåg du inte är på – din GPS används inte. Trafikverket visar var tåget är: tågets egen GPS när den finns, annars senaste rapporten. Slutstation: till exempel där du tar över tåget, eller tomt för hela vägen. Inget sparas.'
+  };
   function renderPurpose(){
-    const info=purpose()==='info';
-    const m=document.getElementById('purposeMeasure'), i=document.getElementById('purposeInfo');
+    const p=purpose(), info=p==='info', follow=p==='follow';
+    const m=document.getElementById('purposeMeasure'), i=document.getElementById('purposeInfo'), f=document.getElementById('purposeFollow');
     if(!m || !i) return;
-    m.setAttribute('aria-pressed', String(!info));
+    m.setAttribute('aria-pressed', String(p==='measure'));
     i.setAttribute('aria-pressed', String(info));
-    document.getElementById('purposeHint').hidden=!info;
-    document.getElementById('vehicleGroup').hidden=info;
-    document.getElementById('notesGroup').hidden=info;
-    document.getElementById('btnStart').textContent = info ? 'Starta Bara info' : 'Starta GPS-resan';
+    if(f) f.setAttribute('aria-pressed', String(follow));
+    const hint=document.getElementById('purposeHint');
+    hint.hidden=!PURPOSE_HINT[p];
+    hint.textContent=PURPOSE_HINT[p]||'';
+    document.getElementById('vehicleGroup').hidden=info || follow;
+    document.getElementById('notesGroup').hidden=info || follow;
+    const tour=document.getElementById('tourGroup');
+    if(tour) tour.hidden=follow;
+    document.querySelectorAll('.follow-opt').forEach(e=>{ e.hidden=!follow; });
+    document.getElementById('btnStart').textContent = startButtonText();
     // Föraren har tågorderns OTN, tågvärden det annonserade ATN; båda fungerar
-    document.getElementById('trainNumber').placeholder = info ? 'ATN eller OTN, t.ex. 3349' : 'OTN eller ATN, t.ex. 23349';
+    document.getElementById('trainNumber').placeholder = info || follow ? 'ATN eller OTN, t.ex. 3349' : 'OTN eller ATN, t.ex. 23349';
     const btnNew=document.getElementById('btnNew');
-    if(btnNew) btnNew.textContent = info ? 'Starta ny resa' : 'Starta ny mätning';
+    if(btnNew) btnNew.textContent = follow ? 'Följ ett annat tåg' : (info ? 'Starta ny resa' : 'Starta ny mätning');
+  }
+  function startButtonText(){
+    const p=purpose();
+    return p==='follow' ? 'Visa var tåget är' : (p==='info' ? 'Starta Bara info' : 'Starta GPS-resan');
   }
   function loadInfoTrips(){
     try{ const v=JSON.parse(localStorage.getItem(STORAGE_KEY_INFO_TRIPS)||'[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; }
@@ -2121,6 +2165,7 @@
   // opts.auto: { since, fixes } när resan startar av sig själv (autoStartFix) – tåget har redan börjat rulla
   async function startJourney(opts){
     const auto=opts && opts.auto ? opts.auto : null;
+    if(!auto && purpose()==='follow') return startFollowJourney();
     if(state.running){
       // Skydd: en ny resa får aldrig skriva över en som pågår
       showView('journey');
@@ -2245,6 +2290,379 @@
     }
   }
 
+  /* ── Var är tåget? (2026-11-26d) ──
+     Ett tåg man inte är på följs med Trafikverkets uppgifter, utan telefonens GPS (railtimer-folj.js):
+     tågets egen GPS (TrainPosition, var 15:e sekund) och rapporterna (TrainAnnouncement, med Info varje minut).
+     Samma vy som en resa: panelen, kartan, stationerna och Info. Inget sparas. */
+  async function startFollowJourney(){
+    if(state.running){
+      showView('journey');
+      showHeaderStatus('En resa pågår redan – avsluta den först.', true);
+      return;
+    }
+    // Start och slut är valfria: tomt = tågets hela väg. Ett namn som skrivits in ska vara en station.
+    const startTyped=(els.startInput.value||'').trim(), endTyped=(els.endInput.value||'').trim();
+    selectedStartStation = startTyped ? stationForInput(els.startInput, selectedStartStation) : null;
+    selectedEndStation = endTyped ? stationForInput(els.endInput, selectedEndStation) : null;
+    if(startTyped && !selectedStartStation){ showSetupError('Välj startstationen i listan, eller lämna fältet tomt för hela vägen.'); return; }
+    if(endTyped && !selectedEndStation){ showSetupError('Välj slutstationen i listan, eller lämna fältet tomt för hela vägen.'); return; }
+    if(selectedStartStation && selectedEndStation && selectedStartStation.name===selectedEndStation.name){
+      showSetupError('Start- och slutstation måste vara olika.');
+      return;
+    }
+    const trainNumber=trainNumberValue();
+    if(!trainNumber){ showSetupError('Skriv tågnumret – appen följer tåget med det.'); return; }
+    speak(`Följer tåg ${spellTrain(trainNumber)}.`); // i tryckningen, så att uppläsningen fungerar även på iPhone
+    hideSetupError();
+    const btn=document.getElementById('btnStart');
+    btn.disabled=true;
+    btn.textContent='Hämtar tåget…';
+    let tt=null;
+    try{
+      tt=await fetchTimetable(trainNumber, new Date(), {
+        startSig:selectedStartStation ? selectedStartStation.sig : null, endSig:selectedEndStation ? selectedEndStation.sig : null,
+        prefer:'atn', otn: trainChoice && trainChoice.number===trainNumber ? trainChoice.otn : null
+      });
+    }finally{
+      btn.disabled=false;
+      btn.textContent=startButtonText();
+    }
+    if(!tt || !tt.success){ showSetupError(`Hittar inte tåg ${trainNumber}: ${tt ? tt.error : 'inget svar'}`); return; }
+    const stops=new Set(tt.stationStops||[]);
+    for(const st of [selectedStartStation, selectedEndStation]){
+      if(st && st.sig && !stops.has(st.sig)){ showSetupError(`Tåg ${trainNumber} går inte via ${st.name}.`); return; }
+    }
+    const slice=buildRouteFromTimetable(tt, selectedStartStation ? selectedStartStation.sig : null, selectedEndStation ? selectedEndStation.sig : null);
+    if(!slice || slice.length<2){ showSetupError(`Tåg ${trainNumber} har för få stationer för att följas.`); return; }
+    if(slice[0].time > slice[slice.length-1].time){ showSetupError(`Tåg ${trainNumber} går åt andra hållet – byt start och slut.`); return; }
+    initJourneyState(slice.map(makeRouteStation), { ...trainIdentity(tt.train, trainNumber), vehicleType:'', notes:'', purpose:'follow' });
+    state.awaitingDepartureIndex=0; // tills Trafikverket säger något annat: vid (eller på väg till) startstationen
+    hideSetupError();
+    showView('journey');
+    els.journeyTitle.textContent=journeyTitleText();
+    els.journeyMsg.style.display='none';
+    expandedCards.clear();
+    renderedRouteKey='';
+    renderRouteCards();
+    renderRouteMap(true);
+    startPanelTimer();
+    startInfo();
+    loadRailGeometry();
+    startFollow(null);
+    enableWakeLockForJourney();
+    renderAutoStartStatus();
+    const alt=trainAlternativeText(tt.train);
+    if(alt){
+      showJourneyMessage(alt, true);
+      setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
+    }
+  }
+
+  const FOLJ = window.RailTimerFolj || null;
+  const FOLLOW_POS_MS = 15000;      // tågets position var 15:e sekund (provet 2026-11-26: ny position var 10–15:e sekund)
+  const FOLLOW_FIX_MAX_MS = 90000;  // tågets position räknas för gångprofilerna och Info när den är högst så här gammal
+  const GPS_LOST_MS = 45000;        // så här länge utan användbar GPS-position innan Trafikverket tar över
+  const GPS_POOR_ACCURACY_M = 100;  // sämre noggrannhet än så räknas inte som användbar
+  const followState = { timer:null, busy:false, pos:null, fetchedAt:null, error:null, off:false, memo:null, res:null,
+    axis:null, axisKey:'', fallback:false, fallbackSince:null, testFallback:false };
+  // Trafikverket följer tåget: Var är tåget?, eller när telefonens GPS inte svarar under en resa
+  function followWanted(){
+    return state.running && !!FOLJ && (state.purpose==='follow' || followState.fallback);
+  }
+  function startFollow(memo){
+    stopFollow();
+    Object.assign(followState, { busy:false, pos:null, fetchedAt:null, error:null, off:false, res:null, axis:null, axisKey:'', memo:memo||null });
+    applyFollowNow();
+    startFollowTimer();
+  }
+  function startFollowTimer(){
+    if(followState.timer || TEST_MODE || !FOLJ || !INFO) return; // i testläge hämtar testerna själva (refreshFollow)
+    refreshFollow();
+    followState.timer=setInterval(()=>{ if(document.visibilityState!=='hidden') refreshFollow(); }, FOLLOW_POS_MS);
+  }
+  function stopFollow(){
+    if(followState.timer){ clearInterval(followState.timer); followState.timer=null; }
+  }
+  // Vårt tågs operativa nummer, alla delar när numret byts längs vägen
+  function ourOtns(){
+    const our=infoState.our;
+    const list = our ? (our.otns && our.otns.length ? our.otns : [our.otn]) : [state.trainNumber];
+    return Array.from(new Set(list.filter(Boolean).map(String)));
+  }
+  /* Tågets senaste position. Trafikverket har en position per tåg och avgångsdatum, så samma nummer i går
+     kan finnas kvar: bara dagens körning (avgångsdatumet från Info) räknas. Godtar Trafikverket inte frågan
+     följs tåget bara med rapporterna resten av resan. */
+  async function refreshFollow(){
+    if(!followWanted() || !INFO){ applyFollowNow(); return; }
+    if(followState.busy || followState.off){ applyFollowNow(); return; }
+    if(!TEST_MODE && navigator.onLine===false){ followState.error='ingen täckning'; applyFollowNow(); return; }
+    followState.busy=true;
+    try{
+      const otns=ourOtns();
+      if(otns.length){
+        const r=INFO.resultOf(await trvRequest([INFO.queryPositions(otns)]), 0, 'TrainPosition');
+        if(r.error) throw infoError('api', r.error);
+        const positions=INFO.parsePositions(r.list, { date: infoState.our && infoState.our.date || '' });
+        let best=null;
+        for(const p of positions.values()) if(!best || p.t>best.t) best=p;
+        followState.pos=best;
+        followState.fetchedAt=Date.now();
+        followState.error=null;
+      }
+    }catch(e){
+      followState.error=String(e && e.message || e);
+      if(e && e.kind==='api'){ followState.off=true; console.warn('Var är tåget?: Trafikverket godtog inte frågan om tågets position', e.message); }
+      else console.warn('Var är tåget?: tågets position kunde inte hämtas', e);
+    }finally{
+      followState.busy=false;
+    }
+    applyFollowNow();
+  }
+  function followRoute(){
+    return state.route.map(st=>({ sig:st.sig, name:st.name, lat:st.lat, lon:st.lon, planArr:timeMs(planArr(st)), planDep:timeMs(planDep(st)) }));
+  }
+  /* Linjen längs rutten: kartans spår (OpenStreetMap) när alla sträckor har det, annars gångprofilernas linje
+     (GPS-spåren) och till sist kartans spår där det finns och raka linjer emellan. */
+  function followAxis(route){
+    const legs=[];
+    for(let i=0;i+1<state.route.length;i++){
+      const key=KARTA ? KARTA.legKey(state.route[i], state.route[i+1]) : '';
+      legs.push(railPaths[key] || null);
+    }
+    const ia=legs.every(Boolean) ? null : infoAxis();
+    const key=route.map(s=>`${s.sig}:${s.lat},${s.lon}`).join('|')+'#'+legs.map(l=>l?l.length:0).join(',')+'#'+(ia ? axisCache.key : '');
+    if(followState.axisKey!==key){
+      let ax=null;
+      try{
+        if(ia) ax=FOLJ.fromInfoAxis(ia, route);
+        if(!ax) ax=FOLJ.buildRouteAxis(route, legs);
+      }catch(e){ console.error('Var är tåget?: linjen', e); }
+      followState.axis=ax;
+      followState.axisKey=key;
+    }
+    return followState.axis;
+  }
+  // Vårt tågs platser mellan resans start och slut (även driftplatser) med Trafikverkets rapporterade tider
+  function followLine(){
+    if(!infoState.line || !infoState.trains) return [];
+    const our=infoState.trains.get(infoState.ourKey) || infoState.our;
+    return infoState.line.map(l=>{
+      const loc=(our && our.at.get(l.sig)) || {};
+      const a=loc.arr, d=loc.dep;
+      return { sig:l.sig, arr:a && a.actual!=null ? a.actual : null, dep:d && d.actual!=null ? d.actual : null,
+        planArr:l.plannedArr, planDep:l.plannedDep, estDep:d && d.est!=null ? d.est : null };
+    });
+  }
+  function applyFollowNow(){
+    if(!followWanted()){ renderFollowSource(); return; }
+    const route=followRoute();
+    let res=null;
+    try{
+      res=FOLJ.follow({ route, line:followLine(), axis:followAxis(route), pos:followState.pos, memo:followState.memo, now:Date.now() });
+    }catch(e){ console.error('Var är tåget?', e); }
+    if(res){
+      followState.memo=res.memo;
+      followState.res=res;
+      // Var är tåget? skriver Trafikverkets tider. Bara info utan GPS fyller bara i det GPS:en inte har.
+      // Mät tidtabell: ingenting skrivs i mätningen, Trafikverkets läge visas bara.
+      if(state.purpose==='follow') applyFollowResult(res, false);
+      else if(state.purpose==='info') applyFollowResult(res, true);
+      renderRouteCards();
+      renderRouteMap();
+    }
+    renderFollowSource();
+    if(res && state.purpose!=='measure'){
+      if(state.purpose==='follow') saveActiveJourney();
+      if(res.done) stopJourney(false, 'Slutstation klar');
+    }
+  }
+  const ownSource = src => src==='gps' || src==='manual';
+  function applyFollowResult(res, gentle){
+    const n=state.route.length;
+    res.stations.forEach((f, i)=>{
+      const st=state.route[i];
+      if(!ownSource(st.arrivalSource)){
+        if(f.arr){ st.actualArrival=new Date(f.arr.t); st.arrivalSource = f.arr.src==='rapport' ? 'trv' : 'trvca'; }
+        else if(/^trv/.test(st.arrivalSource||'')){ st.actualArrival=null; st.arrivalSource=''; }
+      }
+      if(!ownSource(st.departSource)){
+        if(f.dep){ st.actualDeparture=new Date(f.dep.t); st.departSource = f.dep.src==='rapport' ? 'trv' : 'trvca'; }
+        else if(/^trv/.test(st.departSource||'')){ st.actualDeparture=null; st.departSource=''; }
+      }
+      st.followPassed=!!f.passed;
+    });
+    const at=res.atIdx;
+    const next=res.est && res.est.by==='plan' && !res.done ? res.est.idx : res.nextIdx;
+    // Bara info utan GPS: bara framåt, aldrig tillbaka till det GPS:en redan passerat
+    const curNext=state.nextIndex==null ? n : state.nextIndex, newNext=next==null ? n : next;
+    if(!gentle || newNext>curNext || (at!=null && at>=curNext && state.awaitingDepartureIndex!==at)){
+      state.awaitingDepartureIndex=at;
+      state.lastReachedIndex=at!=null ? at : Math.max(0, res.passedIdx);
+      state.nextIndex=next;
+    }
+    const ref=at!=null ? at : next;
+    if(ref!=null && state.route[ref]) state.route[ref].lastSeenDistance=res.distM;
+  }
+
+  // Bara info och Mät tidtabell: följer GPS:en inte med (nekad, ingen position eller dålig noggrannhet i 45 s) tar
+  // Trafikverket över. Kräver tågnumret (Info). I testläge bara när testet slår på det.
+  // Sedan appen syntes eller GPS:en startades: GPS:en får 45 s på sig innan Trafikverket tar över, även efter
+  // omladdning och Återuppta. (I testläge styr testerna klockan.)
+  let visibleSince=TEST_MODE ? 0 : Date.now();
+  function checkGpsFallback(){
+    if(TEST_MODE && !followState.testFallback) return;
+    if(!state.running || state.purpose==='follow' || !state.trainNumber || !FOLJ || !INFO){
+      if(followState.fallback) endGpsFallback(false);
+      return;
+    }
+    const now=Date.now();
+    const good=state.lastGoodFixTime||0;
+    const fresh=!state.gpsDenied && good && now-good<=GPS_LOST_MS;
+    const since=Math.max(state.startedAt ? new Date(state.startedAt).getTime() : 0, visibleSince, good);
+    if(!followState.fallback && !fresh && (state.gpsDenied || now-since>GPS_LOST_MS)) beginGpsFallback();
+    else if(followState.fallback && fresh) endGpsFallback(true);
+  }
+  function beginGpsFallback(){
+    followState.fallback=true;
+    followState.fallbackSince=Date.now();
+    showJourneyMessage(state.purpose==='info'
+      ? 'GPS:en svarar inte – tåget följs med Trafikverkets uppgifter'
+      : 'GPS:en svarar inte – mätningen väntar på GPS:en. Kartan och Info visar tåget enligt Trafikverket.', true);
+    setTimeout(() => { els.journeyMsg.style.display='none'; }, 8000);
+    applyFollowNow();
+    startFollowTimer();
+  }
+  function endGpsFallback(back){
+    followState.fallback=false;
+    followState.fallbackSince=null;
+    stopFollow();
+    renderFollowSource();
+    if(back && state.running){
+      showJourneyMessage('GPS:en är tillbaka', false);
+      setTimeout(() => { els.journeyMsg.style.display='none'; }, 4000);
+    }
+  }
+
+  /* Positionen som räknas för gångprofilerna, Info och kartan: telefonens GPS när den är färsk, annars tågets
+     position från Trafikverket när den används (Var är tåget?, eller när GPS:en inte svarar).
+     { lat, lon, t, acc, trv } eller null. */
+  function currentFix(maxGpsMs){
+    const lp=state.lastPosition, at=state.lastFixTime;
+    if(state.purpose!=='follow' && lp && lp.coords && at && Date.now()-at<=(maxGpsMs||60000)){
+      return { lat:lp.coords.latitude, lon:lp.coords.longitude, t:at, acc:lp.coords.accuracy, trv:false };
+    }
+    const r=followWanted() ? followState.res : null;
+    const P=r && r.pos;
+    if(P && P.used && Date.now()-P.t<=FOLLOW_FIX_MAX_MS) return { lat:P.lat, lon:P.lon, t:P.t, acc:null, trv:true };
+    return null;
+  }
+  // Kartans markör: telefonens senaste position, eller tågets från Trafikverket när den gäller
+  function mapMarker(){
+    const trv=followWanted() && followState.res && followState.res.pos && followState.res.pos.used ? followState.res.pos : null;
+    const lp=state.lastPosition;
+    if(state.purpose==='follow' || (trv && (!state.lastFixTime || Date.now()-state.lastFixTime>GPS_LOST_MS))) return trv ? { lat:trv.lat, lon:trv.lon, trv:true } : null;
+    return lp && lp.coords ? { lat:lp.coords.latitude, lon:lp.coords.longitude, trv:false } : null;
+  }
+  // Sträckan där tåget är utan att läget är känt (bara rapporter): från senast passerade station till nästa
+  function followSpan(){
+    const r=followWanted() ? followState.res : null;
+    if(!r || r.source==='position' || r.done) return null;
+    const to = r.est && r.est.by==='plan' ? r.est.idx : r.nextIdx;
+    if(to==null) return null;
+    if(r.unsure!=null) return { from:r.unsure, to };
+    if(!r.between && !(r.est && r.est.behind)) return null;
+    return { from:Math.max(0, r.passedIdx), to };
+  }
+
+  function ageText(sec){
+    if(sec==null) return '';
+    if(sec<90) return `${Math.max(0, Math.round(sec))} s`;
+    if(sec<5400) return `${Math.round(sec/60)} min`;
+    return `${Math.round(sec/3600)} h`;
+  }
+  function trvClock(t){
+    const d=new Date(t);
+    return d.getSeconds() ? formatTime(d) : formatClock(d);
+  }
+  function delayWords(min){
+    if(min==null) return '';
+    if(min===0) return 'i tid';
+    return min>0 ? `+${min} min` : `${-min} min tidigt`;
+  }
+  /* Raden i panelen som säger var uppgifterna kommer från och hur säkra de är (André 2026-11-26: "viktigt med
+     kontroll att vi faktiskt kan se vart tåget är"). Tågets GPS med ålder, eller varför den inte används;
+     senaste rapporten; och utan position bara mellan vilka stationer tåget är. */
+  function followSourceHtml(r){
+    const name=i=>escapeHtml(state.route[i] ? state.route[i].name : '');
+    const parts=[];
+    if(state.purpose==='info') parts.push('<span class="src-warn">GPS:en svarar inte – Trafikverket följer tåget.</span>');
+    else if(state.purpose==='measure') parts.push('<span class="src-warn">GPS:en svarar inte – mätningen väntar. Trafikverkets läge:</span>');
+    const P=r.pos;
+    if(P && P.used){
+      parts.push(`<span class="src-gps">📡 <b>Tågets GPS</b></span> · ${ageText(P.ageS)} sedan` +
+        (r.distM!=null && !r.done ? ` · avstånd ${r.distKind==='spår'?'längs spåret':'fågelvägen'}` : ''));
+    }else if(P){
+      const why = P.why==='gammal' ? `senaste positionen är ${ageText(P.ageS)} gammal`
+        : P.why==='långt från linjen' ? `positionen är ${formatDistance(P.off||0)} från linjen`
+        : P.why==='bakom tåget' ? 'positionen hoppade bakåt' : 'positionen kan inte placeras på linjen';
+      parts.push(`📡 Tågets GPS: ${why} – används inte`);
+    }else if(followState.off){
+      parts.push('📡 Trafikverket godtog inte frågan om tågets position – bara rapporterna');
+    }else if(followState.error && !followState.fetchedAt){
+      parts.push(`📡 Tågets position kunde inte hämtas (${escapeHtml(followState.error)})`);
+    }else if(followState.fetchedAt){
+      parts.push('📡 Ingen GPS-position från tåget hos Trafikverket');
+    }else{
+      parts.push('📡 Hämtar tågets position…');
+    }
+    const L=r.lastReport;
+    if(L){
+      parts.push(`Senaste rapport: ${L.kind==='arr'?'ank.':'avg.'} <b>${escapeHtml(sigName(L.sig))}</b> ${trvClock(L.t)}${L.delayMin!=null?` (${delayWords(L.delayMin)})`:''}`);
+    }else if(infoState.line){
+      parts.push('Inga rapporter från Trafikverket än');
+    }else if(infoState.error){
+      parts.push(`Trafikverket: ${escapeHtml(infoState.error)}`);
+    }
+    if(r.source!=='position' && !r.done){
+      if(r.unsure!=null) parts.push(`Ankom ${name(r.unsure)}, men avgången är inte rapporterad – tåget är vid eller efter ${name(r.unsure)}.`);
+      else if(r.est && r.est.by==='plan' && r.est.behind) parts.push(`Inga rapporter sedan dess. Enligt tidtabellen${r.est.delayMin?` och förseningen`:''} bör tåget nu vara mellan ${name(r.est.idx-1)} och ${name(r.est.idx)}.`);
+      else if(r.between) parts.push(`Någonstans mellan ${name(r.between[0])} och ${name(r.between[1])} – var exakt syns inte i rapporterna.`);
+    }
+    return parts.join('<br>');
+  }
+  function renderFollowSource(){
+    const el=document.getElementById('npSource');
+    if(!el) return;
+    const on=state.running && (state.purpose==='follow' || followState.fallback);
+    el.hidden=!on;
+    if(!on) return;
+    const r=followState.res;
+    el.innerHTML = r ? followSourceHtml(r) : 'Hämtar var tåget är från Trafikverket…';
+    // Fart och källa i panelens fjärde ruta, när Trafikverket följer tåget i stället för telefonens GPS
+    if(state.purpose==='follow' || !currentFix() || (currentFix() && currentFix().trv)){
+      const P=r && r.pos && r.pos.used ? r.pos : null;
+      els.gpsSpeed.textContent = P && P.speedKmh!=null ? `${Math.round(P.speedKmh)} km/h` : '– km/h';
+      els.gpsAccuracy.textContent = P ? 'tågets GPS' : (r && r.lastReport ? 'enligt rapport' : 'Trafikverket');
+    }
+  }
+
+  function finishFollow(aborted, reason){
+    stopFollow();
+    const startName=state.route[0]?.name||'', endName=state.route[state.route.length-1]?.name||'';
+    const done=!aborted && /^Slutstation/.test(reason||'');
+    const end=state.route[state.route.length-1];
+    const d=end && end.actualArrival ? delayInfo(end.actualArrival, planArr(end)) : null;
+    reportedLogId=null;
+    els.reportHTML.innerHTML=`<div class="report-summary"><div class="rs-title">${done?`Tåget är framme i ${escapeHtml(endName)}`:'Slutade följa tåget'}</div>` +
+      `<p class="hint">Tåg ${escapeHtml(trainLabel())} · ${escapeHtml(startName)} → ${escapeHtml(endName)}` +
+      (done && end.actualArrival ? ` · ankom ${end.arrivalSource==='trvca'?'ca ':''}${formatClock(end.actualArrival)}${d?` (${escapeHtml(d.text)})`:''}` : '') +
+      ` · Var är tåget? – inget sparades.</p></div>`;
+    const card=document.getElementById('nextTourCard');
+    if(card) card.hidden=true;
+    showView('report');
+    if(done) speak(`Tåg ${spellTrain(enteredTrain()||state.trainNumber)} är framme i ${endName}.`);
+  }
+
   // En station i resans rutt, i det format logiken för ankomst/avgång förväntar sig
   function makeRouteStation(st, idx){
     // Egen mittpunkt (Flytta stationens mittpunkt hit) gäller före Trafikverkets koordinater
@@ -2303,8 +2721,11 @@
     state.trainNumberEntered=meta.trainNumberEntered||'';
     state.vehicleType=meta.vehicleType||'';
     state.notes=meta.notes||'';
-    state.purpose=meta.purpose==='info' ? 'info' : 'measure'; // Bara info: sparas inte som mätning
+    state.purpose=normPurpose(meta.purpose); // Bara info och Var är tåget?: sparas inte som mätning
     applyPurposeClass();
+    state.lastGoodFixTime=null; // senaste GPS-position med användbar noggrannhet (för reserven när GPS:en inte svarar)
+    state.gpsDenied=false;
+    if(followState.fallback) endGpsFallback(false);
     state.startedAt=new Date();
     state.lastReachedIndex=0;
     state.nextIndex=route.length>1?1:null;
@@ -2326,9 +2747,10 @@
   function applyPurposeClass(){
     const j=document.getElementById('journey');
     if(j) j.classList.toggle('info-only', state.purpose==='info');
+    if(j) j.classList.toggle('follow-only', state.purpose==='follow');
     // Bara info sparar ingen mätning: knappen säger bara Avsluta
     const fin=document.getElementById('btnFinish');
-    if(fin) fin.textContent = state.purpose==='info' ? 'Avsluta resan' : 'Avsluta & spara';
+    if(fin) fin.textContent = state.purpose==='follow' ? 'Sluta följa tåget' : (state.purpose==='info' ? 'Avsluta resan' : 'Avsluta & spara');
   }
 
   // ── GPS-spår ──
@@ -2590,6 +3012,7 @@
     if(!autoStartEnabled || state.running || autoState.starting) return null;
     if(currentView!=='setup' && currentView!=='report') return null;
     if(document.getElementById('resumeDialog')) return null;
+    if(purpose()==='follow') return null; // Var är tåget?: ett tåg man inte är på startar inte av sig själv
     if(purpose()==='info' ? !trainNumberValue() : !document.getElementById('vehicleType').value) return null;
     const r=autoFormRoute();
     if(!r || r.key===autoState.blockedKey) return null;
@@ -2676,7 +3099,7 @@
   // Tipsen i startformuläret visas bara när fältet är tomt – då behövs förklaringen
   function renderSetupHints(){
     const tn=document.getElementById('trainNumber'), th=document.getElementById('trainHint');
-    if(tn && th) th.hidden = !!tn.value.trim() || purpose()==='info';
+    if(tn && th) th.hidden = !!tn.value.trim() || purpose()!=='measure';
     const tour=document.getElementById('tourInput'), tourHint=document.getElementById('tourHint');
     if(tour && tourHint) tourHint.hidden = !!tour.value.trim();
   }
@@ -2703,7 +3126,9 @@
 
   function requestGpsWatch(){
     if(TEST_MODE) return; // testerna matar positioner direkt till handlePosition
+    visibleSince=Date.now(); // GPS:en får en stund på sig innan Trafikverket tar över (checkGpsFallback)
     if(!navigator.geolocation){
+      state.gpsDenied=true;
       updateGpsStatus(null, { message:'GPS saknas i webbläsaren.' });
       showJourneyMessage('GPS stöds inte i den här webbläsaren.', true);
       return;
@@ -2725,6 +3150,7 @@
       startWatch();
     }, err=>{
       if(err && err.code===err.PERMISSION_DENIED){
+        state.gpsDenied=true; // Trafikverket tar över (checkGpsFallback), om tågnumret finns
         updateGpsStatus(null, { message:'Plats nekad – tillåt GPS i webbläsaren.' });
         showJourneyMessage('Tillåt plats/GPS för den här sidan och starta om.', true);
         return;
@@ -2734,8 +3160,11 @@
   }
 
   function handlePosition(pos){
+    if(state.running && state.purpose==='follow') return; // Var är tåget?: telefonens GPS används inte
     state.lastPosition=pos;
     state.lastFixTime=Date.now();
+    const accOk=pos && pos.coords && !(pos.coords.accuracy!=null && pos.coords.accuracy>GPS_POOR_ACCURACY_M);
+    if(accOk){ state.lastGoodFixTime=state.lastFixTime; state.gpsDenied=false; }
     updateGpsStatus(pos);
     if(!state.running) return;
     appendTrackPoint(pos, state.lastFixTime);
@@ -2852,7 +3281,7 @@
     let msg = 'Kunde inte läsa GPS.';
     if(err){
       switch(err.code){
-        case 1: msg = 'GPS-åtkomst nekad – aktivera platsbehörighet'; break;
+        case 1: msg = 'GPS-åtkomst nekad – aktivera platsbehörighet'; state.gpsDenied=true; break;
         case 2: msg = 'GPS-signal otillgänglig – försök utomhus'; break;
         case 3: msg = 'GPS timeout – försöker igen...'; break;
         default: msg = err.message || msg;
@@ -3350,9 +3779,13 @@
     if(atIdx!=null){
       // Vid station: uppehållets längd, planerad avgång och tid kvar till den
       const st=state.route[atIdx];
-      els.nextLabel.textContent = atIdx===0 && !st.actualArrival ? 'Startstation' : 'Vid station';
+      const fr=followWanted() ? followState.res : null;
+      els.nextLabel.textContent = fr && fr.approaching ? 'På väg till startstationen' : (fr && fr.done ? 'Framme' : (atIdx===0 && !st.actualArrival ? 'Startstation' : 'Vid station'));
       els.nextStop.textContent=st.name;
-      if(st.actualArrival){
+      if(fr && fr.approaching && st.lastSeenDistance!=null){
+        els.nextValue1.textContent=formatDistance(st.lastSeenDistance);
+        els.nextSub1.textContent='kvar';
+      }else if(st.actualArrival){
         els.nextValue1.textContent=formatDuration((Date.now()-new Date(st.actualArrival))/1000);
         els.nextSub1.textContent='uppehåll';
       }else{
@@ -3376,17 +3809,23 @@
       return;
     }
     const st=state.route[state.nextIndex];
-    els.nextLabel.textContent = st.shouldStop ? 'Nästa station' : 'Nästa · passeras';
+    // Trafikverket följer tåget utan position: nästa station enligt tidtabellen, och avståndet är okänt
+    const fr=followWanted() ? followState.res : null;
+    const byPlan=fr && fr.source!=='position' && fr.est && fr.est.by==='plan' && fr.est.idx===state.nextIndex && fr.est.behind;
+    els.nextLabel.textContent = byPlan ? 'Nästa enligt tidtabellen' : (st.shouldStop ? 'Nästa station' : 'Nästa · passeras');
     els.nextStop.textContent=st.name;
     els.nextValue1.textContent=st.lastSeenDistance!=null?formatDistance(st.lastSeenDistance):'–';
-    els.nextSub1.textContent='kvar';
+    els.nextSub1.textContent = st.lastSeenDistance==null && fr && fr.source!=='position' ? 'avstånd okänt' : 'kvar';
     // Ankomsten enligt tågordern; är den okänd visas avgången, och det står då "avgång plan"
     const pArr=planArr(st);
     const planned=pArr||planDep(st);
     const plannedLabel=!st.shouldStop ? 'passage plan' : (pArr || !planned ? 'ankomst plan' : 'avgång plan');
     setPanelCell(els.nextValue2, els.nextSub2, planned?formatClock(planned):'–', plannedLabel);
     // Från var vi är (tidigare GPS-spår): tid kvar till beräknad ankomst, gul eller röd när den är efter planen
-    const est=nextArrivalEstimate();
+    // Utan gångprofil: Trafikverket följer tåget – resten av sträckan från tågets position, eller tidtabellen
+    // och förseningen vid senaste rapporten
+    let est=nextArrivalEstimate();
+    if(!est && fr && fr.est && fr.est.idx===state.nextIndex) est={ t:fr.est.t };
     if(est){
       const late=planned ? (est.t-new Date(planned).getTime())/1000 : 0;
       setPanelCell(cd, cdSub, formatShortDuration((est.t-Date.now())/1000), `beräknat ${formatClock(est.t)}`,
@@ -3405,8 +3844,13 @@
     stopPanelTimer();
     panelTimer=setInterval(()=>{
       if(!state.running) return;
+      checkGpsFallback();
       updateNextStopUI();
-      if(++panelTicks%5===0) updateInfo();
+      if(++panelTicks%5===0){
+        updateInfo();
+        // Trafikverket följer tåget: åldern på positionen och "bör vara" enligt tidtabellen ändras med klockan
+        if(followWanted()) applyFollowNow();
+      }
     }, 1000);
   }
   function stopPanelTimer(){
@@ -3632,7 +4076,7 @@
         // vägen blir ett tåg (INFO.mergeTrains), och delarna räknas inte som andra tåg.
         const n=enteredTrain();
         let list=await infoAnnouncements(fields=>INFO.queryOurTrain(n, at, fields));
-        const pickOpts={ at, startSig, endSig, prefer: state.purpose==='info' ? 'atn' : 'otn',
+        const pickOpts={ at, startSig, endSig, prefer: state.purpose!=='measure' ? 'atn' : 'otn',
           otn: state.trainNumberEntered ? state.trainNumber : null };
         let pick=TRV ? TRV.pickTrain(list, n, pickOpts) : null;
         // Ett OTN som byts längs vägen: tågets övriga delar (samma ATN). Går det inte gäller den skrivna delen.
@@ -3695,6 +4139,7 @@
       await fetchMissingNames(sigs, lineSigs);
     }
     updateInfo();
+    if(followWanted()) applyFollowNow(); // nya rapporter för vårt tåg
     if(infoState.trvPending){ infoState.trvPending=false; logTrvTrains(now); }
     await refreshPositions();
     await refreshBuses();
@@ -4108,9 +4553,14 @@
       }
       const routeNames=new Map(state.route.filter(s=>s.sig).map(s=>[s.sig, s.name]));
       try{
-        const lp=state.lastPosition;
-        const ourPos = lp && state.lastFixTime && Date.now()-state.lastFixTime<60000 ? { lat:lp.coords.latitude, lon:lp.coords.longitude } : null;
+        const fix=currentFix();
+        const ourPos = fix ? { lat:fix.lat, lon:fix.lon } : null;
         const est=nextArrivalEstimate();
+        // Trafikverket följer tåget: beräknad ankomst till nästa station från tågets position eller från tidtabellen
+        // och förseningen (rapporterna kommer bara från vissa stationer på System M, så Info får inte tro att tåget
+        // fortfarande är vid den senast rapporterade)
+        const fe=followWanted() && followState.res && followState.res.est;
+        const feSig=fe && state.route[fe.idx] ? state.route[fe.idx].sig : '';
         model=INFO.compute({
           line:infoState.line, trains:infoState.trains, ourKey:infoState.ourKey, known, now:Date.now(),
           knownDouble:loadInfoSettings().double, knownMeetPlaces:loadInfoSettings().meet,
@@ -4118,7 +4568,7 @@
           positions:infoState.positions, coords:lineCoords(), ourPos, axis:infoAxis(),
           buses:infoState.buses, names:lineNames(), connMode:connSettings().mode, connAlerts:connSettings().alerts,
           marked:markedConnections(), own:loadOwnConnections(),
-          posAt: est && est.sig ? { sig:est.sig, t:est.t } : null,
+          posAt: est && est.sig ? { sig:est.sig, t:est.t } : (feSig ? { sig:feSig, t:fe.t } : null),
           infra: window.RailTimerInfra || null
         });
       }catch(e){
@@ -4212,7 +4662,7 @@
     saveInfoLog();
   }
   function saveInfoLog(){
-    if(!state.running || state.purpose==='info' || !state.journeyId) return;
+    if(!state.running || state.purpose!=='measure' || !state.journeyId) return;
     const mapOut=m=>m ? Array.from(m.entries()) : [];
     try{
       localStorage.setItem(STORAGE_KEY_INFO_LOG, JSON.stringify({ journeyId:String(state.journeyId),
@@ -4461,7 +4911,7 @@
       m.end.trvEst!=null && !m.end.arrived ? `Trafikverket ${roundClock(m.end.trvEst)}` : '',
       m.end.track ? `spår ${escapeHtml(m.end.track)}` : '',
       m.recoveryMin>0 && !m.end.arrived ? `tar igen ca ${m.recoveryMin} min` : '',
-      m.posAt && !m.end.arrived ? 'räknat från var vi är' : '',
+      m.posAt && !m.end.arrived ? (state.purpose==='follow' ? 'räknat från var tåget är' : 'räknat från var vi är') : '',
       updated
     ].filter(Boolean).join(' · ');
     let html=`<div class="info-head"><div class="ih-label">${m.end.arrived?'Framme i':'Prognos'} ${escapeHtml(endName)}</div>` +
@@ -4470,10 +4920,12 @@
       `<div class="ih-sub">${sub}</div></div>`;
 
     // Förslag: ring trafikledningen när en markerad anslutning blir knapp eller missas (högst två)
-    if(m.actions && m.actions.length) html+=`<div class="info-sec"><span>Åtgärd</span></div>${m.actions.slice(0, 2).map(actionRowHtml).join('')}`;
+    // (inte i Var är tåget? – man är inte på tåget)
+    const onTrain=state.purpose!=='follow';
+    if(onTrain && m.actions && m.actions.length) html+=`<div class="info-sec"><span>Åtgärd</span></div>${m.actions.slice(0, 2).map(actionRowHtml).join('')}`;
 
     // Färdig text att ropa ut när vi är sena eller en anslutning påverkas
-    const ut=INFO.announcement(m, { name:sigName, clock:roundClock });
+    const ut=onTrain ? INFO.announcement(m, { name:sigName, clock:roundClock }) : null;
     if(ut){
       const lang=infoState.utropLang==='en' ? 'en' : 'sv';
       const open = infoState.utropOpen!=null ? infoState.utropOpen : state.purpose==='info';
@@ -4648,6 +5100,7 @@
   // avvikelse eller störning. Samma sak meddelas bara en gång per nivå.
   // Det viktigaste läses också upp (speak), i ord som går att höra: inga tågnummer, "minuter" utskrivet.
   function notifyInfo(m){
+    if(state.purpose==='follow') return; // Var är tåget?: man är inte på tåget, inget vibrerar eller läses upp
     // Reglerna och texterna finns i railtimer-info.js (INFO.alerts); här läggs nästa tur till
     const list=INFO.alerts(m, { name:sigName, clock:roundClock });
     const minutes = n => `${n} minut${n===1?'':'er'}`;
@@ -4677,18 +5130,23 @@
   function journeyTitleText(){
     const startName=state.route[0]?.name || '?';
     const endName=state.route[state.route.length-1]?.name || '?';
-    return [state.trainNumber?`Tåg ${trainLabel()}`:'Utan tågnummer', `${startName} → ${endName}`, state.purpose==='info' ? 'Bara info' : state.vehicleType].filter(Boolean).join(' · ');
+    return [state.trainNumber?`Tåg ${trainLabel()}`:'Utan tågnummer', `${startName} → ${endName}`,
+      state.purpose==='follow' ? 'Var är tåget?' : (state.purpose==='info' ? 'Bara info' : state.vehicleType)].filter(Boolean).join(' · ');
   }
 
   // En tidcell i stationsraden: faktisk tid med avvikelse under, annars tidtabellens tid nedtonad.
   // Tider under avbrott visas som "avbrott".
-  function timeCell(actual, scheduled, timeWindow){
+  // src: 'trv' = Trafikverkets rapport (hela minuter visas utan sekunder), 'trvca' = ungefär, ur tågets position
+  function timeCell(actual, scheduled, timeWindow, src){
     if((actual && isInterruptedTime(actual)) || (!actual && timeWindow)){
       return `<span class="st-t plan" title="Tiden saknas på grund av avbrott i mätningen"><b>avbrott</b><i>${scheduled?formatClock(scheduled):''}</i></span>`;
     }
     if(actual){
       const d=delayInfo(actual, scheduled);
-      return `<span class="st-t"><b>${formatTime(actual)}</b>${d?`<i class="dl-${d.cls}">${d.text}</i>`:'<i>&nbsp;</i>'}</span>`;
+      const delay=d?`<i class="dl-${d.cls}">${d.text}</i>`:'<i>&nbsp;</i>';
+      if(src==='trvca') return `<span class="st-t ca" title="Ungefär – räknat ur tågets position (Trafikverket)"><b>≈${formatClock(actual)}</b>${delay}</span>`;
+      if(src==='trv') return `<span class="st-t trv" title="Rapporterat av Trafikverket"><b>${trvClock(actual)}</b>${delay}</span>`;
+      return `<span class="st-t"><b>${formatTime(actual)}</b>${delay}</span>`;
     }
     if(scheduled) return `<span class="st-t plan" title="Enligt tidtabell"><b>${formatClock(scheduled)}</b><i>plan</i></span>`;
     return '<span class="st-t plan"><b>–</b><i>&nbsp;</i></span>';
@@ -4757,13 +5215,18 @@
     else if(atIdx==null && state.nextIndex===idx) classes.push('active');
     if(expandedCards.has(idx)) classes.push('expanded');
     // Startstationen har ingen ankomst och slutstationen ingen avgång
-    const done = station.missedReason ? true : (idx===0 ? !!station.actualDeparture : (isLast ? !!station.actualArrival : !!(station.actualArrival && station.actualDeparture)));
+    const done = station.missedReason || station.followPassed ? true : (idx===0 ? !!station.actualDeparture : (isLast ? !!station.actualArrival : !!(station.actualArrival && station.actualDeparture)));
     if(done) classes.push('done');
     card.className=classes.join(' ');
 
     // Rad: nummer, namn (med status under), ankomst, avgång
     let note='';
+    const fr=followWanted() ? followState.res : null;
     if(station.missedReason) note='missad – avbrott';
+    else if(fr && fr.unsure===idx) note='ankom · avgången inte rapporterad';
+    else if(fr && state.nextIndex===idx && fr.est && fr.est.by==='plan' && fr.est.behind) note='nästa enligt tidtabellen';
+    else if(fr && !station.followPassed && fr.est && fr.est.by==='plan' && fr.est.behind && idx>fr.passedIdx && idx<fr.est.idx) note='bör ha passerats – ingen rapport';
+    else if(fr && station.followPassed && !station.actualArrival && !station.actualDeparture && idx>0) note='passerad – ingen tid';
     else if(currentStationIndex()===idx) note = station.actualArrival ? `står här · ${formatDuration((Date.now()-new Date(station.actualArrival))/1000)}` : 'står här';
     else if(state.nextIndex===idx) note = (station.lastSeenDistance!=null ? formatDistance(station.lastSeenDistance)+' kvar' : 'nästa') + (station.shouldStop?'':' · passeras');
     else if(!station.shouldStop) note='passeras';
@@ -4777,8 +5240,8 @@
       const extra=[otnHere, memo?'📌 '+memo:'', halt?halt.short:''].filter(Boolean).join(' · ');
       if(extra) note = note ? `${note} · ${extra}` : extra;
     }
-    const arr = idx>0 || station.actualArrival ? timeCell(station.actualArrival, planArr(station), station.arrivalWindow) : '<span class="st-t plan"><b></b></span>';
-    const dep = !isLast || station.actualDeparture ? timeCell(station.actualDeparture, planDep(station), station.departureWindow) : '<span class="st-t plan"><b></b></span>';
+    const arr = idx>0 || station.actualArrival ? timeCell(station.actualArrival, planArr(station), station.arrivalWindow, station.arrivalSource) : '<span class="st-t plan"><b></b></span>';
+    const dep = !isLast || station.actualDeparture ? timeCell(station.actualDeparture, planDep(station), station.departureWindow, station.departSource) : '<span class="st-t plan"><b></b></span>';
     card.querySelector('.card-main').innerHTML=`<div class="st-row">
         <span class="st-num">${station.order}</span>
         <span class="st-name"><b>${escapeHtml(station.name)}${station.shouldStop?'':' <span title="Passeras utan stopp">⏩</span>'}</b>${note?`<small>${escapeHtml(note)}</small>`:''}</span>
@@ -4948,7 +5411,11 @@
     releaseWakeLockAfterJourney();
     stopPanelTimer();
     stopInfo();
+    stopFollow();
+    followState.fallback=false;
     els.journeyMsg.style.display='none';
+    renderFollowSource();
+    if(state.purpose==='follow'){ finishFollow(aborted, reason); return; }
     if(state.purpose==='info'){ finishInfoOnly(aborted, reason); return; }
     const logEntry=saveLog(aborted);
     renderReport(logEntry);
@@ -5005,6 +5472,7 @@
   }
   // GPS:en hålls igång i startformuläret, och i rapporten när resan kan starta av sig själv (nästa tur)
   function wantsGpsWarmup(){
+    if(purpose()==='follow') return false; // Var är tåget? behöver inte telefonens GPS
     return currentView==='setup' || (currentView==='report' && autoStartEnabled);
   }
 
@@ -5626,14 +6094,16 @@
     if(!INFO || !legProfiles.size || !state.running || state.nextIndex==null || currentStationIndex()!=null) return null;
     const ni=state.nextIndex, B=state.route[ni], A=state.route[ni-1];
     if(!A || !B || !A.actualDeparture || B.actualArrival) return null;
-    const lp=state.lastPosition, at=state.lastFixTime;
-    if(!lp || !lp.coords || !at || Date.now()-at>60000) return null;
-    if(lp.coords.accuracy!=null && lp.coords.accuracy>INFO.PROFILE.maxAccM) return null;
+    // Telefonens GPS, eller tågets egen position från Trafikverket (Var är tåget?, eller när GPS:en inte svarar)
+    const fix=currentFix();
+    if(!fix) return null;
+    if(fix.acc!=null && fix.acc>INFO.PROFILE.maxAccM) return null;
+    const at=fix.t;
     const dep=timeMs(A.actualDeparture), arr=timeMs(A.actualArrival);
     const stopA = ni-1===0 || (arr!=null && dep-arr>=INFO.PROFILE.stopDwellMs);
     const stopB = ni===state.route.length-1 || !!B.shouldStop;
     const e=INFO.positionEstimate(legProfiles, { from:A.name, to:B.name, stopA, stopB,
-      pos:{ lat:lp.coords.latitude, lon:lp.coords.longitude }, at, now:Date.now() });
+      pos:{ lat:fix.lat, lon:fix.lon }, at, now:Date.now() });
     return e ? Object.assign(e, { idx:ni, sig:B.sig||'' }) : null;
   }
 
@@ -5917,7 +6387,7 @@
     const isLast=idx===state.route.length-1;
     if(st.missedReason) return 'var(--mut)';
     if(currentStationIndex()===idx) return 'var(--sec)';
-    const done = idx===0 ? !!st.actualDeparture : (isLast ? !!st.actualArrival : !!(st.actualArrival && st.actualDeparture));
+    const done = st.followPassed || (idx===0 ? !!st.actualDeparture : (isLast ? !!st.actualArrival : !!(st.actualArrival && st.actualDeparture)));
     if(done) return 'var(--pri)';
     if(state.nextIndex===idx) return 'var(--blue)';
     return 'var(--mut)';
@@ -5932,7 +6402,10 @@
 
     const width=container.clientWidth||300;
     const height=container.clientHeight||150;
-    const pos=state.lastPosition ? [state.lastPosition.coords.latitude, state.lastPosition.coords.longitude] : null;
+    // Markören: telefonens GPS, eller tågets position från Trafikverket (blå) när den gäller
+    const marker=mapMarker();
+    const pos=marker ? [marker.lat, marker.lon] : null;
+    const span=followSpan();
 
     // Sträckorna: längs spåret om det finns, annars rakt
     const legs=[];
@@ -5964,16 +6437,18 @@
       if(follow && posOutside) bpts.push([Math.round(pos[0]*200)/200, Math.round(pos[1]*200)/200]);
     }
     const statusKey=state.route.map((s,idx)=>mapStationColor(s, idx)).join(',');
-    const viewKey=[width, height, mapSettings.mode, follow, lo, hi, railStatus, Object.keys(railPaths).length, statusKey, follow&&posOutside?bpts[bpts.length-1].join(','):''].join('|');
+    const viewKey=[width, height, mapSettings.mode, follow, lo, hi, railStatus, Object.keys(railPaths).length, statusKey, follow&&posOutside?bpts[bpts.length-1].join(','):'', span?`${span.from}-${span.to}`:''].join('|');
 
     if(force || !mapView || mapView.key!==viewKey){
-      mapView=drawMapBase(container, width, height, bpts, legs, pts, lo, hi, follow);
+      mapView=drawMapBase(container, width, height, bpts, legs, pts, lo, hi, follow, span);
       mapView.key=viewKey;
     }
     updateMapDynamic(pos);
+    const mk=document.getElementById('mapPos');
+    if(mk) mk.classList.toggle('trv', !!(marker && marker.trv));
   }
 
-  function drawMapBase(container, width, height, bpts, legs, pts, lo, hi, follow){
+  function drawMapBase(container, width, height, bpts, legs, pts, lo, hi, follow, span){
     const lats=bpts.map(p=>p[0]), lons=bpts.map(p=>p[1]);
     let minLat=Math.min(...lats), maxLat=Math.max(...lats), minLon=Math.min(...lons), maxLon=Math.max(...lons);
     // Minst ca 1,5 km i bild, så att kartan inte zoomar in på några meter vid en station
@@ -5993,8 +6468,12 @@
     let svg=`<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">`;
     // Spåret: kört avsnitt mörkare grönt, kommande grått; streckat där spårdata saknas
     legs.forEach(l=>{
-      const done=!!state.route[l.to].actualArrival || !!state.route[l.to].missedReason;
+      const done=!!state.route[l.to].actualArrival || !!state.route[l.to].missedReason || !!state.route[l.to].followPassed;
       svg+=`<path d="${d(l.path)}" fill="none" stroke="${done?'#2f5d40':'#4b5563'}" stroke-width="${l.rail?4:3}" stroke-linecap="round" stroke-linejoin="round"${l.rail?'':' stroke-dasharray="6 6"'}/>`;
+    });
+    // Var är tåget? utan position: sträckan där tåget är, utan att läget är känt
+    if(span) legs.forEach(l=>{
+      if(l.from>=span.from && l.to<=span.to) svg+=`<path class="map-span" d="${d(l.path)}" fill="none" stroke="var(--blue)" stroke-width="6" stroke-linecap="round" stroke-dasharray="1 9" opacity=".9"/>`;
     });
     svg+='<path id="mapTrail" d="" fill="none" stroke="var(--pri)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/>';
 
@@ -6393,12 +6872,18 @@
       // Har föraren själv valt start och slut avgör de vilket tåg numret är; annars bestämmer tåget rutten
       const ownRoute=!routeFieldsUntouched() && selectedStartStation && selectedEndStation;
       const timetableResult = await fetchTimetable(trainNumber, currentTime, {
-        prefer: purpose()==='info' ? 'atn' : 'otn',
+        prefer: purpose()!=='measure' ? 'atn' : 'otn',
         otn: trainChoice && trainChoice.number===trainNumber ? trainChoice.otn : null,
         startSig: ownRoute ? selectedStartStation.sig : null, endSig: ownRoute ? selectedEndStation.sig : null
       });
       if(!stillCurrent()) return;
       renderTrainIdent(trainNumber, timetableResult);
+      // Var är tåget?: ett tåg man inte är på – ingen rutt från telefonens GPS eller från egna körningar
+      if(purpose()==='follow'){
+        document.getElementById('routeSuggestion').style.display='none';
+        currentSuggestion = null;
+        return;
+      }
       const t = timetableResult.success ? timetableResult.train : null;
       const nums = [trainNumber].concat(t ? [t.otn, t.atn] : []).filter(Boolean);
 
@@ -7566,6 +8051,8 @@
 
   function handleVisibilityChange(){
     if(document.visibilityState==='visible'){
+      visibleSince=Date.now(); // GPS:en får en stund på sig innan Trafikverket tar över (checkGpsFallback)
+      if(followWanted()) refreshFollow();
       if(keepScreenAwake && !wakeLockSentinel){
         requestWakeLock(true);
       }
@@ -7603,7 +8090,8 @@
         lastFix: state.lastFix,
         interruptionTipShown: state.interruptionTipShown,
         startedBy: state.startedBy || '',
-        purpose: state.purpose==='info' ? 'info' : 'measure',
+        purpose: normPurpose(state.purpose),
+        followMemo: state.purpose==='follow' ? followState.memo : null,
         reminded: state.reminded ? Array.from(state.reminded) : [],
         lastSaveTime: Date.now()
       };
@@ -7668,7 +8156,7 @@
         <p style="margin:0 0 .5rem;color:var(--ink);">En pågående resa hittades:</p>
         <p style="margin:0 0 1rem;color:var(--ink-dim);font-size:.9rem;">
           <strong>${escapeHtml(startStation)} → ${escapeHtml(endStation)}</strong><br>
-          Fordon: ${escapeHtml(saved.vehicleType || '–')} • Tåg: ${escapeHtml(saved.trainNumber ? trainLabel(saved) : '–')}<br>
+          ${saved.purpose==='follow' ? 'Var är tåget?' : `Fordon: ${escapeHtml(saved.vehicleType || '–')}`} • Tåg: ${escapeHtml(saved.trainNumber ? trainLabel(saved) : '–')}<br>
           Startad: ${startTime}
         </p>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
@@ -7737,8 +8225,10 @@
     state.storageWarned = false;
     state.prunedAtStart = prunedIds.size;
     state.startedBy = saved.startedBy || '';
-    state.purpose = saved.purpose==='info' ? 'info' : 'measure';
+    state.purpose = normPurpose(saved.purpose);
     applyPurposeClass();
+    state.lastGoodFixTime = null;
+    state.gpsDenied = false;
     state.nextTour = null;
     state.reminded = new Set(Array.isArray(saved.reminded) ? saved.reminded : []);
 
@@ -7756,10 +8246,15 @@
     startPanelTimer();
     startInfo();
     if(state.purpose==='info') setInfoTab('info');
-    fetchNextTour();
     loadRailGeometry();
-    await restoreTrack(state.journeyId); // innan GPS:en startar, så att inga punkter skrivs över
-    requestGpsWatch();
+    if(state.purpose==='follow'){
+      // Var är tåget?: ingen GPS och ingen tur, bara Trafikverket
+      startFollow(saved.followMemo || null);
+    }else{
+      fetchNextTour();
+      await restoreTrack(state.journeyId); // innan GPS:en startar, så att inga punkter skrivs över
+      requestGpsWatch();
+    }
     enableWakeLockForJourney();
 
     showJourneyMessage('Resa återupptagen!', false);
@@ -7954,14 +8449,14 @@
      Bara info i startformuläret. #-delen laddar inte om en öppen app. Under en resa, eller när Återuppta resa?
      visas, ändras inget. */
   function consumeShortcut(){
-    const m=/(^|[#&])ny=(mat|info)\b/.exec(location.hash.slice(1));
+    const m=/(^|[#&])ny=(mat|info|folj)\b/.exec(location.hash.slice(1));
     if(!m) return false;
     try{ history.replaceState(history.state, '', location.pathname+location.search); }catch(e){}
     if(state.running || document.getElementById('resumeDialog')){
       if(state.running) showHeaderStatus('Resan pågår – avsluta den först', true);
       return false;
     }
-    setPurpose(m[2]==='info' ? 'info' : 'measure');
+    setPurpose(m[2]==='info' ? 'info' : (m[2]==='folj' ? 'follow' : 'measure'));
     if(OVERLAY_VIEWS.includes(currentView) || currentView==='report') showView('setup');
     return true;
   }

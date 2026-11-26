@@ -257,20 +257,27 @@
     const or = otns.map(o => `<EQ name="Train.OperationalTrainNumber" value="${xmlAttr(o)}" />`).join('');
     return `<QUERY namespace="järnväg.trafikinfo" objecttype="TrainPosition" schemaversion="1.1" limit="${otns.length * 4 + 4}">` +
       `<FILTER><OR>${or}</OR></FILTER>` +
-      ['Train.OperationalTrainNumber', 'Position.WGS84', 'TimeStamp', 'Speed', 'Bearing'].map(f => `<INCLUDE>${f}</INCLUDE>`).join('') +
+      ['Train.OperationalTrainNumber', 'Train.OperationalTrainDepartureDate', 'Position.WGS84', 'TimeStamp', 'Speed', 'Bearing', 'Deleted']
+        .map(f => `<INCLUDE>${f}</INCLUDE>`).join('') +
       `</QUERY>`;
   }
-  // Senaste positionen per tågnummer: Map(otn → { otn, lat, lon, t, speedKmh })
-  function parsePositions(list) {
+  /* Senaste positionen per tågnummer: Map(otn → { otn, date, lat, lon, t, speedKmh, bearing }).
+     Trafikverket har en position per tåg och avgångsdatum: provet 2026-11-26 gav gårdagens 23248 bredvid dagens.
+     opts.date (ÅÅÅÅ-MM-DD): bara positioner för den körningen (positioner utan datum räknas). Raderade räknas inte. */
+  function parsePositions(list, opts) {
+    const want = opts && opts.date ? String(opts.date).slice(0, 10) : '';
     const out = new Map();
     for (const p of list || []) {
       const otn = p && p.Train && p.Train.OperationalTrainNumber != null ? String(p.Train.OperationalTrainNumber) : '';
       const pt = wgs84(p && p.Position && p.Position.WGS84);
       const t = ms(p && p.TimeStamp);
-      if (!otn || !pt || t == null) continue;
+      if (!otn || !pt || t == null || p.Deleted === true) continue;
+      const date = String((p.Train && p.Train.OperationalTrainDepartureDate) || '').slice(0, 10);
+      if (want && date && date !== want) continue;
       const prev = out.get(otn);
       if (prev && prev.t >= t) continue;
-      out.set(otn, { otn, lat: pt.lat, lon: pt.lon, t, speedKmh: Number.isFinite(Number(p.Speed)) && p.Speed !== null ? Number(p.Speed) : null });
+      const num = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null;
+      out.set(otn, { otn, date, lat: pt.lat, lon: pt.lon, t, speedKmh: num(p.Speed), bearing: num(p.Bearing) });
     }
     return out;
   }
