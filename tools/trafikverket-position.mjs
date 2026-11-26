@@ -10,6 +10,7 @@
 // 2. TrainPosition för tågen var POLL_S:e sekund i DURATION_S sekunder: hur ofta positionen ändras, hur gammal
 //    den är när den hämtas, fart, och var den ligger mot linjen och mot senaste rapporten.
 // 3. SSE (sseurl): skickar Trafikverket nya positioner av sig själv, och tillåts det från appens adress (CORS)?
+// 4. Pågående störningar (OperativeEvent): händelsetyperna, de som rör linjen och Göteborgsområdet, och fälten.
 import { appendFileSync } from 'node:fs';
 
 const KEY = '1acaea82911c472cb3409d57ae19707f'; // samma publika nyckel som appen (index.html)
@@ -263,5 +264,57 @@ log(`- SSEURL i svaret: ${sse.url ? 'ja' : 'nej'}`);
 log(`- Ström öppnad: ${sse.started ? `ja (HTTP ${sse.status})` : 'nej'}; CORS från ${ORIGIN}: \`${sse.cors}\``);
 log(`- På ${SSE_S} s: ${sse.events} händelser med ${sse.positions} positioner; första efter ${sse.firstAt != null ? Math.round(sse.firstAt) + ' s' : '–'}`);
 if (sse.perTrain.size) log(`- Per tåg: ${Array.from(sse.perTrain).map(([o, n]) => `${o}: ${n}`).join(', ')}`);
+
+// ── 4. Störningar (OperativeEvent): vad står det, och säger Trafikverket vilket tåg? ──
+// André 2026-11-26: "Vem/vilka har problem med dragfordon/motorvagn?" (händelse vid Gamlestaden–Göteborg C)
+try {
+  const { list } = await ask(`<QUERY namespace="ols.open" objecttype="OperativeEvent" schemaversion="1.0" limit="2000"><FILTER><EQ name="EventState" value="1" /></FILTER></QUERY>`, 'OperativeEvent');
+  log(`\n## 4. Pågående störningar (OperativeEvent): ${list.length}\n`);
+  const types = new Map();
+  for (const e of list) {
+    const d = (e.EventType && e.EventType.Description) || '?';
+    types.set(d, (types.get(d) || 0) + 1);
+  }
+  log('| händelsetyp | antal |');
+  log('|---|---|');
+  for (const [d, n] of Array.from(types).sort((a, b) => b[1] - a[1])) log(`| ${d} | ${n} |`);
+  // Alla signaturer på alla nivåer
+  const sigs = (o, acc) => {
+    if (!o || typeof o !== 'object') return acc;
+    for (const [k, v] of Object.entries(o)) {
+      if ((k === 'Signature' || k === 'LocationSignature') && typeof v === 'string') acc.add(v);
+      else if (typeof v === 'object') sigs(v, acc);
+    }
+    return acc;
+  };
+  const WATCH = new Set(LINE_SIGS.concat((process.env.EVENT_SIGS || 'G Gas Sel Agb Öx Bgs').split(/[\s,]+/)));
+  const near = list.filter(e => Array.from(sigs(e, new Set())).some(x => WATCH.has(x)));
+  const vehicle = list.filter(e => /dragfordon|motorvagn|fordon/i.test((e.EventType && e.EventType.Description) || ''));
+  log(`\nRör linjen eller Göteborgsområdet: ${near.length}. Fordonsfel i hela landet: ${vehicle.length}.`);
+  const shown = new Set();
+  for (const e of near.concat(vehicle).slice(0, 4)) {
+    if (shown.has(e.EventId)) continue;
+    shown.add(e.EventId);
+    log(`\n### ${(e.EventType && e.EventType.Description) || '?'} · ${Array.from(sigs(e, new Set())).join(' ')}\n`);
+    log('```');
+    log(JSON.stringify(e, null, 1).slice(0, 3500));
+    log('```');
+  }
+  // Fält som förekommer, med antal
+  const fields = new Map();
+  const walk = (o, pre) => {
+    if (!o || typeof o !== 'object') return;
+    if (Array.isArray(o)) { o.forEach(x => walk(x, pre)); return; }
+    for (const [k, v] of Object.entries(o)) {
+      const key = pre ? `${pre}.${k}` : k;
+      fields.set(key, (fields.get(key) || 0) + 1);
+      if (v && typeof v === 'object') walk(v, key);
+    }
+  };
+  list.forEach(e => walk(e, ''));
+  log('\n| fält | förekomster |');
+  log('|---|---|');
+  for (const [k, n] of Array.from(fields).sort()) log(`| ${k} | ${n} |`);
+} catch (e) { log(`\nOperativeEvent: ${e.message}`); }
 
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join('\n') + '\n');

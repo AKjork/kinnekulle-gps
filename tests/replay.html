@@ -3315,8 +3315,78 @@ test('var är tåget: startformuläret – inget fordon, ingen tur, valfri rutt;
   assertEqual(rt.state.lastPosition, null, 'positionen räknas inte');
   rt.stopJourney(false, 'Avslutad manuellt');
   assertEqual(rt.loadLogs().length, 0, 'inget sparas');
-  assert(/Slutade följa tåget/.test(d.getElementById('reportHTML').textContent), d.getElementById('reportHTML').textContent);
+  // Slutade följa för hand: direkt till startsidan (2026-11-26e), ingen rapport att bläddra förbi
+  assertEqual(rt.currentView(), 'setup', 'startsidan');
+  assert(/Slutade följa tåg 3347/.test(d.getElementById('headerStatus').textContent), d.getElementById('headerStatus').textContent);
   assertEqual(d.getElementById('btnNew').textContent, 'Följ ett annat tåg', 'knappen i rapporten');
+  assertEqual(d.getElementById('gpsStatusBadge').style.display, 'none', 'GPS-märket visas inte – telefonens GPS används inte');
+  // Senast följda: ett tryck följer samma tåg till samma station igen
+  const recent = d.getElementById('followRecent');
+  assert(!recent.hidden && recent.textContent.includes('▶ 3347 · Blomberg'), recent.textContent);
+  d.getElementById('trainNumber').value = '';
+  await rt.followRecent(0);
+  assert(rt.state.running && rt.state.purpose === 'follow', 'följer igen');
+  assertEqual(rt.state.route[rt.state.route.length - 1].name, 'Blomberg', 'till samma station');
+  rt.goHome();
+  assertEqual(rt.currentView(), 'setup', 'RailTimer i rubriken: slutar följa och tillbaka till startsidan');
+  assertEqual(rt.state.running, false, 'slutat följa');
+  assertEqual(rt.loadFollowRecent().length, 1, 'samma tåg och station en gång i listan');
+});
+
+test('startsidan: RailTimer i rubriken och ⋮ → Startsidan tar en dit; under en resa finns Avsluta överst och kräver två tryck', async () => {
+  const fixes = buildJourney();
+  const stopT = fixes.find(f => f.leg === 2 && f.frac > 0.55).t;
+  const { w, rt } = await runJourney(fixes, { trainNumber: '3344', drop: f => f.t > stopT });
+  const d = w.document;
+  const home = d.getElementById('btnHome');
+  const menuItem = d.getElementById('btnHomeMenu');
+  const top = d.getElementById('btnFinishTop');
+  // Under resan: Avsluta överst, rubriken lämnar inte resan
+  assertEqual(top.textContent, 'Avsluta', 'Avsluta överst i resvyn');
+  assert(top.getBoundingClientRect().top < d.getElementById('nextPanel').getBoundingClientRect().top, 'ovanför panelen, utan att bläddra');
+  assert(d.getElementById('homeHint').hidden && menuItem.hidden, 'ingen väg till startsidan mitt i resan');
+  home.click();
+  assertEqual(rt.currentView(), 'journey', 'resan står kvar');
+  assert(rt.state.running, 'resan pågår');
+  assert(/Resan pågår – avsluta den med Avsluta överst/.test(d.getElementById('headerStatus').textContent), d.getElementById('headerStatus').textContent);
+  // Från Inställningar under resan: tillbaka till resan
+  rt.showPrefs();
+  assert(!menuItem.hidden && menuItem.textContent === '⌂ Tillbaka till resan', menuItem.textContent);
+  assertEqual(d.getElementById('homeHint').textContent, 'Resan', 'rubrikens märke');
+  home.click();
+  assertEqual(rt.currentView(), 'journey', 'tillbaka till resan');
+  // Två tryck: det första avslutar inte
+  top.click();
+  assert(rt.state.running, 'första trycket avslutar inte');
+  assertEqual(top.textContent, 'Tryck igen – sparas', 'säger vad som händer');
+  assert(top.classList.contains('confirm'), 'markerad');
+  top.click();
+  assertEqual(rt.state.running, false, 'andra trycket avslutar');
+  await realSleep(100);
+  assertEqual(rt.loadLogs().length, 1, 'mätningen sparades');
+  // Rapporten: knappen till en ny resa överst, och RailTimer i rubriken
+  assertEqual(rt.currentView(), 'report', 'rapporten');
+  const newTop = d.getElementById('btnNewTop');
+  assertEqual(newTop.textContent, 'Starta ny mätning', 'knappen överst i rapporten');
+  assert(newTop.getBoundingClientRect().bottom < w.innerHeight, 'syns utan att bläddra');
+  assert(!d.getElementById('homeHint').hidden && !menuItem.hidden && menuItem.textContent === '⌂ Startsidan', 'vägen till startsidan syns');
+  home.click();
+  assertEqual(rt.currentView(), 'setup', 'RailTimer i rubriken: startsidan');
+  assert(d.getElementById('homeHint').hidden && menuItem.hidden, 'på startsidan behövs den inte');
+  // Från Inställningar utan resa: ⋮ → Startsidan
+  rt.showPrefs();
+  menuItem.click();
+  assertEqual(rt.currentView(), 'setup', '⋮ → Startsidan');
+  // Rapporten → knappen överst
+  rt.showView('report');
+  newTop.click();
+  assertEqual(rt.currentView(), 'setup', 'knappen överst i rapporten');
+  // Syftet med ikoner, och Var är tåget? utan GPS-märke
+  assert(d.querySelector('#purposeFollow .pi'), 'ikon på valet');
+  assertEqual(d.getElementById('gpsStatusBadge').style.display, '', 'GPS-märket i Mät tidtabell');
+  d.getElementById('purposeFollow').click();
+  assertEqual(d.getElementById('gpsStatusBadge').style.display, 'none', 'inte i Var är tåget?');
+  d.getElementById('purposeMeasure').click();
 });
 
 test('var är tåget: tågets GPS från Trafikverket – nästa station, avstånd, källan i panelen, ca-tid och framme', async () => {
@@ -4228,6 +4298,9 @@ window.prepareShot = async function (name) {
     st.reports['Lkp:dep'] = st.base + (gps ? 60000 : 2 * 60000);
     if (gps) st.positions = [{ at: [2, 0.6], t: now - 12000, speed: 70 }];
     const { w, rt } = await followApp(st);
+    if (name === 'startformular-var-ar-taget') {
+      w.localStorage.setItem('railtimer_follow_recent_v1', JSON.stringify([{ n: '3347', start: '', end: 'Lidköping', at: now }, { n: '13305', start: '', end: '', at: now - 3600000 }]));
+    }
     rt.setPurpose('follow');
     w.document.getElementById('trainNumber').value = '3347';
     if (name !== 'startformular-var-ar-taget') {

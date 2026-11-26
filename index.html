@@ -87,7 +87,12 @@
     letter-spacing:-0.01em;
     white-space:nowrap;
   }
-  h1::before{content:'🚂 '}
+  /* RailTimer i rubriken är knappen till startsidan (2026-11-26e) */
+  h1 .brand{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:.3rem;min-height:2.2rem;padding:0 .35rem 0 0;border-radius:6px;-webkit-tap-highlight-color:transparent}
+  h1 .brand::before{content:'🚂'}
+  h1 .brand:focus-visible{outline:2px solid var(--pri);outline-offset:2px}
+  h1 .brand .home-hint{font-size:.72rem;font-weight:500;color:var(--ink-dim);border:1px solid var(--b);border-radius:999px;padding:.05rem .45rem;margin-left:.15rem}
+  h1 .brand .home-hint[hidden]{display:none}
   h2{
     margin:1.25rem 0 .75rem;
     font-size:1rem;
@@ -488,7 +493,12 @@
     gap:.45rem;
     height:100%;
   }
-  .journey-title{flex:none;font-size:.78rem;font-weight:500;color:var(--ink-dim);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .journey-head{flex:none;display:flex;align-items:center;gap:.5rem;min-width:0}
+  .journey-title{flex:1 1 auto;min-width:0;font-size:.78rem;font-weight:500;color:var(--ink-dim);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .journey-end{flex:none;min-height:2rem;padding:.2rem .75rem;font-size:.8rem;border-radius:999px;white-space:nowrap}
+  .journey-end.confirm{border-color:var(--warn);color:var(--warn);font-weight:600}
+  .journey-end.pulse{animation:endPulse 1s ease-in-out 2}
+  @keyframes endPulse{50%{border-color:var(--pri);color:var(--pri);box-shadow:0 0 0 3px var(--pri-glow)}}
   .journey-title::before{content:''}
 
   /* Panel för nästa station: det viktigaste stort, resten i en rad under */
@@ -521,7 +531,13 @@
   /* En rad om läget framåt (från infofliken); tryck öppnar fliken */
   /* Mät tidtabell | Bara info i startformuläret; i Bara info döljs förarens saker */
   .purpose-seg{display:flex;width:100%;margin:.1rem 0 .35rem}
-  .purpose-seg button{flex:1;min-height:2.6rem;font-size:.95rem;padding-left:.3rem;padding-right:.3rem}
+  .purpose-seg button{flex:1;min-height:3.6rem;font-size:.9rem;line-height:1.15;padding:.35rem .25rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.2rem}
+  .purpose-seg .pi{font-size:1.2rem;line-height:1}
+  /* Var är tåget?: de senast följda tågen, ett tryck följer tåget igen */
+  .recent-chips{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem;margin:.1rem 0 .45rem}
+  .recent-chips[hidden]{display:none}
+  .recent-chips .rc-label{font-size:.8rem;color:var(--ink-dim);margin-right:.1rem}
+  .recent-chips button{min-height:2.2rem;padding:.3rem .75rem;font-size:.85rem;border-radius:999px;background:transparent;border:1px solid var(--b-light,#3d4149);color:var(--ink)}
   #journey.info-only #npHalt, #journey.info-only .halt-row{display:none !important}
   /* Var är tåget? (2026-11-26d): ett tåg man inte är på. Förarens saker och mätningens knappar behövs inte. */
   #journey.follow-only #npHalt, #journey.follow-only .halt-row, #journey.follow-only .manual-actions,
@@ -681,7 +697,7 @@
       grid-template-rows:auto auto minmax(0,1fr);
       gap:.45rem .6rem;
     }
-    .journey-title{grid-column:1;grid-row:1;align-self:center}
+    .journey-head{grid-column:1;grid-row:1;align-self:center}
     .view-tabs{grid-column:2;grid-row:1}
     .next-panel{grid-column:1;grid-row:2}
     #routeMapContainer{grid-column:1;grid-row:3;min-height:0}
@@ -752,7 +768,7 @@
 <body>
 <header>
   <div class="bar header-row">
-    <h1>RailTimer</h1>
+    <h1><button type="button" id="btnHome" class="brand" title="Till startsidan">RailTimer<span class="home-hint" id="homeHint" hidden>Start</span></button></h1>
     <span id="offlineIndicator" class="badge warn" style="display:none" role="status" aria-live="polite">Offline</span>
     <span class="header-spacer"></span>
     <span id="gpsStatusBadge" class="badge">GPS</span>
@@ -767,6 +783,7 @@
           <button type="button" class="quick" data-mirror="btnSound" aria-pressed="false">Ljud</button>
           <button type="button" class="quick" data-mirror="btnTextSize" aria-pressed="false">Stor text</button>
         </div>
+        <button id="btnHomeMenu" hidden>⌂ Startsidan</button>
         <button id="btnStatistics">Statistik</button>
         <button id="btnAnalysis">Analysverktyg</button>
         <button id="btnPrefs">Inställningar</button>
@@ -787,9 +804,9 @@
     </div>
     <h2>Ny resa</h2>
     <div class="seg purpose-seg" role="group" aria-label="Vad resan är till för">
-      <button type="button" id="purposeMeasure" aria-pressed="true">Mät tidtabell</button>
-      <button type="button" id="purposeInfo" aria-pressed="false">Bara info</button>
-      <button type="button" id="purposeFollow" aria-pressed="false">Var är tåget?</button>
+      <button type="button" id="purposeMeasure" aria-pressed="true"><span class="pi" aria-hidden="true">⏱️</span>Mät tidtabell</button>
+      <button type="button" id="purposeInfo" aria-pressed="false"><span class="pi" aria-hidden="true">ℹ️</span>Bara info</button>
+      <button type="button" id="purposeFollow" aria-pressed="false"><span class="pi" aria-hidden="true">📍</span>Var är tåget?</button>
     </div>
     <p id="purposeHint" class="hint" hidden></p>
     <div class="row">
@@ -840,6 +857,7 @@
         </select>
       </div>
     </div>
+    <div class="recent-chips" id="followRecent" hidden></div>
     <div class="hint" id="trainHint">Ger tidtabellen och stationerna längs vägen. Utan tågnummer mäts bara start och slut.</div>
     <div class="hint train-ident" id="trainIdent" hidden></div>
     <div class="form-group tour-group" id="tourGroup">
@@ -883,7 +901,10 @@
   </section>
 
   <section id="journey" style="display:none">
-    <h2 id="journeyTitle" class="journey-title">Aktiv resa</h2>
+    <div class="journey-head">
+      <h2 id="journeyTitle" class="journey-title">Aktiv resa</h2>
+      <button type="button" id="btnFinishTop" class="ghost journey-end">Avsluta</button>
+    </div>
     <div class="view-tabs" role="tablist">
       <button type="button" role="tab" id="tabStations" aria-selected="true" aria-controls="stationList">Stationer</button>
       <button type="button" role="tab" id="tabInfo" aria-selected="false" aria-controls="infoView">Info<span class="tab-count" id="infoCount" hidden></span></button>
@@ -935,7 +956,10 @@
   </section>
 
   <section id="report" style="display:none">
-    <h2>Rapport</h2>
+    <div class="page-head">
+      <h2>Rapport</h2>
+      <button id="btnNewTop" class="primary">Starta ny mätning</button>
+    </div>
     <div id="nextTourCard" class="next-tour" hidden></div>
     <div id="reportHTML"></div>
     <div class="bar" style="margin-top:1rem">
@@ -1113,7 +1137,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-26d'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-26e'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1323,7 +1347,8 @@
       consumeShortcut, toggleMenu, closeAllMenus,
       // Var är tåget? och reserven när GPS:en inte svarar
       refreshFollow, applyFollowNow, followRes: () => followState.res, followInfo: () => ({ fallback: followState.fallback, pos: followState.pos, off: followState.off, error: followState.error }),
-      setGpsFallbackForTest: on => { followState.testFallback = !!on; }, checkGpsFallback, startFollowJourney, currentFix, mapMarker, followSpan
+      setGpsFallbackForTest: on => { followState.testFallback = !!on; }, checkGpsFallback, startFollowJourney, currentFix, mapMarker, followSpan,
+      goHome, finishFromTop, loadFollowRecent, followRecent
     };
   }
 
@@ -1899,6 +1924,14 @@
     document.getElementById('btnClear').addEventListener('click', () => { closeAllMenus(); clearLogs(); });
     document.getElementById('btnSync').addEventListener('click', () => { closeAllMenus(); syncLogs(); });
     document.getElementById('btnNew').addEventListener('click', resetForNewRun);
+    document.getElementById('btnNewTop').addEventListener('click', resetForNewRun);
+    document.getElementById('btnHome').addEventListener('click', goHome);
+    document.getElementById('btnHomeMenu').addEventListener('click', goHome);
+    document.getElementById('btnFinishTop').addEventListener('click', finishFromTop);
+    document.getElementById('followRecent').addEventListener('click', ev => {
+      const b=ev.target.closest('button[data-recent]');
+      if(b) followRecent(Number(b.dataset.recent));
+    });
     els.cards.addEventListener('click', handleCardButton);
     els.cards.addEventListener('change', handleCardChange);
     // Infofliken
@@ -2117,8 +2150,8 @@
     else if(wantsGpsWarmup()) startGpsWarmup();
   }
   const PURPOSE_HINT = {
-    info:'GPS:en följer tåget och Info visar läget framåt. Resan sparas inte som mätning. Fungerar inte GPS:en följs tåget med Trafikverkets uppgifter.',
-    follow:'För ett tåg du inte är på – din GPS används inte. Trafikverket visar var tåget är: tågets egen GPS när den finns, annars senaste rapporten. Slutstation: till exempel där du tar över tåget, eller tomt för hela vägen. Inget sparas.'
+    info:'GPS:en följer tåget och Info visar läget framåt. Inget sparas som mätning. Svarar inte GPS:en följer Trafikverket tåget.',
+    follow:'Ett tåg du inte är på – din GPS används inte. Trafikverket visar var tåget är. Slutstation: där du tar över, eller tomt för hela vägen.'
   };
   function renderPurpose(){
     const p=purpose(), info=p==='info', follow=p==='follow';
@@ -2138,8 +2171,17 @@
     document.getElementById('btnStart').textContent = startButtonText();
     // Föraren har tågorderns OTN, tågvärden det annonserade ATN; båda fungerar
     document.getElementById('trainNumber').placeholder = info || follow ? 'ATN eller OTN, t.ex. 3349' : 'OTN eller ATN, t.ex. 23349';
-    const btnNew=document.getElementById('btnNew');
-    if(btnNew) btnNew.textContent = follow ? 'Följ ett annat tåg' : (info ? 'Starta ny resa' : 'Starta ny mätning');
+    renderNewButtons(p);
+    renderFollowRecent();
+    renderNav();
+  }
+  // Rapportens knappar till en ny resa (överst och längst ner), efter resans syfte
+  function renderNewButtons(p){
+    const text = p==='follow' ? 'Följ ett annat tåg' : (p==='info' ? 'Starta ny resa' : 'Starta ny mätning');
+    for(const id of ['btnNew', 'btnNewTop']){
+      const b=document.getElementById(id);
+      if(b) b.textContent=text;
+    }
   }
   function startButtonText(){
     const p=purpose();
@@ -2336,6 +2378,7 @@
     if(!slice || slice.length<2){ showSetupError(`Tåg ${trainNumber} har för få stationer för att följas.`); return; }
     if(slice[0].time > slice[slice.length-1].time){ showSetupError(`Tåg ${trainNumber} går åt andra hållet – byt start och slut.`); return; }
     initJourneyState(slice.map(makeRouteStation), { ...trainIdentity(tt.train, trainNumber), vehicleType:'', notes:'', purpose:'follow' });
+    rememberFollow({ n:trainNumber, start:selectedStartStation ? selectedStartStation.name : '', end:selectedEndStation ? selectedEndStation.name : '', at:Date.now() });
     state.awaitingDepartureIndex=0; // tills Trafikverket säger något annat: vid (eller på väg till) startstationen
     hideSetupError();
     showView('journey');
@@ -2650,6 +2693,13 @@
     stopFollow();
     const startName=state.route[0]?.name||'', endName=state.route[state.route.length-1]?.name||'';
     const done=!aborted && /^Slutstation/.test(reason||'');
+    // Slutade följa för hand: direkt till startsidan, inget att läsa i en rapport
+    if(!done){
+      const label=trainLabel();
+      resetForNewRun();
+      showHeaderStatus(`Slutade följa tåg ${label}`, false);
+      return;
+    }
     const end=state.route[state.route.length-1];
     const d=end && end.actualArrival ? delayInfo(end.actualArrival, planArr(end)) : null;
     reportedLogId=null;
@@ -2744,6 +2794,109 @@
     if(els.journeyTitle) els.journeyTitle.textContent=journeyTitleText();
   }
 
+  /* ── Startsidan (2026-11-26e) ──
+     André 2026-11-26: "svårt att hitta tillbaka till startsidan … Nu är det massor med bläddrande."
+     RailTimer i rubriken och ⌂ Startsidan i ⋮-menyn tar en dit från rapporten och sidorna. Under Var är tåget?
+     slutar appen då följa tåget. Under en resa som mäter eller Bara info går det inte att lämna resan av misstag:
+     Avsluta finns överst i resvyn och kräver två tryck. */
+  function goHome(){
+    closeAllMenus();
+    if(state.running){
+      if(state.purpose==='follow'){ stopJourney(false, 'Avslutad manuellt'); return; }
+      if(currentView!=='journey'){ closeOverlay(); return; }
+      showHeaderStatus('Resan pågår – avsluta den med Avsluta överst till höger.', false);
+      const b=document.getElementById('btnFinishTop');
+      if(b){ b.classList.remove('pulse'); void b.offsetWidth; b.classList.add('pulse'); }
+      return;
+    }
+    if(currentView==='setup'){ window.scrollTo({ top:0, behavior:'smooth' }); return; }
+    resetForNewRun();
+  }
+  // Startsidan i rubriken och i menyn: när den inte visas och det går att komma dit; GPS-märket inte i Var är tåget?
+  function renderNav(){
+    const lockedJourney = state.running && state.purpose!=='follow';
+    const canGoHome = currentView!=='setup' && !(lockedJourney && currentView==='journey');
+    const hint=document.getElementById('homeHint');
+    if(hint){
+      hint.hidden=!canGoHome;
+      hint.textContent = lockedJourney ? 'Resan' : 'Start';
+    }
+    const brand=document.getElementById('btnHome');
+    if(brand) brand.title = lockedJourney ? 'Tillbaka till resan' : 'Till startsidan';
+    const item=document.getElementById('btnHomeMenu');
+    if(item){
+      item.hidden=!canGoHome;
+      item.textContent = state.running && state.purpose==='follow' ? '⌂ Startsidan – sluta följa tåget' : (lockedJourney ? '⌂ Tillbaka till resan' : '⌂ Startsidan');
+    }
+    const follow = state.running ? state.purpose==='follow' : (currentView==='setup' && purpose()==='follow');
+    if(els.gpsStatusBadge) els.gpsStatusBadge.style.display = follow ? 'none' : '';
+  }
+  /* Avsluta överst i resvyn. Var är tåget? slutar följa direkt (inget sparas). Mät tidtabell och Bara info kräver
+     ett andra tryck inom 4 s, så att resan inte avslutas av misstag. */
+  const FINISH_CONFIRM_MS = 4000;
+  let finishTopArmedUntil = 0;
+  function finishFromTop(){
+    if(!state.running) return;
+    if(state.purpose==='follow'){ stopJourney(false, 'Avslutad manuellt'); return; }
+    if(Date.now()<finishTopArmedUntil){
+      finishTopArmedUntil=0;
+      renderFinishTop();
+      stopJourney(false, 'Avslutad manuellt');
+      return;
+    }
+    finishTopArmedUntil=Date.now()+FINISH_CONFIRM_MS;
+    renderFinishTop();
+    clearTimeout(finishFromTop._timer);
+    finishFromTop._timer=setTimeout(()=>{ finishTopArmedUntil=0; renderFinishTop(); }, FINISH_CONFIRM_MS);
+  }
+  function renderFinishTop(){
+    const b=document.getElementById('btnFinishTop');
+    if(!b) return;
+    const armed=Date.now()<finishTopArmedUntil;
+    b.classList.toggle('confirm', armed);
+    b.textContent = state.purpose==='follow' ? 'Sluta följa' : (armed ? (state.purpose==='measure' ? 'Tryck igen – sparas' : 'Tryck igen') : 'Avsluta');
+    b.setAttribute('aria-label', state.purpose==='follow' ? 'Sluta följa tåget och gå till startsidan'
+      : (armed ? 'Tryck igen för att avsluta resan' : 'Avsluta resan'));
+  }
+
+  // Var är tåget?: de senast följda tågen (högst 5), med start och slut som de skrevs
+  const STORAGE_KEY_FOLLOW_RECENT = 'railtimer_follow_recent_v1';
+  function loadFollowRecent(){
+    const v=readJsonKey(STORAGE_KEY_FOLLOW_RECENT, []);
+    return Array.isArray(v) ? v.filter(x=>x && x.n) : [];
+  }
+  function rememberFollow(entry){
+    const same=x=>x.n===entry.n && (x.start||'')===(entry.start||'') && (x.end||'')===(entry.end||'');
+    const list=[entry].concat(loadFollowRecent().filter(x=>!same(x))).slice(0, 5);
+    writeJsonKey(STORAGE_KEY_FOLLOW_RECENT, list);
+  }
+  function renderFollowRecent(){
+    const box=document.getElementById('followRecent');
+    if(!box) return;
+    const list = purpose()==='follow' ? loadFollowRecent() : [];
+    box.hidden=!list.length;
+    if(!list.length){ box.innerHTML=''; return; }
+    box.innerHTML='<span class="rc-label">Senast:</span>' + list.map((x, i)=>{
+      const route = x.start && x.end ? `${x.start} → ${x.end}` : (x.end ? `till ${x.end}` : (x.start ? `från ${x.start}` : 'hela vägen'));
+      return `<button type="button" data-recent="${i}" title="Följ tåg ${escapeHtml(x.n)} igen (${escapeHtml(route)})">▶ ${escapeHtml(x.n)}${x.end ? ` · ${escapeHtml(x.end)}` : ''}</button>`;
+    }).join('');
+  }
+  // Ett tryck på ett senast följt tåg fyller i formuläret och följer det igen
+  function followRecent(i){
+    const x=loadFollowRecent()[i];
+    if(!x || state.running) return;
+    const tn=document.getElementById('trainNumber');
+    tn.value=x.n;
+    trainChoice=null;
+    const byName=name=>allStationsCache.find(st=>st.name===name) || null;
+    els.startInput.value=x.start||'';
+    selectedStartStation=x.start ? byName(x.start) : null;
+    els.endInput.value=x.end||'';
+    selectedEndStation=x.end ? byName(x.end) : null;
+    autoFilledRoute=null;
+    return startJourney();
+  }
+
   function applyPurposeClass(){
     const j=document.getElementById('journey');
     if(j) j.classList.toggle('info-only', state.purpose==='info');
@@ -2751,6 +2904,9 @@
     // Bara info sparar ingen mätning: knappen säger bara Avsluta
     const fin=document.getElementById('btnFinish');
     if(fin) fin.textContent = state.purpose==='follow' ? 'Sluta följa tåget' : (state.purpose==='info' ? 'Avsluta resan' : 'Avsluta & spara');
+    finishTopArmedUntil=0;
+    renderFinishTop();
+    renderNav();
   }
 
   // ── GPS-spår ──
@@ -5415,6 +5571,7 @@
     followState.fallback=false;
     els.journeyMsg.style.display='none';
     renderFollowSource();
+    renderNewButtons(state.purpose); // rapporten gäller resan som slutade, inte valet i formuläret
     if(state.purpose==='follow'){ finishFollow(aborted, reason); return; }
     if(state.purpose==='info'){ finishInfoOnly(aborted, reason); return; }
     const logEntry=saveLog(aborted);
@@ -5468,6 +5625,8 @@
     document.getElementById('installGuide').style.display = view==='installGuide' ? 'block' : 'none';
     window.scrollTo(0,0);
     renderAutoStartStatus();
+    if(view==='setup') renderFollowRecent();
+    renderNav();
     syncBackGuard();
   }
   // GPS:en hålls igång i startformuläret, och i rapporten när resan kan starta av sig själv (nästa tur)

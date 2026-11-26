@@ -2104,3 +2104,34 @@ André 2026-11-26: "om jag tex skulle vilja se/följa ett tåg som jag inte jobb
 - `node --test "tests/*.test.js"` (238), nya: `tests/railtimer-folj.test.js` (10: linjen, bara rapporter, driftplats, ankomst utan avgång, positionen med ca-tider och stopp, gammal och långt från linjen, före avgång, framme, gångprofilernas linje, beräknad ankomst) och *tågpositioner: bara dagens körning …* i `tests/railtimer-info.test.js`.
 - `node tests/run-browser-tests.mjs`, nya: *var är tåget: startformuläret …*, *var är tåget: tågets GPS från Trafikverket …*, *var är tåget: utan tågets position bara rapporterna …*, *reserv: Bara info …* och *reserv: Mät tidtabell …*. Simulerat: `fakeFollowTrv` i `tests/replay.html`. *app: genvägarna …* har nu Var är tåget?.
 - Bilder: `--shot=startformular-var-ar-taget`, `--shot=var-ar-taget` och `--shot=var-ar-taget-rapport`.
+
+## Uppdatering (2026-11-26e): startsidan – lättare att hitta dit, och förfinad
+
+André 2026-11-26, efter att ha provat Var är tåget?: "Det fungerade. Dock är det svårt att hitta tillbaka till 'startsidan' av appen. Dels borde startsidan förfinas samt lättare att hitta dit. Nu är det massor med bläddrande." Appversion `2026-11-26e`. Logiken för ankomst, avgång, Info och Var är tåget? är oförändrad.
+
+### Förut
+- Från rapporten låg *Starta ny mätning* under alla stationer, och under en resa låg *Avsluta* under stationslistan. Med 20 stationer (Hallsberg–Herrljunga C) blev det mycket bläddrande.
+- Var är tåget?: *Sluta följa tåget* låg längst ner, och sedan kom en rapport som bara sa *Slutade följa tåget*.
+- Rubriken *RailTimer* gjorde ingenting.
+
+### Vägen till startsidan
+- **RailTimer i rubriken är en knapp** (`#btnHome`, `goHome`). När startsidan inte visas står ett litet *Start* bredvid (`#homeHint`).
+  - Från rapporten och från sidorna (Inställningar, Statistik …) går den till startsidan (`resetForNewRun`).
+  - Under Var är tåget? slutar appen följa tåget och går till startsidan.
+  - Under en resa som mäter eller Bara info lämnar den inte resan av misstag. Från en sida går den tillbaka till resan, och märket säger *Resan*. I resvyn säger den *Resan pågår – avsluta den med Avsluta överst till höger.*, och Avsluta-knappen blinkar.
+- **⋮ → ⌂ Startsidan** (`#btnHomeMenu`) gör samma sak. Den visas bara när det finns någonstans att gå: *⌂ Startsidan*, *⌂ Startsidan – sluta följa tåget* eller *⌂ Tillbaka till resan* (`renderNav`).
+- **Avsluta överst i resvyn** (`#btnFinishTop`, `finishFromTop`), i raden med resans rubrik (`.journey-head`). Knapparna längst ner finns kvar.
+  - Mät tidtabell och Bara info kräver två tryck inom 4 s (`FINISH_CONFIRM_MS`). Första trycket gör knappen gul med *Tryck igen – sparas* (Bara info: *Tryck igen*), så att en resa inte avslutas av misstag.
+  - Var är tåget?: *Sluta följa*, ett tryck räcker eftersom inget sparas.
+- **Rapporten** har knappen till en ny resa överst (`#btnNewTop`): *Starta ny mätning*, *Starta ny resa* eller *Följ ett annat tåg*, som knappen längst ner.
+- **Var är tåget?, slutat följa för hand**: direkt till startsidan med *Slutade följa tåg 3347*, utan rapport. Är tåget framme visas rapporten *Tåget är framme i …* som förut.
+
+### Startsidan
+- **Valen med ikon** ovanför texten: ⏱️ *Mät tidtabell*, ℹ️ *Bara info* och 📍 *Var är tåget?*. Förklaringarna under är kortare.
+- **Var är tåget?: senast följda tåg** (`#followRecent`, `railtimer_follow_recent_v1`, högst 5, med start och slut som de skrevs). Raden *Senast: ▶ 3347 · Lidköping ▶ 13305* under tågnumret följer tåget igen med ett tryck (`followRecent`).
+- **GPS-märket** i rubriken visas inte i Var är tåget?, eftersom telefonens GPS inte används där.
+
+### Tester
+- `node --test "tests/*.test.js"` (238).
+- `node tests/run-browser-tests.mjs`, nytt: *startsidan: RailTimer i rubriken och ⋮ → Startsidan tar en dit; under en resa finns Avsluta överst och kräver två tryck*. Det täcker resan, sidorna, rapporten, startsidan, två tryck och ikonerna. *var är tåget: startformuläret …* provar nu att Sluta följa går direkt till startsidan, de senast följda tågen och RailTimer i rubriken.
+- Bilder: `--shot=startformular`, `--shot=startformular-var-ar-taget` (senast följda), `--shot=resa` och `--shot=resa-liggande` (Avsluta överst) och `--shot=rapport`.
