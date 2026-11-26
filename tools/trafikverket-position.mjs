@@ -16,7 +16,7 @@ import { appendFileSync } from 'node:fs';
 const KEY = '1acaea82911c472cb3409d57ae19707f'; // samma publika nyckel som appen (index.html)
 const URL = 'https://api.trafikinfo.trafikverket.se/v2/data.json';
 const ORIGIN = 'https://akjork.github.io';
-const DURATION_S = Number(process.env.DURATION_S || 240);
+const DURATION_S = Number(process.env.DURATION_S || 120);
 const POLL_S = Number(process.env.POLL_S || 10);
 const SSE_S = Number(process.env.SSE_S || 90);
 // Gårdsjö – Håkantorp (Kinnekullebanan, System M) och Håkantorp – Herrljunga C (Älvsborgsbanan), ur railtimer-infra.js
@@ -292,7 +292,7 @@ try {
   const vehicle = list.filter(e => /dragfordon|motorvagn|fordon/i.test((e.EventType && e.EventType.Description) || ''));
   log(`\nRör linjen eller Göteborgsområdet: ${near.length}. Fordonsfel i hela landet: ${vehicle.length}.`);
   const shown = new Set();
-  for (const e of near.concat(vehicle).slice(0, 4)) {
+  for (const e of vehicle.concat(near).slice(0, 4)) {
     if (shown.has(e.EventId)) continue;
     shown.add(e.EventId);
     log(`\n### ${(e.EventType && e.EventType.Description) || '?'} · ${Array.from(sigs(e, new Set())).join(' ')}\n`);

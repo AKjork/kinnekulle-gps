@@ -14,7 +14,7 @@ on:
       duration:
         description: 'Hur länge positionen läses av (sekunder)'
         required: false
-        default: '240'
+        default: '120'
   push:
     branches: [main]
     paths:
@@ -37,4 +37,4 @@ jobs:
         run: node tools/trafikverket-position.mjs
         env:
           NUMBERS: ${{ github.event.inputs.numbers }}
-          DURATION_S: ${{ github.event.inputs.duration || '240' }}
+          DURATION_S: ${{ github.event.inputs.duration || '120' }}
