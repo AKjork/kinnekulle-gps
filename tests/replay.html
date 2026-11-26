@@ -3748,8 +3748,165 @@ test('trafikverket-data: fel från Trafikverket visas i sin del och resten visas
   assertEqual(d.getElementById('btnSave').style.display, 'none', 'ingen sparknapp utan uppladdning');
 });
 
+// ── Som en riktig app (2026-11-26) ──
+
+test('app: installera som app – tipset och guiden på iPhone och Android, inget i hemskärmsappen', async () => {
+  const w = await loadApp();
+  await clearAppStorage(w);
+  const rt = w.__railtimer, d = w.document;
+  const hint = d.getElementById('installHint'), menuBtn = d.getElementById('btnInstall');
+  const shown = which => Array.from(d.querySelectorAll(`#installGuide [data-platform="${which}"]`)).some(el => !el.hidden);
+  // Dator utan erbjudande från webbläsaren: inget
+  rt.setPlatformForTest({ ios: false, android: false, standalone: false, touch: false });
+  assert(hint.hidden, 'inget tips på datorn');
+  assertEqual(menuBtn.style.display, 'none', 'inget menyval utan erbjudande');
+  // iPhone i Safari: Safari frågar aldrig själv, så tipset och menyvalet visas
+  rt.setPlatformForTest({ ios: true, android: false, standalone: false, touch: true });
+  assert(!hint.hidden, 'tipset visas på iPhone');
+  assertEqual(menuBtn.style.display, 'block', 'Installera app i menyn');
+  d.getElementById('btnInstallHint').click();
+  assertEqual(rt.currentView(), 'installGuide', 'guiden öppnas');
+  assert(shown('ios') && !shown('android'), 'bara iPhone-stegen');
+  assert(/Lägg till på hemskärmen/.test(d.getElementById('installGuide').textContent), 'steget Lägg till på hemskärmen');
+  assert(/egen lagring/.test(d.getElementById('installGuide').textContent), 'säger att hemskärmsappen har egen lagring');
+  assert(d.getElementById('btnInstallNow').hidden, 'ingen Installera nu på iPhone');
+  d.getElementById('btnCloseInstall').click();
+  assertEqual(rt.currentView(), 'setup', 'Klar går tillbaka till startformuläret');
+  d.getElementById('btnInstallHintClose').click();
+  assert(hint.hidden, 'stängt tips');
+  assertEqual(w.localStorage.getItem('railtimer_install_hint_v1'), 'closed', 'sparat att det stängts');
+  assertEqual(menuBtn.style.display, 'block', 'menyvalet finns kvar');
+  // Android: bara när Chrome erbjuder installation (annars kan appen redan vara installerad)
+  w.localStorage.removeItem('railtimer_install_hint_v1');
+  rt.setPlatformForTest({ ios: false, android: true, standalone: false, touch: true });
+  assert(hint.hidden && menuBtn.style.display === 'none', 'Android utan erbjudande: inget');
+  let prompted = 0;
+  rt.setInstallPromptForTest({ prompt() { prompted++; }, userChoice: Promise.resolve({ outcome: 'accepted' }) });
+  assert(!hint.hidden, 'tipset med erbjudande');
+  menuBtn.click();
+  await realSleep(20);
+  assertEqual(prompted, 1, 'menyvalet startar Chromes installation direkt');
+  assertEqual(menuBtn.style.display, 'none', 'menyvalet borta efter installationen');
+  rt.setInstallPromptForTest({ prompt() { prompted++; }, userChoice: Promise.resolve({ outcome: 'dismissed' }) });
+  rt.showInstallGuide();
+  assert(shown('android') && !shown('ios'), 'bara Android-stegen');
+  assert(!d.getElementById('btnInstallNow').hidden, 'Installera nu i guiden');
+  d.getElementById('btnInstallNow').click();
+  await realSleep(20);
+  assertEqual(prompted, 2, 'Installera nu startar installationen');
+  assert(/avbröts/.test(d.getElementById('headerStatus').textContent), 'avbruten installation sägs');
+  // Hemskärmsappen: inget om installation
+  rt.setPlatformForTest({ ios: true, android: false, standalone: true, touch: true });
+  assert(hint.hidden && menuBtn.style.display === 'none', 'inget i hemskärmsappen');
+});
+
+test('app: bakåt stänger menyn, sidorna och Info, och lämnar inte en pågående resa av misstag', async () => {
+  const r = await midJourney();
+  const w = r.w, rt = r.rt, d = w.document;
+  assert(rt.state.running && rt.currentView() === 'journey', 'resan pågår');
+  // Menyn
+  rt.toggleMenu('moreMenuDropdown');
+  assertEqual(rt.backTarget(), 'menu', 'menyn först');
+  rt.handleBack();
+  assert(!d.getElementById('moreMenuDropdown').classList.contains('open'), 'menyn stängd');
+  // En sida (Inställningar) under resan: tillbaka till resan
+  rt.showPrefs();
+  assertEqual(rt.backTarget(), 'overlay', 'Inställningar');
+  rt.handleBack();
+  assertEqual(rt.currentView(), 'journey', 'tillbaka till resan');
+  // Info när föraren mäter: tillbaka till Stationer
+  rt.setInfoTab('info');
+  assertEqual(rt.backTarget(), 'stations', 'Info → Stationer');
+  rt.handleBack();
+  assert(!d.getElementById('journey').classList.contains('show-info'), 'Stationer visas');
+  // Resan: första bakåt säger att resan pågår och lämnar inte appen
+  assertEqual(rt.backTarget(), 'journey', 'resan');
+  rt.handleBack();
+  assert(/Resan pågår\. Tryck bakåt igen/.test(d.getElementById('headerStatus').textContent), d.getElementById('headerStatus').textContent);
+  assert(rt.state.running && rt.currentView() === 'journey', 'resan fortsätter');
+  assert(rt.backGuardState().exitUntil > 0, 'ett andra bakåt inom 3 s lämnar appen');
+  // Bara info: Info är huvudvyn, så bakåt går inte till Stationer
+  rt.state.purpose = 'info';
+  rt.setInfoTab('info');
+  assertEqual(rt.backTarget(), 'journey', 'Bara info: Info är resan');
+  rt.state.purpose = 'measure';
+  // Utan resa i startformuläret: inget att stänga, bakåt lämnar appen som vanligt
+  rt.state.running = false;
+  rt.showView('setup');
+  assertEqual(rt.backTarget(), null, 'startformuläret');
+});
+
+test('app: bakåtknappen på riktigt – vårt steg i historiken finns bara när något är öppet', async () => {
+  const w = await loadApp();
+  await clearAppStorage(w);
+  const rt = w.__railtimer;
+  const popped = () => new Promise(resolve => w.addEventListener('popstate', () => setTimeout(resolve, 30), { once: true }));
+  rt.setupBackGuard();
+  assertEqual(rt.backGuardState().guard, false, 'startformuläret: inget eget steg');
+  rt.showPrefs();
+  assertEqual(rt.backGuardState().guard, true, 'Inställningar: eget steg');
+  assertEqual(w.history.state && w.history.state.railtimerBack, true, 'steget ligger överst');
+  let p = popped();
+  w.history.back();
+  await p;
+  assertEqual(rt.currentView(), 'setup', 'bakåt stänger Inställningar');
+  assertEqual(rt.backGuardState().guard, false, 'inget steg kvar');
+  // Stängd med Klar: vårt steg tas bort, så att nästa bakåt lämnar appen direkt
+  rt.showPrefs();
+  assertEqual(rt.backGuardState().guard, true, 'steg igen');
+  p = popped();
+  w.document.getElementById('btnClosePrefs').click();
+  await p;
+  const st = rt.backGuardState();
+  assert(!st.guard && !st.consuming, 'steget borttaget efter Klar: ' + JSON.stringify(st));
+  assertEqual(rt.currentView(), 'setup', 'startformuläret');
+});
+
+test('app: genvägarna på ikonen väljer Mät tidtabell eller Bara info, men inte under en resa', async () => {
+  const w = await loadApp();
+  await clearAppStorage(w);
+  const rt = w.__railtimer;
+  w.history.replaceState(null, '', w.location.pathname + w.location.search + '#ny=info');
+  assert(rt.consumeShortcut(), 'genvägen används');
+  assertEqual(rt.purpose(), 'info', 'Bara info');
+  assertEqual(w.location.hash, '', '#-delen tas bort');
+  w.history.replaceState(null, '', w.location.pathname + w.location.search + '#ny=mat');
+  rt.consumeShortcut();
+  assertEqual(rt.purpose(), 'measure', 'Mät tidtabell');
+  rt.state.running = true;
+  w.history.replaceState(null, '', w.location.pathname + w.location.search + '#ny=info');
+  assertEqual(rt.consumeShortcut(), false, 'inte under en resa');
+  assertEqual(rt.purpose(), 'measure', 'oförändrat');
+  assert(/Resan pågår/.test(w.document.getElementById('headerStatus').textContent), 'säger varför');
+  rt.state.running = false;
+});
+
+test('app: manifestet – maskable ikon, genvägar och ikonerna finns', async () => {
+  const res = await fetch('../kinnekulle-gps.webmanifest', { cache: 'no-store' });
+  const m = await res.json();
+  assertEqual(m.id, './index.html', 'samma id som förut (start_url), så att installerade appar känns igen');
+  assertEqual(m.display, 'standalone', 'helskärm utan adressfält');
+  assert(m.icons.some(i => i.purpose === 'maskable' && i.sizes === '512x512'), 'maskable 512');
+  assertEqual(m.shortcuts.map(s => s.url), ['./index.html#ny=mat', './index.html#ny=info'], 'genvägarna');
+  const files = new Set([...m.icons, ...m.shortcuts.flatMap(s => s.icons)].map(i => i.src).concat(['icons/apple-touch-icon.png']));
+  for (const f of files) {
+    const r2 = await fetch('../' + f, { cache: 'no-store' });
+    assert(r2.ok, f + ' finns');
+  }
+  const w = await loadApp();
+  const meta = n => (w.document.querySelector(`meta[name="${n}"]`) || {}).content;
+  assert(/viewport-fit=cover/.test(meta('viewport')), 'viewport-fit=cover');
+  assertEqual(meta('apple-mobile-web-app-status-bar-style'), 'black-translucent', 'statusraden på iPhone');
+  assertEqual(w.document.querySelector('link[rel="apple-touch-icon"]').getAttribute('href'), 'icons/apple-touch-icon.png', 'iPhone-ikonen');
+});
+
 window.prepareShot = async function (name) {
-  if (name === 'installningar') {
+  if (name === 'installera-tips' || name === 'installera-guide') {
+    const w = await loadApp();
+    await clearAppStorage(w);
+    w.__railtimer.setPlatformForTest({ ios: true, android: false, standalone: false, touch: true });
+    if (name === 'installera-guide') w.__railtimer.showInstallGuide();
+  } else if (name === 'installningar') {
     const w = await loadApp();
     await clearAppStorage(w);
     w.localStorage.setItem('railtimer_github_v1', JSON.stringify({ repo: 'AKjork/railtimer-data', token: 'x', branch: 'main' }));

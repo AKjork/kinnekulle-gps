@@ -1913,3 +1913,58 @@ André 2026-11-25: "Jag har haft problem med dessa tåg pga de byter nr innan ma
 ### Tester
 - `node --test "tests/*.test.js"` (215), nya: *pickTrain: OTN som byts längs vägen – 13001 …, 13054 …, 13305 …* och *fetchRunAnnouncements: körningen med ett OTN som byts …*. *pickTrain: ett ATN med flera OTN …* provar nu att ett OTN får hela tåget och `followAtn`.
 - `node tests/run-browser-tests.mjs` (132), nya: *tågnummer: OTN som byts längs vägen – …* (två frågor, tipset, hela rutten, `otnFrom`, stationsraderna och tiderna där numret byts) och *tågnummer: Info följer tåget när OTN byts …*. `fakeTrafikverketInfo` har `opts.ourParts` och svarar på frågan med bara ATN.
+
+## Uppdatering (2026-11-26a): så likt en riktig app som möjligt
+
+André 2026-11-26: riktiga appar för iPhone och Android släpps (App Store kräver Apples utvecklarprogram och en Mac för att bygga lokalt, och jobbmobilen tillåter inga egna appar). "Hur gör vi denna så lik en riktig app som möjligt?" Appversion `2026-11-26a`. Logiken för ankomst, avgång och Info är oförändrad.
+
+### Manifestet (`kinnekulle-gps.webmanifest`)
+- `id` `./index.html`: samma som Chrome räknade fram ur `start_url` förut, så att redan installerade appar känns igen. Ändra det aldrig.
+- **Maskable ikoner** (`icons/icon-maskable-192.png`, `-512.png`) för Androids runda och kantiga ikoner. Ringen ligger inom 40 % av bredden (radie 191 av 512), så det är samma bild. Alla ikoner är nu ogenomskinliga (hörnen var delvis genomskinliga och blir svarta på iPhone).
+- **Genvägar** när man håller fingret på ikonen (Android): *Mät tidtabell* (`./index.html#ny=mat`) och *Bara info* (`#ny=info`). #-delen laddar inte om en öppen app; `consumeShortcut` väljer läget i startformuläret, tar bort #-delen och gör ingenting under en resa eller när *Återuppta resa?* visas. Analysverktyget är inte en genväg, eftersom sidbytet stoppar en pågående mätning.
+- `orientation` **any** (förut portrait). Den installerade appen på Android var låst i stående läge, så det liggande läget (2026-10-15, 2026-11-25b) syntes bara i webbläsaren. Nu följer appen telefonens rotationslås.
+- `lang`, `description`, `categories`.
+
+### iPhone från hemskärmen
+- `apple-touch-icon` 180×180 (`icons/apple-touch-icon.png`), `apple-mobile-web-app-title` RailTimer och `apple-mobile-web-app-capable`.
+- **Statusraden** `black-translucent` med `viewport-fit=cover`: rubriken går upp under klockan och batteriet, som i en app. Rubriken får `padding-top: calc(.6rem + env(safe-area-inset-top))`, sidorna `env(safe-area-inset-left/right)` (liggande med notch) och `main` `env(safe-area-inset-bottom)`. I Safari och på Android är marginalerna 0.
+
+### Känslan
+- **Ingen förstoring vid fälten på iPhone**: fält under 16 px får Safari att zooma in, och zoomen står kvar. På pekskärm är fälten minst 16 px (`@media (pointer:coarse)`, `!important` eftersom flera fält har egna storlekar).
+- `overscroll-behavior-y: contain` på `html` och `body`: dra nedåt laddar inte om sidan i Chrome.
+- Knappar, rubriken, flikarna och snabbvalen markeras inte som text och ger ingen kopiera-meny vid långt tryck. Texten i Info och utropet går att markera.
+- Mörk bakgrund på `html`, så att kanten inte blir vit när sidan studsar. `text-size-adjust: 100%` (ingen textförstoring i liggande läge på iPhone).
+
+### Installera som app
+- **⋮ → Installera app**: på Android startar den Chromes installation när Chrome erbjuder den (`beforeinstallprompt`, som förut). Annars, och alltid på iPhone utanför hemskärmsappen, öppnas guiden.
+- **Guiden** (`#installGuide`, `showInstallGuide`, en sida som Inställningar): steg för iPhone (••• → Dela → Lägg till på hemskärmen, *Öppna som webbapp* på) och Android (⋮ → Installera app). Telefonens egna steg visas (`data-platform`), på datorn båda. *Installera nu* bara när Chrome erbjuder det.
+  - iPhone: hemskärmsappen har egen lagring. Körningarna i GitHub hämtas av sig själva (2026-11-25o), men uppladdningen ställs in med inloggningslänken i fältet Token (2026-11-25i).
+- **Tipset** överst i startformuläret (`#installHint`): *Lägg RailTimer på hemskärmen – då öppnas den som en app.* med *Visa hur* och ✕. Bara på pekskärm, bara när installation erbjuds (iPhone utanför hemskärmsappen, Android när Chrome erbjuder det) och tills det stängts (`railtimer_install_hint_v1` = `closed`). Android utan erbjudande visar inget, eftersom appen då kan vara installerad redan. Safari kan inte se om appen redan finns på hemskärmen, därför går tipset att stänga.
+- `platform()` avgör iPhone (även iPad som säger Macintosh), Android, hemskärmsapp (`display-mode: standalone`, `navigator.standalone`) och pekskärm. Testerna styr den med `setPlatformForTest`.
+
+### Lagringen skyddas
+- I den installerade appen frågas `navigator.storage.persist()` (`keepStorage`), vid start och när appen installerats. Då rensar webbläsaren inte körningarna när telefonen får ont om plats. Chrome och Safari svarar utan att fråga användaren; Firefox frågar, därför bara i den installerade appen.
+
+### Bakåtknappen på Android
+- Förut stängde bakåtknappen eller bakåtgesten appen även från Inställningar, och under en resa stoppade det mätningen.
+- Nu (`setupBackGuard`, `syncBackGuard`, `handleBack`): ett eget steg i historiken (`history.pushState({ railtimerBack: true })`) finns bara när något går att stänga (`backTarget`):
+  - **menyn** stängs;
+  - **en sida** (Statistik, Inställningar, Uppladdning, Västtrafik, Mina anslutningar, Installera som app; `OVERLAY_VIEWS`) stängs som med Stäng/Klar;
+  - **Info** under en mätning går till Stationer (i Bara info är Info resan);
+  - **resan**: första bakåt säger *Resan pågår. Tryck bakåt igen för att lämna appen – mätningen stannar då.* Ett andra bakåt inom 3 s (`BACK_EXIT_MS`) lämnar appen.
+- I startformuläret och rapporten finns inget eget steg, så bakåt lämnar appen direkt som vanligt. Stängs en sida med Stäng/Klar tas steget bort (`history.back`, `backConsuming`), så att det inte blir ett bakåt som inte gör något.
+- `showView`, `toggleMenu`, `closeAllMenus` och `setInfoTab` anropar `syncBackGuard`. Inloggningslänken (#rt=) och genvägarna (#ny=) räknas inte som bakåt.
+- Inte i testläge (appen ligger i en iframe i testerna), utom när ett test slår på det (`setupBackGuard`).
+
+### Inte gjort
+- **Startbilder på iPhone** (`apple-touch-startup-image`): kräver en bild per skärmstorlek. Utan dem visas en kort tom skärm när appen öppnas.
+- **Notiser** kräver fortfarande en server (se 2026-11-25z). Badge på ikonen kräver notiser på iPhone och finns inte i Chrome på Android.
+- **Skärmbilder i manifestet** (Chromes större installationsruta): inte gjort.
+
+### Inte provat på telefon
+- Statusraden och marginalerna på en iPhone med notch eller Dynamic Island, genvägarna på Android, bakåtgesten i den installerade appen och att Chrome erbjuder installation med de nya ikonerna. Kontrollera efter publiceringen.
+
+### Tester
+- `node --test "tests/*.test.js"` (216).
+- `node tests/run-browser-tests.mjs` (138), nya *app: …*: installera (tipset, guiden, Installera nu, inget i hemskärmsappen), bakåt (menyn, sidorna, Info, resan, Bara info), bakåtknappen på riktigt (`history.back` i iframen, steget tas bort efter Klar), genvägarna och manifestet (ikonerna finns, metataggarna).
+- Bilder: `--shot=installera-tips` och `--shot=installera-guide`.

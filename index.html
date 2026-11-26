@@ -2,12 +2,18 @@
 <html lang="sv">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- viewport-fit=cover: appen ritas ända ut i kanterna (under statusraden på iPhone); marginalerna sätts med env(safe-area-inset-*) -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1a1d23">
 <title>RailTimer – Gångtidsmätare för tåg</title>
 <link rel="manifest" href="kinnekulle-gps.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<!-- Hemskärmen på iPhone: egen ikon, namn och mörk statusrad som rubriken lyser igenom -->
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="RailTimer">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>
   // Stor text sätts innan sidan ritas, så att allt får rätt storlek från början
   try{ if(localStorage.getItem('railtimer_large_text_v1')==='true') document.documentElement.classList.add('large-text'); }catch(e){}
@@ -38,7 +44,18 @@
     --blue-bg:rgba(59,130,246,0.15);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html{font-size:16px}
+  /* Som en app (2026-11-26):
+     - mörk bakgrund även när sidan studsar i kanten, ingen förstoring av text i liggande läge på iPhone;
+     - overscroll-behavior: dra nedåt laddar inte om sidan (Chrome) och rullningen fortsätter inte till sidan bakom;
+     - knappar och flikar markeras inte som text och ger ingen kopiera-meny vid långt tryck (texten i Info går att markera). */
+  html{font-size:16px;background:var(--bg-solid);-webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior-y:contain}
+  body{overscroll-behavior-y:contain;padding-left:env(safe-area-inset-left, 0px);padding-right:env(safe-area-inset-right, 0px)}
+  button,header,.seg,.view-tabs,.menu-quick,summary{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  /* iPhone förstorar sidan när ett fält under 16 px får fokus – och förstoringen står kvar. Fälten är minst 16 px på
+     pekskärm (!important, eftersom flera fält har egna mindre storlekar längre ner). */
+  @media (pointer:coarse){
+    input,select,textarea{font-size:max(16px, .95rem) !important}
+  }
   html.large-text{font-size:19px}
   body{
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -55,6 +72,8 @@
     top:0;
     background:var(--bg);
     padding:.6rem .75rem;
+    /* Under statusraden på iPhone när appen öppnas från hemskärmen (black-translucent), annars 0 */
+    padding-top:calc(.6rem + env(safe-area-inset-top, 0px));
     margin:0;
     border-bottom:1px solid var(--b);
     z-index:10;
@@ -76,7 +95,7 @@
     color:var(--ink);
   }
   h2::before{content:''}
-  main{padding:.75rem;max-width:600px;margin:0 auto}
+  main{padding:.75rem;padding-bottom:calc(.75rem + env(safe-area-inset-bottom, 0px));max-width:600px;margin:0 auto}
   .bar{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
   .row{display:flex;gap:.4rem;flex-wrap:wrap}
   .grow{flex:1 1 auto}
@@ -317,7 +336,7 @@
   }
   .header-menu-dropdown.open{display:block}
   /* Menyn är längre än skärmen: den rullas för sig (under resan rullar sidan inte) */
-  .header-menu-dropdown{max-height:calc(100vh - 4.5rem);max-height:calc(100dvh - 4.5rem);overflow-y:auto;overscroll-behavior:contain}
+  .header-menu-dropdown{max-height:calc(100vh - 4.5rem);max-height:calc(100dvh - 4.5rem - env(safe-area-inset-top, 0px));overflow-y:auto;overscroll-behavior:contain}
   .header-menu-dropdown button{
     display:block;
     width:100%;
@@ -352,6 +371,13 @@
   .header-menu-dropdown .menu-quick .quick[aria-pressed="true"]::before{background:var(--pri)}
 
   /* ⋮ → Inställningar: grupperade rader med reglage */
+  .install-hint{display:flex;align-items:center;gap:.5rem;margin:.6rem 0 0;padding:.45rem .5rem .45rem .75rem;border:1px solid var(--b);border-radius:10px;background:var(--card-bg);font-size:.85rem;color:var(--ink-dim)}
+  .install-hint[hidden]{display:none}
+  .install-hint .ih-text{flex:1 1 auto;min-width:0}
+  .install-hint button{flex:none;margin:0}
+  .install-steps{margin:0;padding:.6rem .9rem .6rem 2.1rem;font-size:.92rem;line-height:1.45}
+  .install-steps li + li{margin-top:.35rem}
+  [data-platform][hidden]{display:none}
   .page-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin:1.1rem 0 .4rem}
   .page-head h2{margin:0}
   .page-head button{min-height:2.5rem;padding:.4rem 1rem;font-size:.95rem}
@@ -740,6 +766,12 @@
 
 <main>
   <section id="setup">
+    <!-- Bara i webbläsaren på telefon, tills den stängs eller appen installerats (renderInstallHint) -->
+    <div id="installHint" class="install-hint" hidden>
+      <span class="ih-text">📲 Lägg RailTimer på hemskärmen – då öppnas den som en app.</span>
+      <button type="button" id="btnInstallHint" class="sm">Visa hur</button>
+      <button type="button" id="btnInstallHintClose" class="ghost sm" aria-label="Visa inte igen">✕</button>
+    </div>
     <h2>Ny resa</h2>
     <div class="seg purpose-seg" role="group" aria-label="Vad resan är till för">
       <button type="button" id="purposeMeasure" aria-pressed="true">Mät tidtabell</button>
@@ -945,6 +977,31 @@
     </div>
   </section>
 
+  <!-- ⋮ → Installera app, och Visa hur i startformuläret: så läggs appen på hemskärmen -->
+  <section id="installGuide" style="display:none">
+    <div class="page-head">
+      <h2>Installera som app</h2>
+      <button id="btnCloseInstall" class="ghost">Klar</button>
+    </div>
+    <p class="hint">RailTimer får en egen ikon på hemskärmen och öppnas i helskärm utan webbläsarens adressfält, som en vanlig app. Inget laddas ner från App Store eller Google Play, och appen uppdateras av sig själv.</p>
+    <h3 class="group-title" data-platform="ios">iPhone</h3>
+    <ol class="group install-steps" data-platform="ios">
+      <li>Öppna sidan i <b>Safari</b>.</li>
+      <li>Tryck på <b>•••</b> bredvid adressfältet och sedan på <b>Dela</b>. På äldre iPhone ligger Dela längst ner.</li>
+      <li>Välj <b>Lägg till på hemskärmen</b>. Låt <b>Öppna som webbapp</b> vara på och tryck <b>Lägg till</b>.</li>
+    </ol>
+    <p class="hint" data-platform="ios">Appen på hemskärmen har egen lagring, skild från Safari. Körningarna i GitHub hämtas till appen av sig själv, men uppladdningen behöver ställas in i appen: kopiera inloggningslänken i Safari (⋮ → Inställningar → Uppladdning till GitHub) och klistra in den i fältet Token i appen.</p>
+    <h3 class="group-title" data-platform="android">Android</h3>
+    <ol class="group install-steps" data-platform="android">
+      <li>Öppna sidan i <b>Chrome</b>.</li>
+      <li>Tryck på <b>⋮</b> uppe till höger och välj <b>Installera app</b> eller <b>Lägg till på startskärmen</b>.</li>
+    </ol>
+    <div class="settings-actions" data-platform="android">
+      <button id="btnInstallNow" type="button" hidden>Installera nu</button>
+    </div>
+    <p class="hint" data-platform="android">När appen är installerad: håll fingret på ikonen för genvägarna <b>Mät tidtabell</b> och <b>Bara info</b>.</p>
+  </section>
+
   <section id="settings" style="display:none">
     <h2>Uppladdning till GitHub</h2>
     <p class="hint">Varje resa laddas upp automatiskt till ditt privata repo när den är klar. Token sparas bara på den här enheten.</p>
@@ -1039,7 +1096,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-25zj'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-26a'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1071,6 +1128,7 @@
   const STORAGE_KEY_PURPOSE = 'railtimer_purpose_v1';       // 'measure' (förval) eller 'info' (Bara info)
   const STORAGE_KEY_INFO_TRIPS = 'railtimer_info_trips_v1'; // resor med Bara info: [{ trainNumber, startedAt, … }], 40 dagar
   const STORAGE_KEY_SPEECH = 'railtimer_speech_v1';         // uppläsning på (förval) eller 'false'
+  const STORAGE_KEY_INSTALL_HINT = 'railtimer_install_hint_v1'; // 'closed' när tipset om hemskärmen stängts
   const STORAGE_KEY_AUTO_START = 'railtimer_auto_start_v1'; // starta resan när tåget rullar: på (förval) eller 'false'
   const STORAGE_KEY_TOUR = 'railtimer_tour_v1';             // dagens tur: { date: 'ÅÅÅÅ-MM-DD', trains: ['23349', …] }
   const STORAGE_KEY_STATION_CENTERS = 'railtimer_station_centers_v1'; // egna mittpunkter: { 'sig:Lkp': { lat, lon, at } }
@@ -1186,15 +1244,18 @@
       return;
     }
     if(linked) showHeaderStatus('GitHub-inloggning sparad', false);
-    // Länken öppnad medan appen redan är öppen: bara #-delen byts, sidan laddas inte om
+    // Länken öppnad medan appen redan är öppen: bara #-delen byts, sidan laddas inte om.
+    // Samma sak med genvägarna på ikonen (#ny=mat, #ny=info).
     window.addEventListener('hashchange', () => {
       if(consumeLoginLink()){ showHeaderStatus('GitHub-inloggning sparad', false); scheduleUpload(); }
+      consumeShortcut();
     });
     // Återuppta resa och uppladdning väntar inte på stationslistan (den kan ta tid med dålig täckning)
     const stationsLoaded=loadAllStations();
     getUserLocation();
     if(wantsGpsWarmup()) startGpsWarmup();
     checkForInterruptedJourney();
+    consumeShortcut();
     showTourInForm();
     // Dagens tur: första tåget som inte körts i dag fylls i när stationerna och körningarna finns
     loadLegProfilesFromDevice();
@@ -1237,7 +1298,12 @@
       autoStartFix, autoStartArmed, renderAutoStartStatus, spoken: () => spokenForTest.slice(), clearSpoken: () => { spokenForTest.length=0; },
       parseTour, saveTour, tourTrains, nextTourTrain, tourFromHistory, renderTourSuggest, prefillFromTour, fetchNextTour, tourStatus,
       setAutoStartForTest: on => { autoStartEnabled=!!on; autoState.blockedKey=''; autoState.moving=null; },
-      loadPlaceNotes, setPlaceNote, placeNoteFor, haltSummary, checkPlaceReminders, syncPlaceNotes, mergePlaceNotes
+      loadPlaceNotes, setPlaceNote, placeNoteFor, haltSummary, checkPlaceReminders, syncPlaceNotes, mergePlaceNotes,
+      // Som en app: plattformen styrs i testerna; bakåtskyddet slås på för ett test (iframe)
+      setPlatformForTest: p => { platformForTest = p; renderInstallOffer(); }, renderInstallOffer, showInstallGuide, promptInstall,
+      setInstallPromptForTest: ev => { deferredInstallPrompt = ev; renderInstallOffer(); },
+      backTarget, handleBack, setupBackGuard, backGuardState: () => ({ guard: backGuard, consuming: backConsuming, exitUntil: backExitUntil }),
+      consumeShortcut, toggleMenu, closeAllMenus
     };
   }
 
@@ -1867,6 +1933,12 @@
     });
     document.getElementById('btnPrefs').addEventListener('click', () => { closeAllMenus(); showPrefs(); });
     document.getElementById('btnClosePrefs').addEventListener('click', closeOverlay);
+    // Installera som app: menyn, tipset i startformuläret och guiden
+    if(els.installBtn) els.installBtn.addEventListener('click', ()=>{ closeAllMenus(); promptInstall(); });
+    document.getElementById('btnInstallHint').addEventListener('click', showInstallGuide);
+    document.getElementById('btnInstallHintClose').addEventListener('click', closeInstallHint);
+    document.getElementById('btnInstallNow').addEventListener('click', promptInstall);
+    document.getElementById('btnCloseInstall').addEventListener('click', closeOverlay);
 
     // Sound and text size toggles
     document.getElementById('btnSound').addEventListener('click', toggleSound);
@@ -1986,12 +2058,17 @@
       menu.classList.add('open');
       document.getElementById('btnMoreMenu').setAttribute('aria-expanded', 'true');
     }
+    syncBackGuard();
   }
 
   function closeAllMenus(){
     document.querySelectorAll('.header-menu-dropdown').forEach(m => m.classList.remove('open'));
     const btn=document.getElementById('btnMoreMenu');
     if(btn) btn.setAttribute('aria-expanded', 'false');
+    syncBackGuard();
+  }
+  function menuIsOpen(){
+    return !!document.querySelector('.header-menu-dropdown.open');
   }
 
   /* ── Mät tidtabell | Bara info ──
@@ -4508,6 +4585,7 @@
       if(state.running) renderRouteMap(true);
       scrollToNextStation(true);
     }
+    syncBackGuard();
   }
 
   function handleInfoClick(ev){
@@ -4907,8 +4985,10 @@
     document.getElementById('settings').style.display = view==='settings' ? 'block' : 'none';
     document.getElementById('vtSettings').style.display = view==='vtSettings' ? 'block' : 'none';
     document.getElementById('ownSettings').style.display = view==='ownSettings' ? 'block' : 'none';
+    document.getElementById('installGuide').style.display = view==='installGuide' ? 'block' : 'none';
     window.scrollTo(0,0);
     renderAutoStartStatus();
+    syncBackGuard();
   }
   // GPS:en hålls igång i startformuläret, och i rapporten när resan kan starta av sig själv (nästa tur)
   function wantsGpsWarmup(){
@@ -5028,8 +5108,10 @@
     renderStatistics();
   }
 
+  // Vyerna som läggs över startformuläret, resan eller rapporten och stängs med Stäng, Klar eller bakåt
+  const OVERLAY_VIEWS=['statistics','settings','vtSettings','prefs','ownSettings','installGuide'];
   function rememberOverlayReturn(){
-    if(!['statistics','settings','vtSettings','prefs','ownSettings'].includes(currentView)) overlayReturnView=currentView;
+    if(!OVERLAY_VIEWS.includes(currentView)) overlayReturnView=currentView;
     overlayBack=null;
   }
 
@@ -7672,8 +7754,9 @@
   }
 
   function setupPWA(){
-    if(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches){
+    if(isStandaloneApp()){
       hideInstallButton();
+      keepStorage();
     }
     if(navigator.serviceWorker){ // saknas t.ex. i inbyggda webbläsare i appar och via http
       window.addEventListener('load', ()=>{
@@ -7693,38 +7776,181 @@
         checkForNewVersion(false);
       });
     }
+    // Android/Chrome: webbläsaren erbjuder installation. Knappen i menyn och Installera nu i guiden använder den.
     window.addEventListener('beforeinstallprompt', event=>{
       event.preventDefault();
       deferredInstallPrompt=event;
-      if(els.installBtn){
-        els.installBtn.style.display='inline-block';
-      }
+      renderInstallOffer();
     });
     window.addEventListener('appinstalled', ()=>{
+      deferredInstallPrompt=null;
       showHeaderStatus('Appen installerades!', false);
       hideInstallButton();
+      renderInstallOffer();
+      keepStorage();
     });
-    if(els.installBtn){
-      els.installBtn.addEventListener('click', async ()=>{
-        if(!deferredInstallPrompt) return;
-        els.installBtn.disabled=true;
-        try{
-          deferredInstallPrompt.prompt();
-          const choice=await deferredInstallPrompt.userChoice;
-          if(choice && choice.outcome==='accepted'){
-            showHeaderStatus('Installationen startar…', false);
-            hideInstallButton();
-          }else{
-            showHeaderStatus('Installationen avbröts.', true);
-          }
-        }catch(err){
-          showHeaderStatus('Kunde inte starta installationen.', true);
-        }finally{
-          deferredInstallPrompt=null;
-          els.installBtn.disabled=false;
-        }
-      });
+    renderInstallOffer();
+    setupBackGuard();
+  }
+
+  /* ── Som en riktig app (2026-11-26) ──
+     André 2026-11-26: inga installerade appar (jobbmobilen tillåter dem inte, och App Store kräver Mac och Apple-konto),
+     så webbappen görs så lik en riktig app som möjligt: installation på hemskärmen med guide även för iPhone,
+     skyddad lagring, bakåtknappen på Android och genvägar på ikonen. */
+  let platformForTest = null;
+  function platform(){
+    if(platformForTest) return platformForTest;
+    const ua=navigator.userAgent||'';
+    const mm=q=>!!(window.matchMedia && window.matchMedia(q).matches);
+    return {
+      // iPad med iPadOS säger Macintosh men har pekskärm
+      ios: /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints>1),
+      android: /Android/.test(ua),
+      standalone: navigator.standalone===true || mm('(display-mode: standalone)') || mm('(display-mode: fullscreen)'),
+      touch: mm('(pointer:coarse)')
+    };
+  }
+  function isStandaloneApp(){ return platform().standalone; }
+
+  // Installera: på Android när Chrome erbjuder det, på iPhone alltid utanför hemskärmsappen (Safari har ingen sådan fråga)
+  function installOffered(){
+    const p=platform();
+    if(p.standalone) return false;
+    return !!deferredInstallPrompt || p.ios;
+  }
+  function renderInstallOffer(){
+    const p=platform();
+    const offered=installOffered();
+    if(els.installBtn) els.installBtn.style.display = offered ? 'block' : 'none';
+    const hint=document.getElementById('installHint');
+    if(hint){
+      let dismissed=false;
+      try{ dismissed=localStorage.getItem(STORAGE_KEY_INSTALL_HINT)==='closed'; }catch(e){}
+      // Bara på telefon: på datorn ligger valet kvar i menyn
+      hint.hidden = !(offered && p.touch && !dismissed);
     }
+    const now=document.getElementById('btnInstallNow');
+    if(now) now.hidden=!deferredInstallPrompt;
+    // Guiden visar den egna telefonens steg först; okänd telefon (dator) visar båda
+    document.querySelectorAll('#installGuide [data-platform]').forEach(el=>{
+      const which=el.dataset.platform;
+      el.hidden = (p.ios && which==='android') || (p.android && which==='ios');
+    });
+  }
+  function closeInstallHint(){
+    try{ localStorage.setItem(STORAGE_KEY_INSTALL_HINT, 'closed'); }catch(e){}
+    renderInstallOffer();
+  }
+  function showInstallGuide(){
+    closeAllMenus();
+    rememberOverlayReturn();
+    renderInstallOffer();
+    showView('installGuide');
+  }
+  async function promptInstall(){
+    if(!deferredInstallPrompt){ showInstallGuide(); return; }
+    const ev=deferredInstallPrompt;
+    deferredInstallPrompt=null;
+    try{
+      ev.prompt();
+      const choice=await ev.userChoice;
+      if(choice && choice.outcome==='accepted'){
+        showHeaderStatus('Installationen startar…', false);
+        hideInstallButton();
+        if(currentView==='installGuide') closeOverlay();
+      }else{
+        showHeaderStatus('Installationen avbröts – den går att göra senare under ⋮ → Installera app', true);
+      }
+    }catch(err){
+      showHeaderStatus('Kunde inte starta installationen.', true);
+    }
+    renderInstallOffer();
+  }
+
+  // Lagringen ska inte rensas av webbläsaren när telefonen får ont om plats: körningar som inte laddats upp finns
+  // bara där. Frågas bara i den installerade appen (Chrome och Safari svarar utan att fråga användaren; Firefox frågar).
+  let storagePersisted=null;
+  function keepStorage(){
+    if(TEST_MODE || !navigator.storage || !navigator.storage.persist) return;
+    navigator.storage.persisted().then(already=>already || navigator.storage.persist()).then(ok=>{
+      storagePersisted=!!ok;
+    }).catch(()=>{});
+  }
+
+  /* Bakåtknappen och bakåtgesten på Android (och webbläsarens bakåt): stänger det som är öppet i stället för
+     att lämna appen. Ett eget steg i historiken (pushState) finns bara när det finns något att gå tillbaka från:
+     menyn, en sida som Inställningar, Info under en mätning eller en pågående resa. Under resan säger första
+     bakåt att resan pågår, och bara ett andra bakåt inom 3 s lämnar appen – mätningen stannar när appen stängs. */
+  const BACK_EXIT_MS = 3000;
+  let backGuardEnabled=false; // inte i testläge (appen ligger i en iframe), utom när ett test slår på det
+  let backGuard=false;        // vårt steg ligger överst i historiken
+  let backConsuming=false;    // vi tar själva bort vårt steg (history.back) och väntar på popstate
+  let backExitUntil=0;
+  let backExitTimer=null;
+  function setupBackGuard(){
+    if(backGuardEnabled) return;
+    backGuardEnabled=true;
+    window.addEventListener('popstate', onBackPressed);
+    syncBackGuard();
+  }
+  function backTarget(){
+    if(menuIsOpen()) return 'menu';
+    if(OVERLAY_VIEWS.includes(currentView)) return 'overlay';
+    if(state.running && currentView==='journey'){
+      if(infoState.tab==='info' && state.purpose!=='info') return 'stations';
+      return 'journey';
+    }
+    return null;
+  }
+  function syncBackGuard(){
+    if(!backGuardEnabled || backConsuming) return;
+    const want=!!backTarget() && Date.now()>=backExitUntil;
+    if(want && !backGuard){
+      try{ history.pushState({ railtimerBack:true }, ''); backGuard=true; }catch(e){}
+    }else if(!want && backGuard){
+      // Stängt med Stäng eller Klar: ta bort vårt steg, så att nästa bakåt lämnar appen direkt
+      backGuard=false;
+      backConsuming=true;
+      setTimeout(()=>{ if(backConsuming){ backConsuming=false; syncBackGuard(); } }, 1000);
+      history.back();
+    }
+  }
+  function onBackPressed(){
+    if(backConsuming){ backConsuming=false; syncBackGuard(); return; }
+    if(!backGuard) return;
+    if(/(^|[#&])(rt|ny)=/.test(location.hash.slice(1))) return; // inloggningslänken och genvägarna (hashchange tar hand om dem)
+    backGuard=false;
+    handleBack();
+    syncBackGuard();
+  }
+  function handleBack(){
+    const target=backTarget();
+    if(target==='menu') closeAllMenus();
+    else if(target==='overlay') closeOverlay();
+    else if(target==='stations') setInfoTab('stations');
+    else if(target==='journey'){
+      backExitUntil=Date.now()+BACK_EXIT_MS;
+      showHeaderStatus('Resan pågår. Tryck bakåt igen för att lämna appen – mätningen stannar då.', true);
+      clearTimeout(backExitTimer);
+      backExitTimer=setTimeout(()=>{ backExitUntil=0; syncBackGuard(); }, BACK_EXIT_MS);
+    }
+    return target;
+  }
+
+  /* Genvägarna på ikonen (manifestets shortcuts, Android): index.html#ny=mat och #ny=info väljer Mät tidtabell eller
+     Bara info i startformuläret. #-delen laddar inte om en öppen app. Under en resa, eller när Återuppta resa?
+     visas, ändras inget. */
+  function consumeShortcut(){
+    const m=/(^|[#&])ny=(mat|info)\b/.exec(location.hash.slice(1));
+    if(!m) return false;
+    try{ history.replaceState(history.state, '', location.pathname+location.search); }catch(e){}
+    if(state.running || document.getElementById('resumeDialog')){
+      if(state.running) showHeaderStatus('Resan pågår – avsluta den först', true);
+      return false;
+    }
+    setPurpose(m[2]==='info' ? 'info' : 'measure');
+    if(OVERLAY_VIEWS.includes(currentView) || currentView==='report') showView('setup');
+    return true;
   }
 
   // Service workern sköter bara sparade kopior för offline. Ny version upptäcks med versionskollen (checkForNewVersion).
