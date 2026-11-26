@@ -2209,9 +2209,57 @@ Appversion `2026-11-26f`. Logiken för ankomst och avgång är oförändrad.
 - GPS-märket visas inte på startsidan; GPS-läget står under Start-knappen.
 
 ### Inte gjort (granskningens P3)
-- Ihopfälld *Fler val* för dagens tur och anteckning, start och slut på en rad, rapporten med samma rader som stationslistan, typografisk skala och ljust läge för sol.
+- Ihopfälld *Fler val* för dagens tur och anteckning, start och slut på en rad, rapporten med samma rader som stationslistan, typografisk skala och ljust läge för sol. *Gjort i 2026-11-26g, utom den typografiska skalan.*
 
 ### Tester
 - `node --test "tests/*.test.js"` (240), nya: *störningar längs vägen: när vi är där, klar före oss …* och *störningar: händelsetypen i ord …*. Meddelandetesterna har de nya texterna, `short` och `follow`.
 - `node tests/run-browser-tests.mjs` (144): flikarna (listan stor, Karta med panelen, ✕ bara liggande), Att hålla koll på och siffran, ☆ som egen knapp, varningarna under Inställningar och de nya texterna.
 - Bilder: `--shot=resa`, `--shot=info`, `--shot=info-tagvard`, `--shot=var-ar-taget`, `--shot=resa-liggande`, `--shot=startformular`.
+
+## Uppdatering (2026-11-26g): startsidan, rapporten och ljust läge (resten av UX-granskningen)
+
+André 2026-11-26: "Gör det du rekommenderar" om det som var kvar från granskningen (`claude/ux-granskning-2026-11-26.md`, P3). Appversion `2026-11-26g`. Logiken för ankomst och avgång är oförändrad.
+
+### Startsidan
+- **Dagens tur och anteckningen** ligger ihopfällda i `details#moreOpts`. Rubriken (`renderMoreOpts`) säger:
+  - *Dagens tur: 3344 → 3346 → 3349* när turen finns;
+  - annars *Dagens tur och anteckning*, eller i Bara info *Dagens tur*;
+  - *· förslag finns* när det finns ett förslag från samma veckodag;
+  - *· anteckning ✓* när en anteckning är skriven.
+  - Döljs i Var är tåget?. `#tourGroup` och `#notesGroup` finns kvar inuti. `#notesGroup` är nu en vanlig grupp, inte en egen `details`.
+- **Rutten på en rad** (`#routeLine`, `renderRouteLine`, `routeCollapsed`): *Rutt Lidköping → Hällekis [Ändra]* när appen fyllt i start och slut. Det gäller tågnumret (GPS + tidtabell), förslaget från historiken (*Använd*) och nästa tur efter en resa. Fälten (`#routeRow`) döljs då.
+  - *Ändra* (`editRoute`) visar fälten igen.
+  - Raden visas bara när fälten fortfarande har de valda stationerna.
+
+### Rapporten
+- **Stationerna med samma rader som stationslistan** under resan (`.rl-row.st-row`, `timeCell`). Varje rad har nummer, namn och ankomst och avgång med avvikelse. Under namnet står uppehåll, *passage*, *missad – avbrott* eller anteckningen. Rubrikraden heter Station | Ankomst | Avgång. Förut var det en ruta per station, ca 75 px var. `delayBadge` är borttagen.
+- **Trafikverkets tider per station** ligger ihopfällda under listan (`details.rl-trv-box`, `.rl-trv-row` med `.rl-trv` som förut). Sammanfattningen står kvar i rutan överst.
+- **Hur resan slutade:** *Avslutad av sig själv i Hällekis*, *Avslutad för hand* eller *Avbruten* (förut *Klar – Slutstation registrerad – stillastående*).
+- *vid slutstationen* visas inte när avvikelsen är okänd, alltså utan tidtabell (förut ett streck).
+
+### Ljust läge för sol
+- **⋮ → Ljust läge** (snabbval) och **Inställningar → Under resan → Ljust läge** (`#btnLight`, `toggleLight`, `applyLight`), sparat i `railtimer_light_v1`.
+  - Klassen sätts i `<head>` före första ritningen, som Stor text.
+  - Snabbvalen i menyn står två och två.
+- **`html.light`:** vit botten och mörk text. Färgerna har samma betydelse i mörkare toner:
+  - grönt #15803d;
+  - gult #b45309;
+  - rött #b91c1c;
+  - blått #1d4ed8.
+- Knappar och kartans bakgrund, knappar och etiketter använder nya variabler: `--on-pri` (text på grön knapp), `--map-bg`, `--map-ctl` och `--map-ctl-on`.
+- **Rubriken är mörk även i ljust läge** (#1f2937, `theme-color` likaså). På iPhone är statusradens text alltid vit (`black-translucent`), så klockan och batteriet hade annars inte synts. Menyn i rubriken är ljus.
+- Inte provat i solljus. Kontrasten är vald efter WCAG: texten #111827 och #374151 på vitt.
+
+### Rättat
+- **⌂ Tillbaka till resan** syntes i ⋮-menyn mitt i resan, fast den var dold (`hidden`). Knapparnas `display:block` gick före `hidden`. Nu gäller `.header-menu-dropdown [hidden]{display:none !important}`. Granskningen trodde att det berodde på testet.
+- Menytestet räknar nu det som faktiskt syns (`getComputedStyle`).
+
+### Inte gjort
+- Den typografiska skalan (fem storlekar som variabler, granskningens P3-3) är en ombyggnad utan synlig skillnad och väntar.
+
+### Tester
+- `node --test "tests/*.test.js"` (240).
+- `node tests/run-browser-tests.mjs` (145):
+  - nytt: *ljust läge: snabbvalet och reglaget slår på html.light, sparas, gäller efter omstart och rubriken är mörk*;
+  - ändrade: *startformulär: tipsen visas …* (Fler val och rubriken), *startformulär: tågnumret fyller i rutten …* (raden och Ändra), *var är tåget: tågets GPS …* (*passerad – ingen tid* bara på sista raden) och *meny: …* (det som syns).
+- Bilder: `--shot=startformular`, `--shot=rapport`, `--shot=rapport-trafikverket`, `--shot=meny`, `--shot=resa-ljus` och `--shot=info-ljus`.

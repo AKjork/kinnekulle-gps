@@ -17,6 +17,8 @@
 <script>
   // Stor text sätts innan sidan ritas, så att allt får rätt storlek från början
   try{ if(localStorage.getItem('railtimer_large_text_v1')==='true') document.documentElement.classList.add('large-text'); }catch(e){}
+  // Ljust läge (2026-11-26g) likaså, så att sidan inte blinkar mörk först
+  try{ if(localStorage.getItem('railtimer_light_v1')==='true') document.documentElement.classList.add('light'); }catch(e){}
 </script>
 <style>
   :root{
@@ -42,7 +44,57 @@
     --warn-bg:rgba(245,158,11,0.15);
     --blue:#60a5fa;
     --blue-bg:rgba(59,130,246,0.15);
+    --map-bg:#14171c;
+    --map-ctl:rgba(13,15,18,.85);
+    --map-ctl-on:rgba(61,65,73,.95);
+    --on-pri:#000;
   }
+  /* Ljust läge för starkt solljus (2026-11-26g): vit botten och mörk text, samma betydelse för färgerna i
+     mörkare toner (grönt i tid, gult håll koll, rött påverkar, blått Trafikverket). ⋮ → Ljust, eller
+     Inställningar → Under resan. Rubriken är mörk även i ljust läge: på iPhone är statusradens text alltid
+     vit (black-translucent), och klockan och batteriet ska synas. Menyn i rubriken är ljus. */
+  html.light, html.light .header-menu-dropdown{
+    --bg:#eef0f3;
+    --bg-solid:#ffffff;
+    --ink:#111827;
+    --ink-dim:#374151;
+    --mut:#4b5563;
+    --pri:#15803d;
+    --pri-dark:#166534;
+    --pri-glow:rgba(21,128,61,0.12);
+    --sec:#b45309;
+    --b:#cbd0d8;
+    --b-light:#9aa1ac;
+    --soft:rgba(21,128,61,0.08);
+    --softb:#15803d;
+    --err:#b91c1c;
+    --err-bg:rgba(185,28,28,0.10);
+    --good:#15803d;
+    --good-bg:rgba(21,128,61,0.12);
+    --card-bg:#ffffff;
+    --warn:#b45309;
+    --warn-bg:rgba(180,83,9,0.12);
+    --blue:#1d4ed8;
+    --blue-bg:rgba(29,78,216,0.10);
+    --map-bg:#eef0f3;
+    --map-ctl:rgba(255,255,255,.92);
+    --map-ctl-on:#dfe3e8;
+    --on-pri:#fff;
+    color-scheme:light;
+  }
+  html.light header{
+    --bg:#1f2937;--ink:#f3f4f6;--ink-dim:#d1d5db;--mut:#9ca3af;--b:#374151;--b-light:#4b5563;--card-bg:#1f2937;
+    --pri:#4ade80;--pri-dark:#22c55e;--pri-glow:rgba(74,222,128,.15);--err:#f87171;--err-bg:rgba(248,113,113,.15);
+    --warn:#fbbf24;--warn-bg:rgba(251,191,36,.15);--good:#4ade80;--good-bg:rgba(74,222,128,.15);--on-pri:#000;
+    background:#1f2937;border-bottom-color:#111827;color:var(--ink);
+  }
+  html.light .tab-count,html.light .tab-count.l2,html.light .np-halt button[aria-pressed="true"]{color:#fff}
+  html.light .card.active{background:rgba(21,128,61,.08)}
+  html.light .card.at-station{background:rgba(17,24,39,.05)}
+  html.light .info-row.l2{background:rgba(185,28,28,.06)}
+  html.light .np-info.l1{background:rgba(180,83,9,.08);border-color:rgba(180,83,9,.45)}
+  html.light .np-info.l2{background:rgba(185,28,28,.07);border-color:rgba(185,28,28,.5)}
+  html.light .header-menu-dropdown,html.light .toast,html.light #journeyMsg{box-shadow:0 4px 14px rgba(0,0,0,.18)}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   /* Som en app (2026-11-26):
      - mörk bakgrund även när sidan studsar i kanten, ingen förstoring av text i liggande läge på iPhone;
@@ -164,7 +216,7 @@
   button:active:not(:disabled){transform:scale(0.98)}
   button.primary{
     background:var(--pri);
-    color:#000;
+    color:var(--on-pri);
     border-color:var(--pri);
     font-weight:600;
   }
@@ -370,6 +422,8 @@
     display:none;
   }
   .header-menu-dropdown.open{display:block}
+  /* Dolda val i menyn (⌂ Startsidan under resan) ska vara dolda: knapparnas display:block gick före hidden (2026-11-26g) */
+  .header-menu-dropdown [hidden]{display:none !important}
   /* Menyn är längre än skärmen: den rullas för sig (under resan rullar sidan inte) */
   .header-menu-dropdown{max-height:calc(100vh - 4.5rem);max-height:calc(100dvh - 4.5rem - env(safe-area-inset-top, 0px));overflow-y:auto;overscroll-behavior:contain}
   .header-menu-dropdown button{
@@ -399,7 +453,7 @@
   .header-menu-dropdown > button{padding:.75rem .9rem;font-size:.95rem}
   .header-menu-dropdown > .menu-version{padding:.55rem .9rem;font-size:.8rem}
   /* Snabbval i menyn: samma inställningar som reglagen under Inställningar (data-mirror) */
-  .menu-quick{display:flex;gap:.35rem;padding:.55rem .6rem;border-top:1px solid var(--b);border-bottom:1px solid var(--b)}
+  .menu-quick{display:grid;grid-template-columns:1fr 1fr;gap:.35rem;padding:.55rem .6rem;border-top:1px solid var(--b);border-bottom:1px solid var(--b)}
   .header-menu-dropdown .menu-quick .quick{flex:1 1 0;width:auto;display:flex;align-items:center;justify-content:center;gap:.3rem;min-height:2.5rem;padding:.35rem .3rem;border:1px solid var(--b);border-radius:8px;text-align:center;font-size:.8rem;font-weight:600;white-space:nowrap;color:var(--ink-dim);background:transparent}
   .header-menu-dropdown .menu-quick .quick[aria-pressed="true"]{border-color:var(--pri);color:var(--pri);background:var(--pri-glow)}
   .header-menu-dropdown .menu-quick .quick::before{content:'';width:.45rem;height:.45rem;border-radius:50%;background:var(--b-light)}
@@ -438,12 +492,22 @@
     .row-btn .toggle-state, .row-btn .toggle-state::after{transition:none}
   }
   /* Anteckningen i startformuläret är ihopfälld: den används sällan */
-  details.notes-group{border:0;border-radius:0;background:none;padding:0;margin:.5rem 0 .2rem}
-  .notes-group summary{list-style:none;display:inline-flex;align-items:center;gap:.4rem;min-height:2.2rem;font-size:.85rem;font-weight:500;color:var(--ink-dim)}
-  .notes-group summary::-webkit-details-marker{display:none}
-  .notes-group summary::before{content:'+';display:inline-grid;place-items:center;width:1.3rem;height:1.3rem;border:1px solid var(--b-light);border-radius:50%;font-size:.95rem;line-height:1;color:var(--pri)}
-  .notes-group[open] summary::before{content:'−'}
-  .notes-group[open] summary{margin-bottom:.3rem}
+  /* Startsidan (2026-11-26g): dagens tur och anteckningen ihopfällda, rutten på en rad när appen fyllt i den */
+  details.more-opts{border:0;border-radius:0;background:none;padding:0;margin:.5rem 0 .2rem}
+  details.more-opts[hidden]{display:none}
+  .more-opts > summary{list-style:none;display:flex;align-items:center;gap:.5rem;min-height:2.75rem;font-size:.9rem;font-weight:500;color:var(--ink-dim)}
+  .more-opts > summary::-webkit-details-marker{display:none}
+  .more-opts > summary::before{content:'+';flex:none;display:inline-grid;place-items:center;width:1.4rem;height:1.4rem;border:1px solid var(--b-light);border-radius:50%;font-size:1rem;line-height:1;color:var(--pri)}
+  .more-opts[open] > summary::before{content:'−'}
+  .more-opts > summary span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .more-opts .tour-group{margin-top:.2rem}
+  .route-line{display:flex;align-items:center;gap:.6rem;margin:.6rem 0 .3rem;padding:.45rem .5rem .45rem .75rem;border:1px solid var(--b);border-radius:8px;background:var(--card-bg)}
+  .route-line[hidden]{display:none}
+  .route-line .rl-text{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
+  .route-line .rl-label{font-size:.75rem;color:var(--ink-dim)}
+  .route-line b{font-size:1.05rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .route-line button{flex:none;min-height:2.75rem;padding:.3rem .9rem}
+  #routeRow[hidden]{display:none}
 
   .station-search-container{position:relative;flex:1}
   .station-search{width:100%}
@@ -668,8 +732,19 @@
   .rs-grid{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin:.75rem 0 .25rem;font-variant-numeric:tabular-nums}
   .rs-big{display:block;font-size:1.3rem;font-weight:600}
   .rs-sub{display:block;font-size:.75rem;color:var(--mut)}
-  .report-list{display:flex;flex-direction:column;gap:.4rem}
-  .rl-row{border:1px solid var(--b);border-radius:8px;padding:.6rem .75rem;background:var(--card-bg)}
+  /* Stationerna i rapporten med samma rader som stationslistan under resan (2026-11-26g) */
+  .report-list{border:1px solid var(--b);border-radius:10px;background:var(--card-bg);overflow:hidden}
+  .report-list .list-head{position:static}
+  .rl-row{padding:.35rem .6rem .35rem calc(.6rem + 3px);border-bottom:1px solid var(--b)}
+  .rl-row:last-child{border-bottom:0}
+  details.rl-trv-box{margin-top:.6rem;padding:.6rem .75rem}
+  .rl-trv-box > summary{list-style:none}
+  .rl-trv-box > summary::-webkit-details-marker{display:none}
+  .rl-trv-box > summary::before{content:'▸ ';font-size:.8rem;color:var(--ink-dim)}
+  .rl-trv-box[open] > summary::before{content:'▾ '}
+  .rl-trv-box[open] > summary{margin-bottom:.3rem}
+  .rl-trv-row{display:grid;grid-template-columns:1.3rem minmax(0,1fr);gap:0 .4rem;padding:.35rem 0;border-top:1px solid var(--b)}
+  .rl-trv-row .rl-trv{grid-column:2;margin-top:0}
   .rl-name{font-weight:600;display:flex;align-items:center;gap:.5rem}
   .rl-name .station-num{color:var(--mut);font-weight:400;font-size:.85rem;min-width:1.4rem}
   .rl-times{display:flex;flex-wrap:wrap;gap:.25rem 1rem;margin-top:.3rem;font-size:.85rem;color:var(--ink-dim);font-variant-numeric:tabular-nums}
@@ -728,15 +803,15 @@
     position:relative;
     border:1px solid var(--b);
     border-radius:10px;
-    background:#14171c;
+    background:var(--map-bg);
     overflow:hidden;
   }
   #routeMap{height:clamp(130px, 25vh, 280px);width:100%}
   #routeMap svg{display:block;width:100%;height:100%}
   .map-tools{position:absolute;top:.35rem;right:.35rem;display:flex;gap:.25rem}
-  .map-tools button{min-height:2.5rem;min-width:2.75rem;padding:.3rem .8rem;font-size:.85rem;background:rgba(13,15,18,.85);color:var(--ink-dim)}
-  .map-tools button[aria-pressed="true"]{color:var(--ink);border-color:var(--ink-dim);background:rgba(61,65,73,.95)}
-  .map-note{position:absolute;left:.35rem;bottom:.3rem;font-size:.72rem;color:var(--mut);pointer-events:none;background:rgba(20,23,28,.8);padding:0 .3rem;border-radius:3px}
+  .map-tools button{min-height:2.5rem;min-width:2.75rem;padding:.3rem .8rem;font-size:.85rem;background:var(--map-ctl);color:var(--ink-dim)}
+  .map-tools button[aria-pressed="true"]{color:var(--ink);border-color:var(--ink-dim);background:var(--map-ctl-on)}
+  .map-note{position:absolute;left:.35rem;bottom:.3rem;font-size:.72rem;color:var(--mut);pointer-events:none;background:var(--map-ctl);padding:0 .3rem;border-radius:3px}
   .map-note:empty{display:none}
   .map-note a{pointer-events:auto;color:var(--mut)}
   .map-show{display:none;width:100%;border:none;border-radius:0;background:transparent;color:var(--ink-dim);font-size:.8rem;padding:.4rem}
@@ -845,6 +920,7 @@
           <button type="button" class="quick" data-mirror="btnSpeech" aria-pressed="true">Uppläsning</button>
           <button type="button" class="quick" data-mirror="btnSound" aria-pressed="false">Ljud</button>
           <button type="button" class="quick" data-mirror="btnTextSize" aria-pressed="false">Stor text</button>
+          <button type="button" class="quick" data-mirror="btnLight" aria-pressed="false">Ljust läge</button>
         </div>
         <button id="btnHomeMenu" hidden>⌂ Startsidan</button>
         <button id="btnStatistics">Statistik</button>
@@ -923,12 +999,6 @@
     <div class="recent-chips" id="followRecent" hidden></div>
     <div class="hint" id="trainHint">Ger tidtabellen och stationerna längs vägen. Utan tågnummer mäts bara start och slut.</div>
     <div class="hint train-ident" id="trainIdent" hidden></div>
-    <div class="form-group tour-group" id="tourGroup">
-      <label for="tourInput">Dagens tur <span class="label-note">valfritt</span></label>
-      <input id="tourInput" type="text" inputmode="numeric" autocomplete="off" placeholder="t.ex. 23349 23334 23351">
-      <button type="button" id="tourSuggest" class="chip" hidden></button>
-      <div class="hint" id="tourHint">Tågen i tur och ordning. Nästa tåg fylls i när en resa är klar.</div>
-    </div>
     <div id="routeSuggestion" style="display:none;margin:.6rem 0;padding:.75rem;background:var(--pri-glow);border:1px solid var(--pri);border-radius:8px">
       <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.4rem">
         <span style="font-size:1rem">💡</span>
@@ -940,7 +1010,12 @@
         <button id="btnIgnoreSuggestion" class="ghost">Ändra</button>
       </div>
     </div>
-    <div class="row">
+    <!-- Rutten på en rad när appen fyllt i den (tågnumret eller dagens tur); Ändra visar fälten (2026-11-26g) -->
+    <div class="route-line" id="routeLine" hidden>
+      <span class="rl-text"><span class="rl-label">Rutt</span><b id="routeLineText"></b></span>
+      <button type="button" class="ghost sm" id="btnRouteEdit">Ändra</button>
+    </div>
+    <div class="row" id="routeRow">
       <div class="form-group station-search-container">
         <label for="startStation">Startstation<span class="label-note follow-opt" hidden> valfritt</span></label>
         <input type="text" id="startStation" class="station-search" placeholder="Sök station..." autocomplete="off">
@@ -953,9 +1028,19 @@
       </div>
     </div>
     <div id="stationLoadStatus" class="loading-stations" style="display:none">Laddar stationer...</div>
-    <details class="form-group notes-group" id="notesGroup">
-      <summary>Anteckning till rapporten</summary>
-      <textarea id="startNotes" rows="2" aria-label="Anteckning till rapporten" placeholder="Till exempel väglag eller avvikande fordon"></textarea>
+    <!-- Dagens tur och anteckningen ihopfällda: rubriken visar turen när den finns (2026-11-26g) -->
+    <details class="more-opts" id="moreOpts">
+      <summary><span id="moreOptsLabel">Dagens tur och anteckning</span></summary>
+      <div class="form-group tour-group" id="tourGroup">
+        <label for="tourInput">Dagens tur <span class="label-note">valfritt</span></label>
+        <input id="tourInput" type="text" inputmode="numeric" autocomplete="off" placeholder="t.ex. 23349 23334 23351">
+        <button type="button" id="tourSuggest" class="chip" hidden></button>
+        <div class="hint" id="tourHint">Tågen i tur och ordning. Nästa tåg fylls i när en resa är klar.</div>
+      </div>
+      <div class="form-group" id="notesGroup">
+        <label for="startNotes">Anteckning till rapporten</label>
+        <textarea id="startNotes" rows="2" placeholder="Till exempel väglag eller avvikande fordon"></textarea>
+      </div>
     </details>
     <span id="setupError" class="badge warn" style="display:none"></span>
     <button id="btnStart" class="primary btn-start">Starta mätningen</button>
@@ -1058,6 +1143,7 @@
       <button id="btnAutoStart" class="menu-toggle row-btn" aria-pressed="true"><span class="rb-txt">Starta när tåget rullar<small>När start och slut är ifyllda i startformuläret</small></span><span class="toggle-state">På</span></button>
       <button id="btnWakeLock" class="menu-toggle row-btn" aria-pressed="false"><span class="rb-txt">Håll skärmen vaken jämt<small>Under resan hålls den vaken ändå</small></span><span class="toggle-state">Av</span></button>
       <button id="btnTextSize" class="menu-toggle row-btn" aria-pressed="false"><span class="rb-txt">Stor text</span><span class="toggle-state">Av</span></button>
+      <button id="btnLight" class="menu-toggle row-btn" aria-pressed="false"><span class="rb-txt">Ljust läge<small>Lättare att läsa i starkt solljus</small></span><span class="toggle-state">Av</span></button>
       <button id="btnConnAlerts" class="menu-toggle row-btn" aria-pressed="true"><span class="rb-txt">Varna bara för byten som visas<small>Med valet Tåg, Buss, Båda eller Mina i Info. Av: varnar för alla byten, även dolda</small></span><span class="toggle-state">På</span></button>
     </div>
     <h3 class="group-title">Uppladdning och anslutningar</h3>
@@ -1202,7 +1288,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-26f'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-26g'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1391,6 +1477,7 @@
       loadAllStations, stationNames: () => allStationsCache.map(s => s.name), checkForInterruptedJourney,
       removeOrphanTracks, startJourney, fetchTimetable, logsCsv, planArr, planDep, buildRouteFromTimetable, saveLog,
       setTrvFetchForTest: (fn, retryDelayMs) => { trvFetchForTest = fn; if(retryDelayMs!=null) trvRetryDelayMs = retryDelayMs; },
+      toggleLight, lightOn: () => lightEnabled,
       refreshInfo, updateInfo, setInfoTab, startInfo, infoModel: () => infoState.model,
       nextArrivalEstimate, updateNextStopUI, legProfilesInfo: () => legProfilesInfo, infoAxis: () => infoAxis(),
       purpose, setPurpose, loadInfoTrips, tourRuns,
@@ -1611,8 +1698,25 @@
     setMenuToggle(document.getElementById('btnTextSize'), largeTextEnabled);
   }
 
+  // Ljust läge (2026-11-26g): html.light, och statusradens färg efter det
+  const STORAGE_KEY_LIGHT = 'railtimer_light_v1';
+  let lightEnabled = (()=>{ try{ return localStorage.getItem(STORAGE_KEY_LIGHT)==='true'; }catch(e){ return false; } })();
+  function applyLight(){
+    document.documentElement.classList.toggle('light', lightEnabled);
+    const meta=document.querySelector('meta[name="theme-color"]');
+    if(meta) meta.setAttribute('content', lightEnabled ? '#1f2937' : '#1a1d23');
+    setMenuToggle(document.getElementById('btnLight'), lightEnabled);
+  }
+  function toggleLight(){
+    lightEnabled=!lightEnabled;
+    try{ localStorage.setItem(STORAGE_KEY_LIGHT, String(lightEnabled)); }catch(e){}
+    applyLight();
+    if(state.running) renderRouteMap(true);
+  }
+
   function applyStoredSettings(){
     if(largeTextEnabled) document.documentElement.classList.add('large-text');
+    applyLight();
     updateSoundButton();
     updateTextSizeButton();
     setMenuToggle(document.getElementById('btnSpeech'), speechEnabled);
@@ -2055,7 +2159,7 @@
     });
     document.addEventListener('click', closeAllMenus);
     // Snabbvalen slår av och på samma sak som reglaget under Inställningar; menyn står kvar så att läget syns
-    const quickToggles={ btnSpeech:toggleSpeech, btnSound:toggleSound, btnTextSize:toggleLargeText };
+    const quickToggles={ btnSpeech:toggleSpeech, btnSound:toggleSound, btnTextSize:toggleLargeText, btnLight:toggleLight };
     document.querySelectorAll('#moreMenuDropdown [data-mirror]').forEach(q=>{
       q.addEventListener('click', ev => {
         ev.stopPropagation();
@@ -2080,6 +2184,7 @@
       if(state.running) updateInfo();
     });
     document.getElementById('btnTextSize').addEventListener('click', toggleLargeText);
+    document.getElementById('btnLight').addEventListener('click', toggleLight);
     document.getElementById('btnSpeech').addEventListener('click', toggleSpeech);
     document.getElementById('btnAutoStart').addEventListener('click', toggleAutoStart);
     document.addEventListener('pointerdown', unlockSpeech, { once:true });
@@ -2091,6 +2196,8 @@
     tourInput.addEventListener('input', () => { saveTour(parseTour(tourInput.value)); renderTourSuggest(); renderSetupHints(); });
     tourInput.addEventListener('change', () => { tourInput.value=tourTrains().join(' '); prefillFromTour(); });
     document.getElementById('tourSuggest').addEventListener('click', useTourSuggestion);
+    document.getElementById('btnRouteEdit').addEventListener('click', editRoute);
+    document.getElementById('startNotes').addEventListener('input', renderMoreOpts);
     for(const id of ['startStation','endStation','trainNumber']){
       document.getElementById(id).addEventListener('input', () => { autoState.moving=null; renderAutoStartStatus(); });
     }
@@ -2259,6 +2366,7 @@
     document.getElementById('trainNumber').placeholder = info || follow ? 'ATN eller OTN, t.ex. 3349' : 'OTN eller ATN, t.ex. 23349';
     renderNewButtons(p);
     renderFollowRecent();
+    renderMoreOpts();
     renderNav();
   }
   // Rapportens knappar till en ny resa (överst och längst ner), efter resans syfte
@@ -3357,6 +3465,39 @@
     if(tn && th) th.hidden = !!tn.value.trim() || purpose()!=='measure';
     const tour=document.getElementById('tourInput'), tourHint=document.getElementById('tourHint');
     if(tour && tourHint) tourHint.hidden = !!tour.value.trim();
+    renderRouteLine();
+    renderMoreOpts();
+  }
+  /* Rutten på en rad när appen fyllt i den (tågnumret, förslaget eller dagens tur): "Lidköping → Hällekis · Ändra".
+     Ändra, eller ett namn som inte längre stämmer, visar fälten igen. */
+  let routeCollapsed=false;
+  function renderRouteLine(){
+    const line=document.getElementById('routeLine'), row=document.getElementById('routeRow');
+    if(!line || !row) return;
+    const a=selectedStartStation, b=selectedEndStation;
+    const on = routeCollapsed && !!a && !!b && els.startInput.value===a.name && els.endInput.value===b.name;
+    line.hidden=!on;
+    row.hidden=on;
+    if(on) document.getElementById('routeLineText').textContent=`${a.name} → ${b.name}`;
+  }
+  function editRoute(){
+    routeCollapsed=false;
+    renderRouteLine();
+    try{ els.startInput.focus(); }catch(e){}
+  }
+  // Rubriken på Fler val: dagens tur när den finns, annars vad som finns där
+  function renderMoreOpts(){
+    const box=document.getElementById('moreOpts'), lab=document.getElementById('moreOptsLabel');
+    if(!box || !lab) return;
+    const p=purpose();
+    box.hidden = p==='follow';
+    const trains=tourTrains();
+    const sug=document.getElementById('tourSuggest');
+    const notes=(document.getElementById('startNotes').value||'').trim();
+    let t = trains.length ? `Dagens tur: ${trains.join(' → ')}` : (p==='measure' ? 'Dagens tur och anteckning' : 'Dagens tur');
+    if(!trains.length && sug && !sug.hidden) t+=' · förslag finns';
+    if(notes && p==='measure') t+=' · anteckning ✓';
+    if(lab.textContent!==t) lab.textContent=t;
   }
   function renderAutoStartStatus(){
     renderSetupHints();
@@ -5494,12 +5635,7 @@
     setTimeout(()=>{ if(els.journeyMsg.textContent===text) els.journeyMsg.style.display='none'; }, 8000);
   }
 
-  // Försening som badge (rapporten)
-  function delayBadge(actual, scheduled){
-    const d=delayInfo(actual, scheduled);
-    if(!d) return '';
-    return ` <span class="badge ${d.cls}">${d.cls==='early'?Math.abs(d.min)+' min tidig':(d.cls==='live'?'I tid':d.text)}</span>`;
-  }
+
 
   /* Resans rad i appens rubrik (2026-11-26f): "Tåg 3344 → Hällekis". Hela texten (startstation, det andra
      tågnumret, fordon eller läge) står i title och i #journeyTitle (dold under resan, läses av testerna). */
@@ -5913,37 +6049,39 @@
       if(!longest || sec>longest.sec) longest={sec, name:st.name};
     });
 
+    /* En rad per station, som stationslistan under resan (2026-11-26g): nummer, namn med uppehåll och anteckning under,
+       ankomst och avgång med avvikelse. Trafikverkets tider ligger ihopfällda under listan. */
     const rows=stops.map((st,idx)=>{
-      const parts=[];
-      const shown=(t, timeWindow)=>t?formatTime(t):(timeWindow?'avbrott':'–');
-      if(st.missedReason){
-        parts.push('<span>missad – avbrott</span>');
-      }else{
-        if(idx>0 || st.actualArrival){
-          const pa=planArr(st);
-          parts.push(`<span>↓ <strong>${shown(st.actualArrival, st.arrivalWindow)}</strong>${pa?` <small>(${formatClock(pa)})</small>`:''}${delayBadge(st.actualArrival, pa)}</span>`);
-        }
-        if(idx<stops.length-1 || st.actualDeparture){
-          const pd=planDep(st);
-          parts.push(`<span>↑ <strong>${shown(st.actualDeparture, st.departureWindow)}</strong>${pd?` <small>(${formatClock(pd)})</small>`:''}${delayBadge(st.actualDeparture, pd)}</span>`);
-        }
-      }
+      const sub=[];
+      if(st.missedReason) sub.push('missad – avbrott');
       if(st.actualArrival && st.actualDeparture && idx>0 && idx<stops.length-1){
-        parts.push(`<span>uppehåll ${formatDuration((new Date(st.actualDeparture)-new Date(st.actualArrival))/1000)}</span>`);
+        sub.push(`uppehåll ${formatDuration((new Date(st.actualDeparture)-new Date(st.actualArrival))/1000)}`);
       }
-      return `<div class="rl-row">
-        <div class="rl-name"><span class="station-num">${idx+1}</span>${escapeHtml(st.name)}${st.shouldStop===false?' ⏩':''}</div>
-        <div class="rl-times">${parts.join('')}</div>
-        ${trvReportLine(st)}
-        ${st.notes?`<div class="rl-note">${escapeHtml(st.notes)}</div>`:''}
-      </div>`;
+      if(st.shouldStop===false) sub.push('passage');
+      if(st.notes) sub.push('📝 '+escapeHtml(st.notes));
+      const blank='<span class="st-t"></span>';
+      const arr = st.missedReason ? '<span class="st-t plan"><b>–</b></span>'
+        : (idx>0 || st.actualArrival ? timeCell(st.actualArrival, planArr(st), st.arrivalWindow) : blank);
+      const dep = st.missedReason ? '<span class="st-t plan"><b>–</b></span>'
+        : (idx<stops.length-1 || st.actualDeparture ? timeCell(st.actualDeparture, planDep(st), st.departureWindow) : blank);
+      return `<div class="rl-row st-row"><span class="st-num">${idx+1}</span>` +
+        `<span class="st-name"><b>${escapeHtml(st.name)}</b>${sub.length?`<small>${sub.join(' · ')}</small>`:''}</span>${arr}${dep}</div>`;
+    }).join('');
+    const trvRows=stops.map((st,idx)=>{
+      const line=trvReportLine(st);
+      return line ? `<div class="rl-trv-row"><span class="st-num">${idx+1}</span><b>${escapeHtml(st.name)}</b>${line}</div>` : '';
     }).join('');
 
     const started=logEntry.startedAt?new Date(logEntry.startedAt):null;
     const finished=logEntry.finishedAt?new Date(logEntry.finishedAt):null;
     const when=started?`${started.toLocaleDateString('sv-SE')} ${formatClock(started)}${finished?`–${formatClock(finished)}`:''}`:'';
     const meta=[logEntry.trainNumber?`Tåg ${escapeHtml(trainLabel(logEntry))}`:null, logEntry.vehicleType?escapeHtml(logEntry.vehicleType):null, when].filter(Boolean).join(' · ');
-    const status=(state.aborted?'Avbruten':'Klar')+(state.autoReason?` – ${escapeHtml(state.autoReason)}`:'');
+    // Hur resan slutade, i ord (förut "Klar – Slutstation registrerad – stillastående")
+    const reason=state.autoReason||'';
+    const status = state.aborted ? 'Avbruten'
+      : /^Slutstation/.test(reason) ? `Avslutad av sig själv i ${escapeHtml(logEntry.endStation||'slutstationen')}`
+      : /manuellt/i.test(reason) ? 'Avslutad för hand'
+      : 'Avslutad'+(reason?` – ${escapeHtml(reason)}`:'');
     let saveNote='';
     if(lastSaveProblem && lastSaveProblem.id===logEntry.id){
       if(lastSaveProblem.kind==='unsaved'){
@@ -5962,7 +6100,7 @@
         <div class="meta">${meta}</div>
         <div class="rs-grid">
           <div><span class="rs-big">${tripSeconds!=null&&tripSeconds>0?formatDuration(tripSeconds):'–'}</span><span class="rs-sub">restid</span></div>
-          <div><span class="rs-big">${endDelay}</span><span class="rs-sub">vid slutstationen</span></div>
+          ${endDelay!=='–' ? `<div><span class="rs-big">${endDelay}</span><span class="rs-sub">vid slutstationen</span></div>` : ''}
           <div><span class="rs-big">${dwellCount}</span><span class="rs-sub">uppehåll på vägen</span></div>
           <div><span class="rs-big">${longest?formatDuration(longest.sec):'–'}</span><span class="rs-sub">längsta uppehåll${longest?` (${escapeHtml(longest.name)})`:''}</span></div>
         </div>
@@ -5970,7 +6108,8 @@
         ${trvReportSummary(logEntry)}
         ${logEntry.notes?`<p class="rl-note">${escapeHtml(logEntry.notes)}</p>`:''}
       </div>
-      <div class="report-list">${rows}</div>
+      <div class="report-list"><div class="list-head"><span></span><span>Station</span><span>Ankomst</span><span>Avgång</span></div>${rows}</div>
+      ${trvRows ? `<details class="rl-trv-box"><summary>Trafikverkets tider per station</summary>${trvRows}</details>` : ''}
     `;
   }
 
@@ -6884,8 +7023,8 @@
       const r=isFocus?7:5;
       const col=mapStationColor(o.s, o.idx);
       svg+= col==='next'
-        ? `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="#14171c" stroke="var(--ink)" stroke-width="2.5"/>`
-        : `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${col}" stroke="#14171c" stroke-width="2"/>`;
+        ? `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="var(--map-bg)" stroke="var(--ink)" stroke-width="2.5"/>`
+        : `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${col}" stroke="var(--map-bg)" stroke-width="2"/>`;
       const show = follow ? (o.idx>=lo && o.idx<=hi) : (o.idx===0 || o.idx===state.route.length-1 || isFocus);
       if(show && x>-50 && x<width+50 && y>-20 && y<height+20) labels.push({ x, y, r, text:o.s.name, focus:isFocus });
     });
@@ -6894,7 +7033,7 @@
       const right = lb.x < width*0.62;
       const tx = right ? lb.x+lb.r+5 : lb.x-lb.r-5;
       const ty = Math.min(height-6, Math.max(12, lb.y+4));
-      svg+=`<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${right?'start':'end'}" font-size="12" font-weight="${lb.focus?700:500}" fill="${lb.focus?'var(--ink)':'var(--ink-dim)'}" stroke="#14171c" stroke-width="3" paint-order="stroke">${escapeHtml(lb.text)}</text>`;
+      svg+=`<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${right?'start':'end'}" font-size="12" font-weight="${lb.focus?700:500}" fill="${lb.focus?'var(--ink)':'var(--ink-dim)'}" stroke="var(--map-bg)" stroke-width="3" paint-order="stroke">${escapeHtml(lb.text)}</text>`;
     });
     svg+=`<g id="mapPos" style="display:none"><circle r="11" fill="rgba(34,197,94,.25)"><animate attributeName="r" values="7;13;7" dur="2s" repeatCount="indefinite"/></circle><circle class="map-pos-marker" r="5" fill="var(--pri)" stroke="#fff" stroke-width="1.5"/></g>`;
     svg+='</svg>';
@@ -7357,6 +7496,7 @@
       selectedEndStation = endStation;
     }
     autoState.moving=null;
+    routeCollapsed=!!(startStation && endStation);
     renderAutoStartStatus();
     return !!(startStation && endStation);
   }
@@ -7461,6 +7601,7 @@
       btn.textContent=`Som förra ${day}: ${s.trains.join(' → ')}`;
       btn.dataset.trains=s.trains.join(' ');
     }
+    renderMoreOpts();
   }
   function useTourSuggestion(){
     const btn=document.getElementById('tourSuggest');
@@ -7564,6 +7705,7 @@
       els.startInput.value=from.name; selectedStartStation=from;
       els.endInput.value=to.name; selectedEndStation=to;
       autoFilledRoute={ start:from.name, end:to.name };
+      routeCollapsed=true;
     }else{
       // Rutten okänd: fälten töms och tågnumret fyller i dem (GPS + tidtabell) som när föraren skriver det
       els.startInput.value=''; els.endInput.value='';

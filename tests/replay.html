@@ -2526,11 +2526,38 @@ test('uppdatering: ny version laddas direkt vid start utan resa, men under resan
   assert(w.document.getElementById('btnUpdate').style.display !== 'none', 'Uppdatera app i menyn');
 });
 
+test('ljust läge: snabbvalet och reglaget slår på html.light, sparas, gäller efter omstart och rubriken är mörk', async () => {
+  const r = await midJourneyWithInfo();
+  const w = r.w, d = w.document;
+  const quick = d.querySelector('.menu-quick [data-mirror="btnLight"]');
+  assert(quick && !d.documentElement.classList.contains('light'), 'mörkt från början');
+  d.getElementById('btnMoreMenu').click();
+  quick.click();
+  assert(d.documentElement.classList.contains('light'), 'ljust läge på');
+  assertEqual(w.localStorage.getItem('railtimer_light_v1'), 'true', 'sparat');
+  assertEqual(d.getElementById('btnLight').getAttribute('aria-pressed'), 'true', 'reglaget under Inställningar följer med');
+  assertEqual(d.querySelector('meta[name="theme-color"]').getAttribute('content'), '#1f2937', 'statusradens färg');
+  // Rubriken mörk (statusradens text är vit på iPhone), sidan ljus
+  const bg = el => w.getComputedStyle(el).backgroundColor;
+  assertEqual(bg(d.querySelector('header')), 'rgb(31, 41, 55)', 'rubriken mörk');
+  assertEqual(bg(d.querySelector('.next-panel')), 'rgb(255, 255, 255)', 'panelen vit');
+  assertEqual(w.getComputedStyle(d.getElementById('nextStop')).color, 'rgb(17, 24, 39)', 'mörk text');
+  assertEqual(bg(d.getElementById('moreMenuDropdown')), 'rgb(255, 255, 255)', 'menyn ljus');
+  // Efter omstart
+  const w2 = await loadApp();
+  assert(w2.document.documentElement.classList.contains('light'), 'efter omstart');
+  w2.__railtimer.toggleLight();
+  assert(!w2.document.documentElement.classList.contains('light') && w2.localStorage.getItem('railtimer_light_v1') === 'false', 'av igen');
+});
+
 test('meny: kort meny med snabbval, och allt som ställs in en gång under Inställningar', async () => {
   const r = await midJourneyWithInfo();
   const w = r.w, d = w.document;
   // Menyn: version, snabbval och fyra val (Installera app bara när det går)
-  const visible = Array.from(d.querySelectorAll('#moreMenuDropdown > button')).filter(b => b.style.display !== 'none' && !b.hidden);
+  // Det som syns på riktigt (förut stod ⌂ Tillbaka till resan kvar fast den var dold, eftersom CSS gick före hidden)
+  d.getElementById('btnMoreMenu').click();
+  const visible = Array.from(d.querySelectorAll('#moreMenuDropdown > button')).filter(b => w.getComputedStyle(b).display !== 'none');
+  d.getElementById('btnMoreMenu').click();
   assertEqual(visible.map(b => b.id), ['btnVersion', 'btnStatistics', 'btnAnalysis', 'btnPrefs'], 'menyns val');
   for (const id of ['btnUploadSettings', 'btnVtSettings', 'btnExportCSV', 'btnExport', 'btnTrvCheck', 'btnClear', 'btnWakeLock', 'btnAutoStart'])
     assert(d.getElementById(id).closest('#prefs'), id + ' ligger under Inställningar');
@@ -2599,8 +2626,18 @@ test('startformulär: tipsen visas bara när fältet är tomt, och anteckningen 
   assert(hidden('trainHint'), 'Bara info: tipset om start och slut gäller inte');
   d.getElementById('purposeMeasure').click();
   assert(!hidden('trainHint'), 'Mät tidtabell igen');
-  const notes = d.getElementById('notesGroup');
-  assert(notes.tagName === 'DETAILS' && !notes.open, 'anteckningen är ihopfälld');
+  // Dagens tur och anteckningen ligger ihopfällda; rubriken visar turen (2026-11-26g)
+  const more = d.getElementById('moreOpts');
+  assert(more.tagName === 'DETAILS' && !more.open && more.contains(d.getElementById('notesGroup')) && more.contains(d.getElementById('tourGroup')), 'ihopfällt');
+  tour.value = '3344 3346';
+  tour.dispatchEvent(new w2.Event('input'));
+  assertEqual(d.getElementById('moreOptsLabel').textContent, 'Dagens tur: 3344 → 3346', 'rubriken visar turen');
+  tour.value = '';
+  tour.dispatchEvent(new w2.Event('input'));
+  assertEqual(d.getElementById('moreOptsLabel').textContent, 'Dagens tur och anteckning', 'utan tur');
+  d.getElementById('purposeFollow').click();
+  assert(more.hidden, 'inte i Var är tåget?');
+  d.getElementById('purposeMeasure').click();
   assertEqual(d.querySelector('#setup h2').textContent, 'Ny resa', 'rubriken');
 });
 
@@ -2681,6 +2718,12 @@ test('startformulär: tågnumret fyller i rutten när föraren står vid tågets
   await typeTrain('23349');
   assertEqual(route(), ['Lidköping', 'Hällekis'], 'rutten ifylld');
   assertEqual(w.document.getElementById('routeSuggestion').style.display, 'none', 'inget förslag att trycka på');
+  // Rutten på en rad, med Ändra som visar fälten (2026-11-26g)
+  const d = w.document;
+  assert(!d.getElementById('routeLine').hidden && d.getElementById('routeRow').hidden, 'rutten på en rad');
+  assertEqual(d.getElementById('routeLineText').textContent, 'Lidköping → Hällekis', 'raden');
+  d.getElementById('btnRouteEdit').click();
+  assert(d.getElementById('routeLine').hidden && !d.getElementById('routeRow').hidden, 'Ändra visar fälten');
   // Föraren väljer själv slutstation – den skrivs inte över när tågnumret ändras
   pickStation(w, 'endStation', 'Källby');
   await typeTrain('23350');
@@ -4306,7 +4349,7 @@ window.prepareShot = async function (name) {
     const fixes = buildJourney();
     const call = twoStationCall(fixes);
     await runJourney(fixes, { drop: f => call.drop(f) || f.t > call.resume + 60000 });
-  } else if (name === 'resa' || name === 'resa-vid-station' || name === 'resa-liggande') {
+  } else if (name === 'resa' || name === 'resa-vid-station' || name === 'resa-liggande' || name === 'resa-ljus') {
     // Mitt i en resa med tidtabell: på väg mot Blomberg (eller stående i Källby)
     const frame = document.getElementById('app');
     if (name === 'resa-liggande') { frame.style.width = '780px'; frame.style.height = '360px'; }
@@ -4317,13 +4360,14 @@ window.prepareShot = async function (name) {
       trainNumber: '3344',
       drop: f => f.t > stopT,
       route: scheduleFor(fixes),
-      afterStart: async rt => { rt.setRailFetchForTest(ov.fetch); await rt.loadRailGeometry(); }
+      afterStart: async rt => { rt.setRailFetchForTest(ov.fetch); await rt.loadRailGeometry(); if (name === 'resa-ljus') rt.toggleLight(); }
     });
-  } else if (name === 'info' || name === 'resa-info') {
+  } else if (name === 'info' || name === 'resa-info' || name === 'info-ljus') {
     // Mitt i resan med ett sent mötande tåg: infofliken (info) eller stationerna med raden i panelen (resa-info)
     const r = await midJourneyWithInfo();
     r.w.document.getElementById('journeyMsg').style.display = 'none';
-    r.rt.setInfoTab(name === 'info' ? 'info' : 'stations');
+    r.rt.setInfoTab(name === 'resa-info' ? 'stations' : 'info');
+    if (name === 'info-ljus') r.rt.toggleLight();
   } else if (name === 'var-ar-taget' || name === 'var-ar-taget-rapport' || name === 'startformular-var-ar-taget') {
     // Var är tåget?: tågets GPS från Trafikverket, eller bara rapporterna
     const now = Date.now();
