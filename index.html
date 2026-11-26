@@ -987,7 +987,7 @@
     <h3 class="group-title" data-platform="ios">iPhone</h3>
     <ol class="group install-steps" data-platform="ios">
       <li>Öppna sidan i <b>Safari</b>.</li>
-      <li>Tryck på <b>•••</b> bredvid adressfältet och sedan på <b>Dela</b>. På äldre iPhone ligger Dela längst ner.</li>
+      <li>Tryck på <b>Dela</b>. Syns den inte, finns den i menyn bakom <b>•••</b> eller <b>≡</b> vid adressfältet. Annars: Inställningar → Appar → Safari → Flikar → <b>Nederst</b>, så syns Dela längst ner.</li>
       <li>Välj <b>Lägg till på hemskärmen</b>. Låt <b>Öppna som webbapp</b> vara på och tryck <b>Lägg till</b>.</li>
     </ol>
     <p class="hint" data-platform="ios">Appen på hemskärmen har egen lagring, skild från Safari. Körningarna i GitHub hämtas till appen av sig själv, men uppladdningen behöver ställas in i appen: kopiera inloggningslänken i Safari (⋮ → Inställningar → Uppladdning till GitHub) och klistra in den i fältet Token i appen.</p>
@@ -1097,7 +1097,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-26b'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-26c'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)

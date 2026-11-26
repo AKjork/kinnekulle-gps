@@ -2027,3 +2027,15 @@ André 2026-11-26: "Hur vet appen om det är enkelspår eller dubbelspår?" Svar
   - `tests/infrastruktur.test.js`: linjeboken som text (sidhuvud med pil, driftplatsens rubrik, Driftplatsgräns, vägskyddssignaler, ny beskrivning, avdelning E).
 - `node tests/run-browser-tests.mjs` (133): *info: ett sent mötande tåg …* kontrollerar att underlaget är inläst, att mötet är enkelspår enligt linjeboken och *Så räknas det*.
 
+
+## Uppdatering (2026-11-26c): ny ikon och tydligare steg för iPhone
+
+André 2026-11-26 lade till appen på hemskärmen och ville ha en annan ikon än det gamla blå "K" från Kinnekulle GPS. Av tre förslag valde han **1 · Stoppur och spår**. Appversion `2026-11-26c`. Ingen logik är ändrad.
+
+- **Ikonen:** ett grönt stoppur (`#22c55e`) med ett spår i perspektiv, mot appens mörka bakgrund. Källan är `tools/ikon/railtimer-ikon.svg`. Ritas om med `rsvg-convert` till `icons/icon-192.png`, `icon-512.png`, `icon-maskable-192.png`, `icon-maskable-512.png` (samma bild) och `apple-touch-icon.png` (180). Allt grönt ligger högst 183 px från mitten av 512, innanför maskable-gränsen 204,8 px (40 %).
+- Filnamnen är desamma, så manifestet och sidorna är oförändrade.
+- **iPhone byter inte ikonen av sig själv.** Appen måste tas bort från hemskärmen och läggas till igen. Det tar bort hemskärmsappens lagring, så uppladdningen ställs in igen med inloggningslänken. Chrome på Android uppdaterar en installerad app när manifestet eller ikonerna ändrats, men det kan dröja en dag.
+- **Guiden, iPhone steg 2:** Andrés Safari visade varken ••• eller Dela, bara ≡ i adressfältet och flikknappen. Steget säger nu: tryck på Dela; syns den inte finns den i menyn bakom ••• eller ≡; annars Inställningar → Appar → Safari → Flikar → Nederst, så syns Dela längst ner.
+
+### Tester
+- `node --test "tests/*.test.js"` och `node tests/run-browser-tests.mjs "app:"` (manifestet och ikonerna finns, guiden).
