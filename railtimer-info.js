@@ -1243,8 +1243,42 @@
       sigs: Array.from(sigs)
     };
     out.planned = PLANNED_WORK.test(`${out.type} ${out.header}`);
+    // Var själva händelsen är (EventSection: från, via, till), skilt från var trafiken påverkas (TrafficImpact).
+    // Provet 2026-11-26: fordonsfelet O261126-030 låg mellan Veas och Vpm, men påverkade Vänersborg – Göteborg C.
+    const sec = Array.isArray(m.EventSection) ? m.EventSection[0] : null;
+    const sigOf = x => (x && typeof x.Signature === 'string' ? x.Signature : null);
+    out.at = sec ? [sigOf(sec.FromLocation), sigOf(sec.ViaLocation), sigOf(sec.ToLocation)].filter(Boolean)
+      .filter((x, i, a) => a.indexOf(x) === i) : [];
+    out.code = String((m.EventType && m.EventType.EventTypeCode) || '');
+    out.vehicle = /dragfordon|motorvagn/i.test(type);
+    out.hasPublic = !!(pm.Header || pm.Description);
     Object.defineProperty(out, 'raw', { value: m, enumerable: false }); // originalet, för att spara i körningen
     return out;
+  }
+  /* Händelsetypen i ord som går att förstå på en blick (André 2026-11-26: "Vem/vilka har problem med
+     dragfordon/motorvagn?"). Trafikverkets egen rubrik (PublicMessage) går före när den finns. Typerna är de som
+     fanns i provet 2026-11-26 (63 pågående händelser) och några till. */
+  const EVENT_WORDS = [
+    [/dragfordon|motorvagn/i, 'Fel på ett tåg (lok eller motorvagn)'],
+    [/uppkörd växel/i, 'Uppkörd växel'],
+    [/spårväxel|växel/i, 'Växelfel'],
+    [/kontaktledning/i, 'Fel på kontaktledningen'],
+    [/signal/i, 'Signalfel'],
+    [/^spår\b/i, 'Fel på spåret'],
+    [/polis|sjukdom|ambulans/i, 'Polis eller sjukdom'],
+    [/obehörig/i, 'Obehöriga i spåret'],
+    [/djur/i, 'Djur på spåret'],
+    [/olycka|påkörning/i, 'Olycka'],
+    [/snö/i, 'Snöröjning'],
+    [/översvämning/i, 'Översvämning'],
+    [/banarbete/i, 'Banarbete som drar över tiden'],
+    [/annat/i, 'Trafikstörning']
+  ];
+  function messageTitle(m) {
+    if (!m) return '';
+    if (m.hasPublic && m.header) return m.header;
+    const hit = EVENT_WORDS.find(([re]) => re.test(m.type || m.header || ''));
+    return hit ? hit[1] : (m.header || 'Trafikstörning');
   }
   /* Planerade arbeten (banarbete, spårarbete, underhåll): tidtabellen räknar redan med dem. Påverkar ett arbete
      vårt tåg syns det i vårt tågs annonseringar (avvikelse, inställt), inte här. 2026-11-25: ett banarbete som
@@ -1608,7 +1642,19 @@
 
     const remaining = new Set(line.slice(Math.max(frontier, 0)).map(l => l.sig));
     const cls = classifyMessages(input.messages, remaining, now, predArr);
-    const messages = cls.shown;
+    /* Varje störning i ordning längs linjen, med rubriken i ord (messageTitle), när vi är vid första berörda plats
+       (ourT) och om den beräknas vara klar innan vi är där (clear, nivå 0: räknas inte bland det att hålla koll på).
+       2026-11-26f, André: "Vem/vilka har problem med dragfordon/motorvagn?" */
+    const messages = cls.shown.map(msg => {
+      const sigs = msg.sigs.slice().sort((a, b) => idxOf.get(a) - idxOf.get(b));
+      const fi = idxOf.get(sigs[0]);
+      const p = preds[fi] || {};
+      const ourT = p.arr != null ? p.arr : (p.dep != null ? p.dep : null);
+      const clear = msg.end != null && ourT != null && msg.end < ourT;
+      const item = Object.assign({}, msg, { sigs, i: fi, ourT, clear, level: clear ? 0 : 1, title: messageTitle(msg) });
+      Object.defineProperty(item, 'raw', { value: msg.raw, enumerable: false });
+      return item;
+    }).sort((a, b) => a.i - b.i);
 
     const startDeparted = known[0].dep != null;
 
@@ -1819,9 +1865,9 @@
 
     const endLevel = end.delayMin >= 6 ? 2 : (end.delayMin >= 2 ? 1 : 0);
     const levels = [endLevel].concat(meetings.map(m => m.level), alert.connections.map(c => c.level), alert.incoming.map(c => c.level),
-      midAll.map(c => c.level), deviations.map(() => 1), messages.map(() => 1));
+      midAll.map(c => c.level), deviations.map(() => 1), messages.map(x => x.level));
     const attention = meetings.filter(m => m.level).length + alert.connections.filter(c => c.level).length +
-      alert.incoming.filter(c => c.level).length + midAll.filter(c => c.level).length + deviations.length + messages.length;
+      alert.incoming.filter(c => c.level).length + midAll.filter(c => c.level).length + deviations.length + messages.filter(x => x.level).length;
 
     // Varför vi blir sena: det möte som kostar mest
     const worstMeeting = meetings.filter(m => m.waitMin >= 1).sort((a, b) => b.waitMs - a.waitMs)[0] || null;
@@ -1873,7 +1919,8 @@
     const fromSv = c => c.track ? `, ${c.kind === 'buss' ? 'den går från läge' : 'det går från spår'} ${c.track}${c.samePlatform === true ? ' på samma plattform' : ''}` : '';
     const fromEn = c => c.track ? `, departing from ${c.kind === 'buss' ? 'stop' : 'track'} ${c.track}${c.samePlatform === true ? ' on the same platform' : ''}` : '';
     const meetReason = m.reason && m.reason.waitMin >= 2;
-    const msg = !meetReason && m.messages && m.messages[0] ? m.messages[0].header : '';
+    const live = (m.messages || []).filter(x => x.level !== 0);
+    const msg = !meetReason && live[0] ? (live[0].title || messageTitle(live[0])) : '';
     const lowerFirst = t => t ? t.charAt(0).toLocaleLowerCase('sv') + t.slice(1) : t;
     const sv = [], en = [];
     // Är det mötande tåget i tid väntar vi för att mötet flyttats när vi själva är sena: då inget "försenat tåg"
@@ -1944,61 +1991,94 @@
     return { title, sub: [place, plat].filter(Boolean).join(' · '), say };
   }
 
+  /* opts.follow (Var är tåget?): användaren är inte på tåget, så det står "tåget" i stället för "vi"/"oss".
+     Varje sak har också kind (ring, missas, mote, knappt, avvikelse, storning), prio (0 viktigast) och short:
+     panelens korta rad ("byte till Oslo missas", "möte Råbäck: vänta 5 min"). Texterna är omskrivna 2026-11-26f
+     så att de går att förstå utan att läsa resten av fliken. */
   function alerts(m, opts) {
     const out = [];
     if (!m) return out;
     const name = (opts && opts.name) || (s => s);
     const clock = (opts && opts.clock) || (t => new Date(Math.round(t / MIN) * MIN).toTimeString().slice(0, 5));
+    const follow = !!(opts && opts.follow);
+    const we = follow ? 'tåget' : 'vi', We = follow ? 'Tåget' : 'Vi', us = follow ? 'tåget' : 'oss';
     const places = sigs => (sigs || []).map(name).join(' / ');
-    const trainText = c => [c.product, c.ident].filter(Boolean).join(' ');
+    const trainText = c => c.kind === 'buss' ? `Buss ${c.ident || ''}`.trim() : ([c.product, c.ident].filter(Boolean).join(' ') || String(c.otn || ''));
     const minutes = k => `${k} minut${k === 1 ? '' : 'er'}`;
     const connSay = { knappt: 'blir knapp', missas: 'hinns inte', 'avgått': 'har gått', 'inställt': 'är inställd' };
-    const connText = c => c.status === 'knappt' ? `knappt (${Math.max(c.transferMin, 0)} min)` : c.status;
     // Bussar (Västtrafik) har riktningen som text; tåg Trafikverkets platser
     const bus = c => c.kind === 'buss';
     const to = c => bus(c) ? (c.toText || '') : places(c.to);
     const from = c => bus(c) ? (c.fromText || '') : places(c.from);
-    const toUs = c => c.status === 'knappt' ? 'ger ett knappt byte till oss' : (c.status === 'inställt' ? (bus(c) ? 'är inställd' : 'är inställt') : 'hinner inte till oss');
-    const add = (key, level, text, say) => out.push({ key, level, text, say });
+    const toUs = c => c.status === 'knappt' ? `ger ett knappt byte till ${us}` : (c.status === 'inställt' ? (bus(c) ? 'är inställd' : 'är inställt') : `hinner inte till ${us}`);
+    // ck: anslutningens nyckel (connKey), så att ett byte med ☎-förslag inte står två gånger i listan
+    const add = (key, level, text, say, kind, prio, short, ck) => out.push({ key, level, text, say, kind, prio, short, ck: ck || null });
+    const lower = t => t ? t.charAt(0).toLocaleLowerCase('sv') + t.slice(1) : t;
+    // "Byte till Oslo 12:14 i Göteborg C: 3 min – knappt" / "… missas – går före vi är framme"
+    const target = c => bus(c) ? `buss ${c.ident || ''} mot ${to(c)}`.replace(/\s+/g, ' ') : to(c);
+    const outText = (c, where) => {
+      const head = `Byte till ${target(c)} ${clock(c.adv)}${where ? ` i ${where}` : ''}`;
+      if (c.status === 'knappt') return `${head}: ${Math.max(c.transferMin, 0)} min – knappt`;
+      if (c.status === 'missas') return `${head} missas – ${c.transferMin < 0 ? `går före ${we} är framme` : `går när ${we} kommer fram`}`;
+      if (c.status === 'avgått') return `${head} har redan gått`;
+      if (c.status === 'inställt') return `${head} är ${bus(c) ? 'inställd' : 'inställt'}`;
+      return `${head}: ${c.status}`;
+    };
+    const outShort = c => c.status === 'knappt' ? `knappt byte ${target(c)}` : (c.status === 'missas' ? `byte till ${target(c)} missas`
+      : (c.status === 'avgått' ? `byte till ${target(c)} har gått` : `byte till ${target(c)} inställt`));
+    const outKind = c => c.status === 'knappt' ? ['knappt', 3] : ['missas', 1];
+    const inText = (c, where) => c.status === 'knappt'
+      ? `${trainText(c)} från ${from(c)} ger ett knappt byte till ${us}${where ? ` i ${where}` : ''} (${Math.max(c.transferMin, 0)} min)`
+      : `${trainText(c)} från ${from(c)} ${toUs(c)}${where ? ` i ${where}` : ''}`;
+    const inShort = c => c.status === 'knappt' ? `knappt byte från ${from(c)}` : `${trainText(c)} hinner inte till ${us}`;
+    const endName = m.end ? name(m.end.sig) : '';
+    const startName = m.preds && m.preds[0] ? name(m.preds[0].sig) : '';
     // Först förslaget att ringa trafikledningen (markerad anslutning som blir knapp eller missas)
-    for (const a of m.actions || []) { const t = actionText(a, opts); add(`a|${a.c.key}`, 2, t.title, t.say); }
+    for (const a of m.actions || []) { const t = actionText(a, opts); add(`a|${a.c.key}`, 2, t.title, t.say, 'ring', 0, '☎ ring trafikledningen', a.c.key); }
     // Nyckeln är tidtabellens mötesplats, så att ett möte som flyttas inte meddelas en gång till på samma nivå
     for (const mt of m.meetings || []) {
       if (!mt.level) continue;
       const train = mt.ident || mt.otn;
       const at = mt.at || mt.sig;
+      const short = `möte ${name(at)}: vänta ${mt.waitMin} min`;
       if (at !== mt.sig) {
         const sure = mt.move === 'rapporterat';
         add(`m|${mt.otn}|${mt.sig}`, mt.level,
-          `Möte ${name(at)} i stället för ${name(mt.sig)}${sure ? '' : ' (troligen)'}: vi väntar ca ${mt.waitMin} min på ${train}`,
-          sure ? `Mötet är flyttat närmare oss. Vi väntar troligen i ${name(at)} cirka ${minutes(mt.waitMin)}.`
-            : `Mötet flyttas troligen till ${name(at)}. Vi väntar där cirka ${minutes(mt.waitMin)}.`);
+          `Möte i ${name(at)} i stället för ${name(mt.sig)}${sure ? '' : ' (troligen)'}: ${we} väntar ca ${mt.waitMin} min på ${train}`,
+          sure ? `Mötet är flyttat närmare ${us}. ${We} väntar troligen i ${name(at)} cirka ${minutes(mt.waitMin)}.`
+            : `Mötet flyttas troligen till ${name(at)}. ${We} väntar där cirka ${minutes(mt.waitMin)}.`, 'mote', 2, short);
       } else {
         add(`m|${mt.otn}|${mt.sig}`, mt.level,
-          `Möte ${name(at)}: ${train} är ${mt.theirDelayMin} min sent – vi väntar ca ${mt.waitMin} min`,
-          `Möte i ${name(at)}. Mötande tåg ${minutes(mt.theirDelayMin)} sent. Vi väntar cirka ${minutes(mt.waitMin)}.`);
+          `Möte i ${name(at)}: ${we} väntar ca ${mt.waitMin} min på ${train} (${mt.theirDelayMin} min sent)`,
+          `Möte i ${name(at)}. Mötande tåg ${minutes(mt.theirDelayMin)} sent. ${We} väntar cirka ${minutes(mt.waitMin)}.`, 'mote', 2, short);
       }
     }
     // Anslutningarna som varningarna gäller: valda slag (Tåg | Buss | Båda), eller alla om varningarna inte följer valet
     const A = m.alert || m;
-    for (const c of A.connections || []) if (c.level) add(`c|${c.otn}`, c.level,
-      `Anslutning ${clock(c.adv)} ${bus(c) ? `buss ${c.ident} ` : ''}${to(c)}: ${connText(c)}`,
-      `Anslutningen ${bus(c) ? 'till bussen ' : ''}mot ${to(c)} ${clock(c.adv)} ${connSay[c.status] || c.status}.`);
-    for (const c of A.incoming || []) if (c.level) add(`i|${c.otn}`, c.level,
-      `${trainText(c)} från ${from(c)}: ${c.status === 'knappt' ? 'knappt byte till oss' : (c.status === 'inställt' ? 'inställt' : 'hinner inte till oss')}`,
-      `${bus(c) ? 'Bussen' : 'Tåget'} från ${from(c)} ${toUs(c)}.`);
+    for (const c of A.connections || []) if (c.level) add(`c|${c.otn}`, c.level, outText(c, endName),
+      `Anslutningen ${bus(c) ? 'till bussen ' : ''}mot ${to(c)} ${clock(c.adv)} ${connSay[c.status] || c.status}.`, ...outKind(c), outShort(c), c.key);
+    for (const c of A.incoming || []) if (c.level) add(`i|${c.otn}`, c.level, inText(c, startName),
+      `${bus(c) ? 'Bussen' : 'Tåget'} från ${from(c)} ${toUs(c)}.`, ...(c.status === 'knappt' ? ['knappt', 3] : ['missas', 1]), inShort(c), c.key);
     for (const st of A.stops || []) {
       const where = name(st.sig);
-      for (const c of st.connections) if (c.level) add(`c|${c.otn}|${st.sig}`, c.level,
-        `Anslutning i ${where} ${clock(c.adv)} ${bus(c) ? `buss ${c.ident} ` : ''}${to(c)}: ${connText(c)}`,
-        `Anslutningen i ${where} ${bus(c) ? 'till bussen ' : ''}mot ${to(c)} ${connSay[c.status] || c.status}.`);
-      for (const c of st.incoming) if (c.level) add(`i|${c.otn}|${st.sig}`, c.level,
-        `${trainText(c)} från ${from(c)} till oss i ${where}: ${c.status === 'knappt' ? 'knappt' : (c.status === 'inställt' ? 'inställt' : 'hinner inte')}`,
-        `${bus(c) ? 'Bussen' : 'Tåget'} från ${from(c)} ${toUs(c)} i ${where}.`);
+      for (const c of st.connections) if (c.level) add(`c|${c.otn}|${st.sig}`, c.level, outText(c, where),
+        `Anslutningen i ${where} ${bus(c) ? 'till bussen ' : ''}mot ${to(c)} ${connSay[c.status] || c.status}.`, ...outKind(c), outShort(c), c.key);
+      for (const c of st.incoming) if (c.level) add(`i|${c.otn}|${st.sig}`, c.level, inText(c, where),
+        `${bus(c) ? 'Bussen' : 'Tåget'} från ${from(c)} ${toUs(c)} i ${where}.`, ...(c.status === 'knappt' ? ['knappt', 3] : ['missas', 1]), inShort(c), c.key);
     }
-    for (const d of m.deviations || []) add(`d|${d.sig}|${d.text}`, 1, `${name(d.sig)}: ${d.text}`, `${name(d.sig)}: ${d.text}.`);
-    for (const msg of m.messages || []) add(`t|${msg.id}`, 1, msg.header, `${msg.header}.`);
-    return out;
+    for (const d of m.deviations || []) add(`d|${d.sig}|${d.text}`, 1, `${name(d.sig)}: ${d.text}`, `${name(d.sig)}: ${d.text}.`, 'avvikelse', 4, `${d.text} ${name(d.sig)}`);
+    // Störningar: rubriken i ord, var på vår linje och sedan när. Klara före oss (nivå 0) meddelas inte.
+    for (const msg of m.messages || []) {
+      if (msg.level === 0) continue;
+      const title = msg.title || messageTitle(msg);
+      const s = msg.sigs || [];
+      const where = s.length > 1 ? `${name(s[0])} – ${name(s[s.length - 1])}` : (s[0] ? name(s[0]) : '');
+      const since = msg.start != null ? `, sedan ${clock(msg.start)}` : '';
+      add(`t|${msg.id}`, 1, `${title}${where ? ` vid ${where}` : ''}${since}`,
+        `Trafikstörning${s[0] ? ` vid ${name(s[0])}` : ''}: ${lower(title)}.`, 'storning', 5, `störning ${s[0] ? name(s[0]) : ''}`.trim());
+    }
+    // Viktigast först: nivå, sedan slag (ring, missas, möte, knappt, avvikelse, störning), sedan ordningen ovan
+    return out.map((a, k) => Object.assign(a, { order: k })).sort((a, b) => b.level - a.level || a.prio - b.prio || a.order - b.order);
   }
   /* ── Loggen över Trafikverkets svar under resan ──
      Så att det i efterhand går att pröva om ett flyttat möte syntes hos Trafikverket i förväg: vårt tågs och de
@@ -2082,7 +2162,7 @@
   }
 
   return {
-    DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, alerts, newAlerts, actionText, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
+    DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, messageTitle, announcement, alerts, newAlerts, actionText, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
     trackKind, platformInfo, infraMeetPlaces,
     request, queryOurTrain, queryLine, queryOwnTrains, queryNames, queryMessages, resultOf,
     parseAnnouncement, groupTrains, nearestRun, mergeTrains, isOurs, buildLine, crossingOf, latestDelay, theirArrival, theirDeparture,

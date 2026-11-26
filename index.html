@@ -24,7 +24,7 @@
     --bg-solid:#0d0f12;
     --ink:#e8eaed;
     --ink-dim:#9aa0a6;
-    --mut:#6b7280;
+    --mut:#8b929b;   /* 5,1:1 på kortbakgrunden (förut #6b7280, 3,3:1) */
     --pri:#22c55e;
     --pri-dark:#16a34a;
     --pri-glow:rgba(34,197,94,0.15);
@@ -33,14 +33,14 @@
     --b-light:#3d4149;
     --soft:rgba(34,197,94,0.1);
     --softb:#22c55e;
-    --err:#ef4444;
+    --err:#f87171;
     --err-bg:rgba(239,68,68,0.15);
     --good:#22c55e;
     --good-bg:rgba(34,197,94,0.15);
     --card-bg:#1e2128;
     --warn:#f59e0b;
     --warn-bg:rgba(245,158,11,0.15);
-    --blue:#3b82f6;
+    --blue:#60a5fa;
     --blue-bg:rgba(59,130,246,0.15);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -205,20 +205,28 @@
     padding:.3rem .6rem .3rem calc(.6rem + 3px);
     background:var(--bg);
     border-bottom:1px solid var(--b);
-    font-size:.68rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;
+    font-size:.72rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;
   }
   .list-head span:nth-child(n+3){text-align:right}
   /* Flikarna Stationer och Info överst i resvyn. Stationer: panel, karta och stationslistan.
      Info: hela ytan under flikarna (på bred skärm och liggande telefon ersätter Info bara listan). */
   .view-tabs{flex:none;display:flex;gap:.3rem;padding:.2rem;border:1px solid var(--b);border-radius:10px;background:var(--card-bg)}
-  .view-tabs button{flex:1;min-height:2.4rem;border:none;border-radius:7px;background:transparent;color:var(--ink-dim);font-size:.95rem;font-weight:600;padding:.35rem .5rem;display:inline-flex;align-items:center;justify-content:center;gap:.4rem}
+  .view-tabs button{flex:1;min-height:2.75rem;border:none;border-radius:7px;background:transparent;color:var(--ink-dim);font-size:.95rem;font-weight:600;padding:.35rem .5rem;display:inline-flex;align-items:center;justify-content:center;gap:.4rem}
   .view-tabs button[aria-selected="true"]{background:var(--b);color:var(--ink)}
   .tab-count{min-width:1.3rem;padding:0 .35rem;border-radius:999px;background:var(--warn);color:#000;font-size:.75rem;line-height:1.3rem;text-align:center}
-  .tab-count.l2{background:var(--err);color:#fff}
+  .tab-count.l2{background:var(--err);color:#000}
   #journey:not(.show-info) #infoView,
   #journey.show-info #stationList,
   #journey.show-info .next-panel,
   #journey.show-info #routeMapContainer{display:none}
+  /* Stående telefon: kartan har en egen flik och fyller ytan under panelen (2026-11-26f) */
+  @media (max-width:819.98px) and (orientation:portrait), (max-width:819.98px) and (min-height:540.02px){
+    #journey:not(.show-map) #routeMapContainer,
+    #journey.show-map #stationList{display:none}
+    #journey.show-map #routeMapContainer{flex:1 1 auto;min-height:12rem;display:flex;flex-direction:column}
+    #journey.show-map #routeMap{flex:1 1 auto;height:auto;min-height:0}
+    #journey.show-map #mapHide{display:none}
+  }
   /* Infofliken: prognos, längs vägen och anslutningar */
   .info-head{padding:.5rem .7rem .45rem;border-bottom:1px solid var(--b)}
   .ih-label{font-size:.68rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
@@ -226,21 +234,42 @@
   .ih-main b{font-size:1.45rem;font-weight:700;line-height:1.2}
   .ih-delay{font-size:1rem;font-weight:600}
   .ih-why{font-size:.85rem;color:var(--ink-dim)}
-  .ih-sub{font-size:.72rem;color:var(--mut);font-variant-numeric:tabular-nums}
-  .info-sec{display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.45rem .7rem .25rem;font-size:.68rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  .ih-sub{font-size:.8rem;color:var(--mut);font-variant-numeric:tabular-nums}
+  /* Rubrikerna i Info i vanlig skrift, läsbar storlek (2026-11-26f) */
+  .info-sec{display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.75rem .7rem .3rem;font-size:.85rem;font-weight:700;color:var(--ink-dim)}
+  .info-sec.sub{padding:.55rem .7rem .2rem;font-size:.8rem;font-weight:600;border-top:1px solid var(--b)}
+  .info-sec.conn-head{border-top:1px solid var(--b);margin-top:.3rem;padding-top:.5rem}
+  .info-sec.conn-head .seg button{min-height:2.5rem;padding:.25rem .6rem;font-size:.85rem}
+  .info-sec .sec-note{font-size:.78rem}
+  /* Att hålla koll på: en mening per sak, viktigast först. Samma lista som siffran på fliken. */
+  .watch{padding:.4rem .7rem .55rem;border-top:1px solid var(--b)}
+  .watch-title{font-size:.85rem;font-weight:700;color:var(--ink-dim);margin-bottom:.15rem}
+  .watch-row{display:flex;gap:.55rem;align-items:baseline;font-size:.95rem;line-height:1.35;padding:.22rem 0}
+  .watch-row small{display:block;font-size:.8rem;color:var(--ink-dim)}
+  .wdot{flex:none;width:.6rem;height:.6rem;border-radius:50%;background:var(--warn);transform:translateY(-.05rem)}
+  .watch-row.l2 .wdot{background:var(--err)}
+  .wdot.ok{background:var(--pri)}
+  .watch-row.ring .wdot{width:auto;height:auto;background:none;color:var(--err);font-size:1rem}
+  .watch-ok .watch-row{color:var(--ink)}
+  .info-stale{margin:0;padding:.45rem .7rem;font-size:.88rem;font-weight:600;color:var(--warn);background:var(--warn-bg)}
+  /* Nästa station överst i Info (panelen syns inte där); tryck går till Stationer. Inte liggande: där syns panelen. */
+  .info-next{position:sticky;top:0;z-index:2;display:block;width:100%;min-height:2.4rem;margin:0;padding:.4rem .7rem;border:0;border-bottom:1px solid var(--b);border-radius:0;background:var(--bg);color:var(--ink);font-size:.9rem;font-weight:600;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+  .info-next[hidden]{display:none}
+  .foot-upd{float:right;font-weight:400;color:var(--mut);font-variant-numeric:tabular-nums}
+  .ir-s .mut{color:var(--mut);font-weight:500}
   .info-row{display:grid;grid-template-columns:2.9rem minmax(0,1fr) auto;gap:.5rem;align-items:center;padding:.35rem .7rem .35rem calc(.7rem - 3px);border-left:3px solid transparent;border-top:1px solid var(--b)}
   .info-row.l1{border-left-color:var(--warn)}
   .info-row.l2{border-left-color:var(--err);background:rgba(239,68,68,.07)}
   .ir-t{font-variant-numeric:tabular-nums;font-weight:600;font-size:.92rem}
   .ir-txt{min-width:0}
   .ir-txt b{display:block;font-size:.95rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ir-txt small{display:block;font-size:.72rem;color:var(--mut);font-variant-numeric:tabular-nums}
+  .ir-txt small{display:block;font-size:.8rem;color:var(--mut);font-variant-numeric:tabular-nums}
   .ir-s{text-align:right;font-size:.82rem;font-weight:600;white-space:nowrap;line-height:1.25;font-variant-numeric:tabular-nums}
-  .ir-s small{display:block;font-weight:400;color:var(--mut);font-size:.7rem}
+  .ir-s small{display:block;font-weight:400;color:var(--mut);font-size:.75rem}
   .info-empty{padding:.4rem .7rem .5rem;font-size:.8rem;color:var(--mut)}
   .info-stop{padding:.35rem .7rem .2rem;font-size:.78rem;font-weight:600;color:var(--ink-dim);border-top:1px solid var(--b);font-variant-numeric:tabular-nums}
   .info-state{padding:.6rem .7rem;font-size:.85rem;color:var(--ink-dim)}
-  .info-foot{font-size:.72rem;color:var(--mut);padding:.5rem .7rem;margin:0;border-top:1px solid var(--b)}
+  .info-foot{font-size:.8rem;color:var(--mut);padding:.5rem .7rem;margin:0;border-top:1px solid var(--b)}
   details.info-foot{border:0;border-top:1px solid var(--b);border-radius:0;background:none;margin:0}
   .info-foot summary{cursor:pointer;font-size:.78rem;font-weight:500;color:var(--ink-dim);padding:.15rem 0}
   .info-foot summary::before{content:none}
@@ -260,13 +289,13 @@
   .conn-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .5rem;padding:.5rem .7rem .35rem;border-top:1px solid var(--b)}
   .cc-label{font-size:.68rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-right:.1rem}
   .seg{display:inline-flex;border:1px solid var(--b);border-radius:8px;overflow:hidden}
-  .seg button{border:0;border-radius:0;margin:0;padding:.3rem .65rem;min-height:2.1rem;font-size:.88rem;background:transparent;color:var(--ink-dim)}
+  .seg button{border:0;border-radius:0;margin:0;padding:.3rem .75rem;min-height:2.75rem;font-size:.88rem;background:transparent;color:var(--ink-dim)}
   /* Mina anslutningar: märket på en egen anslutning med de andra valen, och raderna i inställningarna */
-  .own-tag{display:inline-block;margin-left:.3rem;padding:0 .35rem;border:1px solid var(--pri);border-radius:999px;color:var(--pri);font-size:.68rem;font-weight:600;line-height:1.35;vertical-align:.12em}
+  .own-tag{display:inline-block;margin-left:.3rem;padding:0 .35rem;border:1px solid var(--pri);border-radius:999px;color:var(--pri);font-size:.75rem;font-weight:600;line-height:1.35;vertical-align:.12em}
   .own-row .ghost.sm{flex:none}
   .own-sum{color:var(--ink)}
   .seg button+button{border-left:1px solid var(--b)}
-  .seg button[aria-pressed="true"]{background:rgba(34,197,94,.16);color:var(--pri);font-weight:600}
+  .seg button[aria-pressed="true"]{background:var(--b-light);color:var(--ink);font-weight:600}
   .seg button:disabled{opacity:.4}
   .cc-alerts{padding:.25rem .6rem;min-height:2.1rem;font-size:.75rem;margin:0}
   .cc-alerts{color:var(--ink-dim);background:transparent}
@@ -275,10 +304,11 @@
   .info-hint a, .info-hint button.linkish{color:var(--pri)}
   .linkish{background:none;border:0;padding:0;margin:0;min-height:0;font:inherit;text-decoration:underline;cursor:pointer}
   .sec-note{text-transform:none;letter-spacing:0;font-weight:500;color:var(--ink-dim)}
-  /* ☆ markerad anslutning (resenärer ska byta) och förslaget att ringa trafikledningen */
-  .conn-row{cursor:pointer}
-  .conn-row .star{display:inline-block;width:1.15em;color:var(--mut);font-weight:400}
-  .conn-row.marked .star{color:var(--warn)}
+  /* ☆ är en egen knapp till vänster i raden (resenärer byter här – bevaka), 44 px */
+  .conn-row{grid-template-columns:2.4rem 2.6rem minmax(0,1fr) auto;gap:.35rem;padding-left:calc(.35rem - 3px)}
+  .star-btn{width:2.4rem;height:2.75rem;min-height:0;padding:0;margin:0;border:0;border-radius:8px;background:transparent;color:var(--mut);font-size:1.25rem;line-height:1}
+  .star-btn[aria-pressed="true"]{color:var(--warn)}
+  .star-btn:hover:not(:disabled){background:var(--b)}
   .info-row.action .ir-t{font-size:1.1rem;text-align:center}
   .info-row.action b{white-space:normal}
   #vtTestResult.ok{color:var(--pri)}
@@ -292,7 +322,7 @@
   }
   .card:last-child{border-bottom:none}
   .card.active{border-left-color:var(--pri);background:rgba(34,197,94,.07)}
-  .card.at-station{border-left-color:var(--sec);background:rgba(245,158,11,.08)}
+  .card.at-station{border-left-color:var(--ink);background:rgba(232,234,237,.06)}
   /* Passerade stationer tonas ner – men inte den utfällda delen, så att den går att läsa och rätta */
   .card.done .card-header{opacity:.5}
   .card-header{cursor:pointer}
@@ -300,12 +330,12 @@
   .st-num{color:var(--mut);font-size:.8rem;font-variant-numeric:tabular-nums}
   .st-name{min-width:0}
   .st-name b{display:block;font-size:1rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .st-name small{display:block;font-size:.72rem;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+  .st-name small{display:block;font-size:.78rem;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
   .card.active .st-name small{color:var(--pri)}
-  .card.at-station .st-name small{color:var(--sec)}
+  .card.at-station .st-name small{color:var(--ink)}
   .st-t{text-align:right;font-variant-numeric:tabular-nums;line-height:1.2;white-space:nowrap}
   .st-t b{display:block;font-size:.92rem;font-weight:600}
-  .st-t i{display:block;font-style:normal;font-size:.72rem;color:var(--mut)}
+  .st-t i{display:block;font-style:normal;font-size:.75rem;color:var(--mut)}
   .st-t.plan b{font-weight:400;color:var(--ink-dim)}
   .dl-live{color:var(--good)!important}
   .dl-early{color:var(--blue)!important}
@@ -364,7 +394,7 @@
   /* Versionen och Uppdatera app överst i menyn, så att de syns utan att rulla; tryck på versionen söker ny version */
   .header-menu-dropdown .menu-version{color:var(--mut);font-size:.8rem;font-variant-numeric:tabular-nums}
   .header-menu-dropdown .menu-update{color:var(--pri);font-weight:700}
-  .menu-version small{display:block;font-size:.7rem;color:var(--mut);opacity:.8}
+  .menu-version small{display:block;font-size:.75rem;color:var(--mut);opacity:.8}
   .header-menu-dropdown{min-width:270px;border-radius:10px}
   .header-menu-dropdown > button{padding:.75rem .9rem;font-size:.95rem}
   .header-menu-dropdown > .menu-version{padding:.55rem .9rem;font-size:.8rem}
@@ -484,7 +514,9 @@
   .scheduled{font-size:.8rem;color:var(--ink-dim);margin:.15rem 0 0}
 
   /* ── Resvyn: hela skärmen utan sidscroll, bara stationslistan scrollar ── */
-  body.journey-mode{display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
+  /* position:fixed med inset:0 i stället för 100dvh: i hemskärmsappen på iPhone (black-translucent) blev 100dvh
+     inte hela skärmen, och det blev ett tomt fält under listan (2026-11-26f). */
+  body.journey-mode{display:flex;flex-direction:column;position:fixed;inset:0;height:auto;min-height:0;overflow:hidden}
   body.journey-mode header{flex:none}
   body.journey-mode main{flex:1 1 auto;min-height:0;width:100%;padding:.45rem .5rem calc(.45rem + env(safe-area-inset-bottom, 0px))}
   #journey{
@@ -493,9 +525,21 @@
     gap:.45rem;
     height:100%;
   }
-  .journey-head{flex:none;display:flex;align-items:center;gap:.5rem;min-width:0}
+  /* Resans rad ligger i appens rubrik (2026-11-26f): 🚂 Tåg 3344 → Hällekis [Avsluta] ⋮. Hela texten står i
+     #journeyTitle, som är dold. "GPS aktiv" är det normala och visas inte under resan; "GPS saknas" syns. */
+  .journey-head{display:none}
+  .header-trip{flex:1 1 auto;min-width:0;font-size:.98rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  body:not(.journey-mode) .header-trip, body:not(.journey-mode) #btnFinishTop{display:none}
+  body.journey-mode header{padding:.2rem .4rem;padding-top:calc(.2rem + env(safe-area-inset-top, 0px));padding-left:calc(.4rem + env(safe-area-inset-left, 0px));padding-right:calc(.4rem + env(safe-area-inset-right, 0px))}
+  body.journey-mode header .bar{flex-wrap:nowrap}
+  body.journey-mode header .header-spacer{display:none}
+  body.journey-mode h1 .brand{font-size:0;min-width:2.75rem;min-height:2.75rem;padding:0;justify-content:center}
+  body.journey-mode h1 .brand::before{font-size:1.3rem}
+  body.journey-mode h1 .brand .home-hint{display:none}
+  body.journey-mode #gpsStatusBadge.live{display:none}
+  body.journey-mode .header-menu-btn{min-width:2.75rem;min-height:2.75rem;font-size:1.25rem;padding:0}
   .journey-title{flex:1 1 auto;min-width:0;font-size:.78rem;font-weight:500;color:var(--ink-dim);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .journey-end{flex:none;min-height:2rem;padding:.2rem .75rem;font-size:.8rem;border-radius:999px;white-space:nowrap}
+  .journey-end{flex:none;min-height:2.75rem;padding:.3rem .9rem;font-size:.9rem;border-radius:999px;white-space:nowrap}
   .journey-end.confirm{border-color:var(--warn);color:var(--warn);font-weight:600}
   .journey-end.pulse{animation:endPulse 1s ease-in-out 2}
   @keyframes endPulse{50%{border-color:var(--pri);color:var(--pri);box-shadow:0 0 0 3px var(--pri-glow)}}
@@ -509,25 +553,27 @@
     padding:.55rem .75rem .5rem;
     background:var(--card-bg);
   }
-  .next-panel.at-station{border-color:var(--sec)}
+  .next-panel.at-station{border-color:var(--ink-dim)}
   .np-top{display:flex;align-items:flex-end;justify-content:space-between;gap:.75rem}
   .np-where{min-width:0}
-  .next-label{font-size:.7rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
-  .next-panel.at-station .next-label{color:var(--sec)}
+  .next-label{font-size:.75rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  .next-panel.at-station .next-label{color:var(--ink)}
   .next-name{font-size:1.55rem;font-weight:700;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .np-dist{flex:none;text-align:right;font-variant-numeric:tabular-nums}
   .next-big{display:block;font-size:1.55rem;font-weight:700;line-height:1.15;color:var(--ink)}
-  .next-sub{display:block;font-size:.68rem;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .next-sub{display:block;font-size:.75rem;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .np-grid{
     display:grid;
-    grid-template-columns:repeat(4,minmax(0,1fr));
+    grid-template-columns:repeat(3,minmax(0,1fr));
     gap:.4rem;
     margin-top:.45rem;
     padding-top:.4rem;
     border-top:1px solid var(--b);
     font-variant-numeric:tabular-nums;
   }
-  .np-val{display:block;font-size:1.05rem;font-weight:600;line-height:1.25;white-space:nowrap}
+  .np-val{display:block;font-size:1.2rem;font-weight:600;line-height:1.25;white-space:nowrap}
+  .next-sub.warn{color:var(--warn)}
+  .np-gps[hidden]{display:none}
   /* En rad om läget framåt (från infofliken); tryck öppnar fliken */
   /* Mät tidtabell | Bara info i startformuläret; i Bara info döljs förarens saker */
   .purpose-seg{display:flex;width:100%;margin:.1rem 0 .35rem}
@@ -537,7 +583,7 @@
   .recent-chips{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem;margin:.1rem 0 .45rem}
   .recent-chips[hidden]{display:none}
   .recent-chips .rc-label{font-size:.8rem;color:var(--ink-dim);margin-right:.1rem}
-  .recent-chips button{min-height:2.2rem;padding:.3rem .75rem;font-size:.85rem;border-radius:999px;background:transparent;border:1px solid var(--b-light,#3d4149);color:var(--ink)}
+  .recent-chips button{min-height:2.75rem;padding:.3rem .75rem;font-size:.85rem;border-radius:999px;background:transparent;border:1px solid var(--b-light,#3d4149);color:var(--ink)}
   #journey.info-only #npHalt, #journey.info-only .halt-row{display:none !important}
   /* Var är tåget? (2026-11-26d): ett tåg man inte är på. Förarens saker och mätningens knappar behövs inte. */
   #journey.follow-only #npHalt, #journey.follow-only .halt-row, #journey.follow-only .manual-actions,
@@ -548,6 +594,12 @@
   .np-source b{color:var(--ink);font-weight:600}
   .np-source .src-gps{color:var(--blue)}
   .np-source .src-warn{color:var(--warn)}
+  /* Med tågets GPS en rad i Var är tåget?; tryck visar allt */
+  .np-source.collapsible{cursor:pointer}
+  .np-source .src-sep{display:none}
+  .np-source.collapsed{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .np-source.collapsed br{display:none}
+  .np-source.collapsed .src-sep{display:inline}
   .st-t.trv b{color:var(--ink)}
   .st-t.ca b{font-style:italic}
   .np-halt{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;margin-top:.45rem;padding-top:.45rem;border-top:1px solid var(--b)}
@@ -555,9 +607,17 @@
   .np-halt-q{color:var(--ink-dim);font-size:.82rem;margin-right:.1rem}
   .np-halt button{padding:.45rem .75rem;font-size:.85rem;border-radius:999px;background:transparent;border:1px solid var(--b-light,#3d4149);color:var(--ink)}
   .np-halt button[aria-pressed="true"]{background:var(--warn,#f59e0b);border-color:var(--warn,#f59e0b);color:#000;font-weight:600}
-  .np-info{display:block;width:100%;margin-top:.4rem;padding:.35rem 0 0;border:none;border-top:1px solid var(--b);border-radius:0;background:transparent;color:var(--ink-dim);font-size:.82rem;font-weight:500;line-height:1.3;text-align:left;max-height:calc(2.6em + .35rem);overflow:hidden;font-variant-numeric:tabular-nums}
-  .np-info.l1{color:var(--warn)}
-  .np-info.l2{color:var(--err)}
+  /* Info-raden i panelen: alltid en rad, ser ut som en knapp. Färgen sitter i pricken och kanten; texten är vit,
+     som läses lättare i sol än gul text (2026-11-26f). */
+  .np-info{display:flex;align-items:center;gap:.45rem;width:100%;min-height:2.6rem;margin-top:.45rem;padding:0 .6rem;border:1px solid var(--b);border-radius:8px;background:transparent;color:var(--ink);font-size:.9rem;font-weight:500;line-height:1.3;text-align:left;white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums}
+  .np-info[hidden]{display:none}
+  .np-info::before{content:'';flex:none;width:.55rem;height:.55rem;border-radius:50%;background:var(--pri)}
+  .np-info::after{content:'›';flex:none;margin-left:auto;padding-left:.4rem;font-size:1.25rem;color:var(--ink-dim)}
+  .np-info .npi-text{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .np-info.l1{background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.5)}
+  .np-info.l1::before{background:var(--warn)}
+  .np-info.l2{background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.6)}
+  .np-info.l2::before{background:var(--err)}
   .np-info:hover:not(:disabled),.view-tabs button:hover:not(:disabled){background:transparent}
   #journeyMsg{
     position:fixed;
@@ -571,7 +631,7 @@
     box-shadow:0 6px 18px rgba(0,0,0,.55);
   }
   .journey-actions{display:flex;gap:.5rem;padding:.75rem .6rem}
-  .journey-actions button{flex:1;min-height:2.6rem;font-size:.9rem}
+  .journey-actions button{flex:1;min-height:2.75rem;font-size:.9rem}
 
   /* Kort meddelande längst ner på skärmen */
   .toast{
@@ -674,9 +734,9 @@
   #routeMap{height:clamp(130px, 25vh, 280px);width:100%}
   #routeMap svg{display:block;width:100%;height:100%}
   .map-tools{position:absolute;top:.35rem;right:.35rem;display:flex;gap:.25rem}
-  .map-tools button{padding:.2rem .55rem;font-size:.75rem;background:rgba(13,15,18,.85);color:var(--ink-dim)}
-  .map-tools button[aria-pressed="true"]{color:var(--pri);border-color:var(--pri)}
-  .map-note{position:absolute;left:.35rem;bottom:.3rem;font-size:.65rem;color:var(--mut);pointer-events:none;background:rgba(20,23,28,.8);padding:0 .3rem;border-radius:3px}
+  .map-tools button{min-height:2.5rem;min-width:2.75rem;padding:.3rem .8rem;font-size:.85rem;background:rgba(13,15,18,.85);color:var(--ink-dim)}
+  .map-tools button[aria-pressed="true"]{color:var(--ink);border-color:var(--ink-dim);background:rgba(61,65,73,.95)}
+  .map-note{position:absolute;left:.35rem;bottom:.3rem;font-size:.72rem;color:var(--mut);pointer-events:none;background:rgba(20,23,28,.8);padding:0 .3rem;border-radius:3px}
   .map-note:empty{display:none}
   .map-note a{pointer-events:auto;color:var(--mut)}
   .map-show{display:none;width:100%;border:none;border-radius:0;background:transparent;color:var(--ink-dim);font-size:.8rem;padding:.4rem}
@@ -697,9 +757,10 @@
       grid-template-rows:auto auto minmax(0,1fr);
       gap:.45rem .6rem;
     }
-    .journey-head{grid-column:1;grid-row:1;align-self:center}
+    #tabMap{display:none}
+    .info-next{display:none !important}
     .view-tabs{grid-column:2;grid-row:1}
-    .next-panel{grid-column:1;grid-row:2}
+    .next-panel{grid-column:1;grid-row:1 / span 2;align-self:start}
     #routeMapContainer{grid-column:1;grid-row:3;min-height:0}
     #routeMapContainer:not(.collapsed){display:flex;flex-direction:column}
     #routeMapContainer:not(.collapsed) #routeMap{flex:1;height:auto;min-height:0}
@@ -710,7 +771,7 @@
     #journey.show-info #routeMapContainer:not(.collapsed){display:flex}
   }
   @media (orientation:landscape) and (max-height:540px){
-    .view-tabs button{min-height:2rem;padding:.2rem .5rem}
+    .view-tabs button{min-height:2.5rem;padding:.2rem .5rem}
     header{padding:.3rem .75rem}
     header h1{font-size:.95rem}
     .next-name,.next-big{font-size:1.25rem}
@@ -769,9 +830,11 @@
 <header>
   <div class="bar header-row">
     <h1><button type="button" id="btnHome" class="brand" title="Till startsidan">RailTimer<span class="home-hint" id="homeHint" hidden>Start</span></button></h1>
+    <span id="headerTrip" class="header-trip"></span>
     <span id="offlineIndicator" class="badge warn" style="display:none" role="status" aria-live="polite">Offline</span>
     <span class="header-spacer"></span>
     <span id="gpsStatusBadge" class="badge">GPS</span>
+    <button type="button" id="btnFinishTop" class="ghost journey-end">Avsluta</button>
     <div class="header-menu">
       <button id="btnMoreMenu" class="ghost header-menu-btn" aria-label="Meny" aria-haspopup="true" aria-expanded="false">⋮</button>
       <!-- Kort meny: det som används ofta. Det som ställs in en gång ligger under Inställningar (#prefs). -->
@@ -815,7 +878,7 @@
         <input id="trainNumber" type="text" inputmode="numeric" autocomplete="off" placeholder="OTN eller ATN, t.ex. 23349">
       </div>
       <div class="form-group grow" id="vehicleGroup">
-        <label for="vehicleType">Fordonstyp *</label>
+        <label for="vehicleType">Fordonstyp</label>
         <select id="vehicleType" required>
           <option value="">Välj fordonstyp...</option>
           <optgroup label="Motorvagnar">
@@ -895,7 +958,7 @@
       <textarea id="startNotes" rows="2" aria-label="Anteckning till rapporten" placeholder="Till exempel väglag eller avvikande fordon"></textarea>
     </details>
     <span id="setupError" class="badge warn" style="display:none"></span>
-    <button id="btnStart" class="primary btn-start">Starta GPS-resan</button>
+    <button id="btnStart" class="primary btn-start">Starta mätningen</button>
     <div id="autoStartStatus" class="auto-start" role="status" aria-live="polite" hidden></div>
     <div id="gpsWarmStatus" class="hint gps-warm" style="display:none"></div>
   </section>
@@ -903,10 +966,10 @@
   <section id="journey" style="display:none">
     <div class="journey-head">
       <h2 id="journeyTitle" class="journey-title">Aktiv resa</h2>
-      <button type="button" id="btnFinishTop" class="ghost journey-end">Avsluta</button>
     </div>
     <div class="view-tabs" role="tablist">
       <button type="button" role="tab" id="tabStations" aria-selected="true" aria-controls="stationList">Stationer</button>
+      <button type="button" role="tab" id="tabMap" aria-selected="false" aria-controls="routeMapContainer">Karta</button>
       <button type="button" role="tab" id="tabInfo" aria-selected="false" aria-controls="infoView">Info<span class="tab-count" id="infoCount" hidden></span></button>
     </div>
     <div class="next-panel" id="nextPanel">
@@ -920,8 +983,8 @@
       <div class="np-grid">
         <div><span class="np-val" id="nextValue2">–</span><span class="next-sub" id="nextSub2">ankomst plan</span></div>
         <div><span class="np-val" id="nextCountdown">–</span><span class="next-sub" id="nextCountdownSub">till plan</span></div>
-        <div><span class="np-val" id="nextDelay">–</span><span class="next-sub">avvikelse</span></div>
-        <div><span class="np-val" id="gpsSpeed">–</span><span class="next-sub" id="gpsAccuracy">väntar på GPS</span><span id="gpsExtra" hidden></span></div>
+        <div><span class="np-val" id="nextDelay">–</span><span class="next-sub">mot tidtabell</span></div>
+        <div class="np-gps" hidden><span class="np-val" id="gpsSpeed">–</span><span class="next-sub" id="gpsAccuracy">väntar på GPS</span><span id="gpsExtra" hidden></span></div>
       </div>
       <div class="np-source" id="npSource" role="status" hidden></div>
       <button type="button" class="np-info" id="npInfo" hidden></button>
@@ -951,6 +1014,7 @@
       </div>
     </div>
     <div class="station-list info-view" id="infoView" role="tabpanel" aria-labelledby="tabInfo">
+      <button type="button" class="info-next" id="infoNext" hidden></button>
       <div id="infoPane" class="info-pane"></div>
     </div>
   </section>
@@ -994,6 +1058,7 @@
       <button id="btnAutoStart" class="menu-toggle row-btn" aria-pressed="true"><span class="rb-txt">Starta när tåget rullar<small>När start och slut är ifyllda i startformuläret</small></span><span class="toggle-state">På</span></button>
       <button id="btnWakeLock" class="menu-toggle row-btn" aria-pressed="false"><span class="rb-txt">Håll skärmen vaken jämt<small>Under resan hålls den vaken ändå</small></span><span class="toggle-state">Av</span></button>
       <button id="btnTextSize" class="menu-toggle row-btn" aria-pressed="false"><span class="rb-txt">Stor text</span><span class="toggle-state">Av</span></button>
+      <button id="btnConnAlerts" class="menu-toggle row-btn" aria-pressed="true"><span class="rb-txt">Varna bara för byten som visas<small>Med valet Tåg, Buss, Båda eller Mina i Info. Av: varnar för alla byten, även dolda</small></span><span class="toggle-state">På</span></button>
     </div>
     <h3 class="group-title">Uppladdning och anslutningar</h3>
     <div class="group">
@@ -1137,7 +1202,7 @@
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-26e'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-26f'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -1936,8 +2001,22 @@
     els.cards.addEventListener('change', handleCardChange);
     // Infofliken
     document.getElementById('tabStations').addEventListener('click', () => setInfoTab('stations'));
+    document.getElementById('tabMap').addEventListener('click', () => setInfoTab('map'));
     document.getElementById('tabInfo').addEventListener('click', () => setInfoTab('info'));
     document.getElementById('npInfo').addEventListener('click', () => setInfoTab('info'));
+    document.getElementById('infoNext').addEventListener('click', () => setInfoTab('stations'));
+    document.getElementById('npSource').addEventListener('click', () => {
+      followState.srcOpen=!followState.srcOpen;
+      renderFollowSource();
+    });
+    // Telefonen vrids: Karta finns bara som flik stående; liggande står kartan alltid till vänster
+    try{
+      window.matchMedia(WIDE_QUERY).addEventListener('change', () => {
+        if(!state.running) return;
+        if(infoState.tab==='map' && wideLayout()) setInfoTab('stations');
+        else{ applyMapSettings(); renderRouteMap(true); }
+      });
+    }catch(e){}
     document.getElementById('npSlideIn').addEventListener('click', () => {
       const idx=currentStationIndex();
       if(idx!=null) setHalt(idx, 'slideIn', !state.route[idx].slideIn);
@@ -1995,6 +2074,11 @@
 
     // Sound and text size toggles
     document.getElementById('btnSound').addEventListener('click', toggleSound);
+    document.getElementById('btnConnAlerts').addEventListener('click', () => {
+      saveConnSettings({ alerts: connSettings().alerts===false });
+      setMenuToggle(document.getElementById('btnConnAlerts'), connSettings().alerts!==false);
+      if(state.running) updateInfo();
+    });
     document.getElementById('btnTextSize').addEventListener('click', toggleLargeText);
     document.getElementById('btnSpeech').addEventListener('click', toggleSpeech);
     document.getElementById('btnAutoStart').addEventListener('click', toggleAutoStart);
@@ -2149,9 +2233,11 @@
     if(purpose()==='follow') stopGpsWarmup();
     else if(wantsGpsWarmup()) startGpsWarmup();
   }
+  // Kort förklaring under valen (2026-11-26f)
   const PURPOSE_HINT = {
-    info:'GPS:en följer tåget och Info visar läget framåt. Inget sparas som mätning. Svarar inte GPS:en följer Trafikverket tåget.',
-    follow:'Ett tåg du inte är på – din GPS används inte. Trafikverket visar var tåget är. Slutstation: där du tar över, eller tomt för hela vägen.'
+    measure:'Mäter ankomst och avgång med telefonens GPS. Sparas.',
+    info:'Möten, prognos och byten för tåget du är på. Inget sparas.',
+    follow:'Följ ett tåg du inte är på – din GPS används inte. Slutstation: där du tar över, eller tomt för hela vägen.'
   };
   function renderPurpose(){
     const p=purpose(), info=p==='info', follow=p==='follow';
@@ -2185,7 +2271,7 @@
   }
   function startButtonText(){
     const p=purpose();
-    return p==='follow' ? 'Visa var tåget är' : (p==='info' ? 'Starta Bara info' : 'Starta GPS-resan');
+    return p==='follow' ? 'Visa var tåget är' : (p==='info' ? 'Starta resan' : 'Starta mätningen');
   }
   function loadInfoTrips(){
     try{ const v=JSON.parse(localStorage.getItem(STORAGE_KEY_INFO_TRIPS)||'[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; }
@@ -2262,7 +2348,7 @@
       });
 
       document.getElementById('btnStart').disabled = false;
-      document.getElementById('btnStart').textContent = infoOnly ? 'Starta Bara info' : 'Starta GPS-resan';
+      document.getElementById('btnStart').textContent = startButtonText();
 
       if(timetableResult.success && timetableResult.stationStops && timetableResult.stationStops.length > 0){
         // Build route from timetable - get all stations between start and end
@@ -2290,7 +2376,7 @@
     if(auto) lastAutoFix=applyAutoStart(auto);
     hideSetupError();
     showView('journey');
-    els.journeyTitle.textContent=journeyTitleText();
+    setJourneyTitle();
     els.journeyMsg.style.display='none';
     expandedCards.clear();
     renderedRouteKey='';
@@ -2382,7 +2468,7 @@
     state.awaitingDepartureIndex=0; // tills Trafikverket säger något annat: vid (eller på väg till) startstationen
     hideSetupError();
     showView('journey');
-    els.journeyTitle.textContent=journeyTitleText();
+    setJourneyTitle();
     els.journeyMsg.style.display='none';
     expandedCards.clear();
     renderedRouteKey='';
@@ -2414,7 +2500,7 @@
   }
   function startFollow(memo){
     stopFollow();
-    Object.assign(followState, { busy:false, pos:null, fetchedAt:null, error:null, off:false, res:null, axis:null, axisKey:'', memo:memo||null });
+    Object.assign(followState, { busy:false, pos:null, fetchedAt:null, error:null, off:false, res:null, axis:null, axisKey:'', memo:memo||null, scrolled:false });
     applyFollowNow();
     startFollowTimer();
   }
@@ -2522,6 +2608,7 @@
   const ownSource = src => src==='gps' || src==='manual';
   function applyFollowResult(res, gentle){
     const n=state.route.length;
+    const before=`${state.awaitingDepartureIndex}/${state.nextIndex}`;
     res.stations.forEach((f, i)=>{
       const st=state.route[i];
       if(!ownSource(st.arrivalSource)){
@@ -2545,6 +2632,11 @@
     }
     const ref=at!=null ? at : next;
     if(ref!=null && state.route[ref]) state.route[ref].lastSeenDistance=res.distM;
+    // Listan visar nästa station när den ändras, och första gången (2026-11-26f)
+    if(before!==`${state.awaitingDepartureIndex}/${state.nextIndex}` || !followState.scrolled){
+      followState.scrolled=true;
+      scrollToNextStation(false);
+    }
   }
 
   // Bara info och Mät tidtabell: följer GPS:en inte med (nekad, ingen position eller dålig noggrannhet i 45 s) tar
@@ -2671,7 +2763,7 @@
       else if(r.est && r.est.by==='plan' && r.est.behind) parts.push(`Inga rapporter sedan dess. Enligt tidtabellen${r.est.delayMin?` och förseningen`:''} bör tåget nu vara mellan ${name(r.est.idx-1)} och ${name(r.est.idx)}.`);
       else if(r.between) parts.push(`Någonstans mellan ${name(r.between[0])} och ${name(r.between[1])} – var exakt syns inte i rapporterna.`);
     }
-    return parts.join('<br>');
+    return parts.join('<span class="src-sep"> · </span><br>');
   }
   function renderFollowSource(){
     const el=document.getElementById('npSource');
@@ -2680,7 +2772,12 @@
     el.hidden=!on;
     if(!on) return;
     const r=followState.res;
-    el.innerHTML = r ? followSourceHtml(r) : 'Hämtar var tåget är från Trafikverket…';
+    const html = r ? followSourceHtml(r) : 'Hämtar var tåget är från Trafikverket…';
+    if(el.innerHTML!==html) el.innerHTML=html;
+    // Med tågets GPS räcker en rad (tryck visar allt). Utan den är texten svaret på frågan och visas hel.
+    const gps=!!(r && r.pos && r.pos.used) && state.purpose==='follow';
+    el.classList.toggle('collapsible', gps);
+    el.classList.toggle('collapsed', gps && !followState.srcOpen);
     // Fart och källa i panelens fjärde ruta, när Trafikverket följer tåget i stället för telefonens GPS
     if(state.purpose==='follow' || !currentFix() || (currentFix() && currentFix().trv)){
       const P=r && r.pos && r.pos.used ? r.pos : null;
@@ -2791,7 +2888,7 @@
     state.storageWarned=false;
     state.prunedAtStart=prunedIds.size;
     startTrack(state.journeyId);
-    if(els.journeyTitle) els.journeyTitle.textContent=journeyTitleText();
+    setJourneyTitle();
   }
 
   /* ── Startsidan (2026-11-26e) ──
@@ -2829,7 +2926,9 @@
       item.textContent = state.running && state.purpose==='follow' ? '⌂ Startsidan – sluta följa tåget' : (lockedJourney ? '⌂ Tillbaka till resan' : '⌂ Startsidan');
     }
     const follow = state.running ? state.purpose==='follow' : (currentView==='setup' && purpose()==='follow');
-    if(els.gpsStatusBadge) els.gpsStatusBadge.style.display = follow ? 'none' : '';
+    // GPS-märket: inte i Var är tåget? (telefonens GPS används inte) och inte på startsidan, där GPS-läget står
+    // under Start-knappen (2026-11-26f). Under resan syns det bara när något är fel (CSS: .live döljs).
+    if(els.gpsStatusBadge) els.gpsStatusBadge.style.display = follow || currentView==='setup' ? 'none' : '';
   }
   /* Avsluta överst i resvyn. Var är tåget? slutar följa direkt (inget sparas). Mät tidtabell och Bara info kräver
      ett andra tryck inom 4 s, så att resan inte avslutas av misstag. */
@@ -3268,7 +3367,7 @@
     if(r){
       const dep=autoPlannedDeparture(r);
       el.innerHTML=`Startar av sig själv när tåget rullar från ${escapeHtml(r.start.name)}` +
-        `<small>${dep?`Avgång ${formatClock(dep)} · `:''}Du kan också trycka Starta. Stängs av under ⋮ → Inställningar.</small>`;
+        (dep ? `<small>Avgång ${formatClock(dep)}</small>` : '');
     }
     renderNextTourCard();
     keepAwakeWhileArmed(!!r);
@@ -3791,12 +3890,14 @@
   function scrollToNextStation(immediate){
     const list=document.getElementById('stationList');
     const idx=currentStationIndex()!=null ? currentStationIndex() : state.nextIndex;
-    if(!list || idx==null || infoState.tab==='info') return;
+    if(!list || idx==null || infoState.tab!=='stations') return;
     const go=()=>{
       const card=els.cards.children[idx];
       if(!card) return;
       const head=list.querySelector('.list-head');
-      const top=card.offsetTop - (head?head.offsetHeight:0) - Math.max(0, (list.clientHeight - card.offsetHeight)/3);
+      // Stationen som andra rad, med den förra ovanför (2026-11-26f)
+      const prev=card.previousElementSibling;
+      const top=card.offsetTop - (head?head.offsetHeight:0) - (prev ? prev.offsetHeight : 0);
       list.scrollTo({ top:Math.max(0, top), behavior:immediate?'auto':'smooth' });
     };
     if(immediate) go(); else setTimeout(go, 400);
@@ -3921,14 +4022,54 @@
     }
   }
 
+  /* Panelen (2026-11-26f): tre värden (plan, tid kvar, mot tidtabell). Farten står under avståndet ("kvar · 72 km/h"),
+     och GPS-noggrannheten bara när den är sämre än ±30 m. ±1 min är i tid. */
   function updateNextStopUI(){
     if(!els.nextPanel) return;
+    updateNextStopPanel();
+    updateInfoNext();
+  }
+  const PANEL_POOR_ACCURACY_M = 30;
+  // Farten (och dålig noggrannhet) efter "kvar": telefonens GPS, eller tågets position när Trafikverket följer tåget
+  function speedSuffix(){
+    const fix=currentFix();
+    if(!fix) return null;
+    if(fix.trv){
+      const P=followState.res && followState.res.pos;
+      return P && P.speedKmh!=null ? { text:`${Math.round(P.speedKmh)} km/h` } : null;
+    }
+    if(fix.acc!=null && fix.acc>PANEL_POOR_ACCURACY_M) return { text:`GPS ±${Math.round(fix.acc)} m`, warn:true };
+    const v=state.lastSpeed;
+    return v!=null && isFinite(v) ? { text:`${Math.round(v*3.6)} km/h` } : null;
+  }
+  function setNextSub1(base){
+    const sfx = base==='kvar' ? speedSuffix() : null;
+    els.nextSub1.textContent = sfx ? `${base} · ${sfx.text}` : base;
+    els.nextSub1.classList.toggle('warn', !!(sfx && sfx.warn));
+  }
+  // Raden överst i Info: nästa station, så att den som bara har Info framme ser den (tryck: Stationer)
+  function updateInfoNext(){
+    const el=document.getElementById('infoNext');
+    if(!el) return;
+    const on=state.running && infoState.tab==='info' && state.route && state.route.length>1;
+    el.hidden=!on;
+    if(!on) return;
+    const v=x=>x && x!=='–' ? x : '';
+    const name=els.nextStop.textContent;
+    const delay=v(document.getElementById('nextDelay').textContent);
+    const text = currentStationIndex()!=null
+      ? [`Vid ${name}`, v(els.nextValue2.textContent) ? `avgång ${els.nextValue2.textContent}` : '', delay].filter(Boolean).join(' · ')
+      : state.nextIndex==null ? name
+      : [`${els.nextLabel.textContent==='Nästa enligt tidtabellen' ? 'Nästa enligt tidtabellen' : 'Nästa'}: ${name} ${v(els.nextValue2.textContent)}`.trim(), delay, v(els.nextValue1.textContent)].filter(Boolean).join(' · ');
+    if(el.textContent!==text) el.textContent=text;
+  }
+  function updateNextStopPanel(){
     updateHaltButtons();
     const cd=document.getElementById('nextCountdown');
     const cdSub=document.getElementById('nextCountdownSub');
     const delayEl=document.getElementById('nextDelay');
     const delay=currentDelay();
-    setPanelCell(delayEl, null, delay?delay.text:'–', null, delay?'dl-'+delay.cls:'');
+    setPanelCell(delayEl, null, delay?(delay.cls==='live'?'I tid':delay.text):'–', null, delay?'dl-'+delay.cls:'');
 
     const atIdx=currentStationIndex();
     els.nextPanel.classList.toggle('at-station', atIdx!=null);
@@ -3940,13 +4081,13 @@
       els.nextStop.textContent=st.name;
       if(fr && fr.approaching && st.lastSeenDistance!=null){
         els.nextValue1.textContent=formatDistance(st.lastSeenDistance);
-        els.nextSub1.textContent='kvar';
+        setNextSub1('kvar');
       }else if(st.actualArrival){
         els.nextValue1.textContent=formatDuration((Date.now()-new Date(st.actualArrival))/1000);
-        els.nextSub1.textContent='uppehåll';
+        setNextSub1('uppehåll');
       }else{
         els.nextValue1.textContent=st.lastSeenDistance!=null?formatDistance(st.lastSeenDistance):'–';
-        els.nextSub1.textContent='från stationen';
+        setNextSub1('från stationen');
       }
       const pDep=planDep(st);
       const adv=advertisedDepartureIfDifferent(st);
@@ -3959,7 +4100,7 @@
       els.nextLabel.textContent='Klart';
       els.nextStop.textContent='Alla stationer registrerade';
       els.nextValue1.textContent='–';
-      els.nextSub1.textContent='kvar';
+      setNextSub1('');
       setPanelCell(els.nextValue2, els.nextSub2, '–', 'plan');
       setPanelCell(cd, cdSub, '–', 'till plan');
       return;
@@ -3971,7 +4112,7 @@
     els.nextLabel.textContent = byPlan ? 'Nästa enligt tidtabellen' : (st.shouldStop ? 'Nästa station' : 'Nästa · passeras');
     els.nextStop.textContent=st.name;
     els.nextValue1.textContent=st.lastSeenDistance!=null?formatDistance(st.lastSeenDistance):'–';
-    els.nextSub1.textContent = st.lastSeenDistance==null && fr && fr.source!=='position' ? 'avstånd okänt' : 'kvar';
+    setNextSub1(st.lastSeenDistance==null && fr && fr.source!=='position' ? 'avstånd okänt' : 'kvar');
     // Ankomsten enligt tågordern; är den okänd visas avgången, och det står då "avgång plan"
     const pArr=planArr(st);
     const planned=pArr||planDep(st);
@@ -3984,7 +4125,8 @@
     if(!est && fr && fr.est && fr.est.idx===state.nextIndex) est={ t:fr.est.t };
     if(est){
       const late=planned ? (est.t-new Date(planned).getTime())/1000 : 0;
-      setPanelCell(cd, cdSub, formatShortDuration((est.t-Date.now())/1000), `beräknat ${formatClock(est.t)}`,
+      // Beräknad ankomst: "kvar · ca 09:43", eller "kvar · i tid" när den är inom en minut från planen
+      setPanelCell(cd, cdSub, formatShortDuration((est.t-Date.now())/1000), planned && Math.abs(late)<=60 ? 'kvar · i tid' : `kvar · ca ${formatClock(est.t)}`,
         late>300 ? 'dl-very-late' : (late>60 ? 'dl-late' : ''));
       return;
     }
@@ -4195,7 +4337,8 @@
       buses:new Map(), vtAt:0, vtFetchedAt:null, vtError:null, vtBusy:false });
     infoState.history = INFO ? INFO.historyMedians(allRuns()) : null; // även körningar hämtade från GitHub
     restoreInfoLog(); // samma resa efter omladdning: mötena och loggen hittills
-    setInfoTab('stations');
+    if(!TEST_MODE) countStarTip();
+    setInfoTab(defaultTab());
     renderInfo();
     // I testläge hämtar testerna själva (refreshInfo), utan nätet
     if(!INFO || !state.trainNumber || TEST_MODE) return;
@@ -4309,7 +4452,7 @@
     state.trainNumber=id.trainNumber;
     state.advertisedTrainNumber=id.advertisedTrainNumber;
     state.trainNumberEntered=id.trainNumberEntered;
-    if(els.journeyTitle) els.journeyTitle.textContent=journeyTitleText();
+    setJourneyTitle();
     saveActiveJourney();
   }
 
@@ -4865,28 +5008,63 @@
   }
 
   // Raden i panelen: slutstationens prognos och det viktigaste längs vägen
+  /* Det att hålla koll på (2026-11-26f): samma lista ger panelens rad, siffran på fliken, listan överst i Info och
+     meddelandena, så att de aldrig går isär. Viktigast först (railtimer-info.js: alerts). Ett byte med förslaget att
+     ringa trafikledningen står bara som ☎. I Var är tåget? inget ☎ – man är inte på tåget. */
+  function watchItems(m){
+    if(!m || !INFO) return [];
+    const follow=state.purpose==='follow';
+    let list=INFO.alerts(m, { name:sigName, clock:roundClock, follow });
+    if(follow) list=list.filter(a=>a.kind!=='ring');
+    const ring=new Set(list.filter(a=>a.kind==='ring').map(a=>a.ck));
+    list=list.filter(a=>a.kind==='ring' || !a.ck || !ring.has(a.ck));
+    const t=state.running ? tourStatus() : null;
+    if(t && t.level){
+      const minutes = n => `${n} minut${n===1?'':'er'}`;
+      const late=t.turnMin<TOUR_LATE_MIN;
+      list.push({ key:`tour|${t.otn}`, level:t.level, kind:'tur', prio:6, order:999,
+        text: late ? `Nästa tur ${t.otn} ${formatClock(t.dep)}: vändtiden räcker inte` : `Nästa tur ${t.otn} ${formatClock(t.dep)}: vändtid ca ${t.turnMin} min`,
+        say: late ? `Vändtiden i ${t.fromName} räcker inte. Nästa tur blir sen.` : `Vändtiden i ${t.fromName} blir cirka ${minutes(t.turnMin)}.`,
+        short: late ? `nästa tur ${t.otn} blir sen` : `vändtid ${t.turnMin} min` });
+      list.sort((a,b)=>b.level-a.level || a.prio-b.prio || a.order-b.order);
+    }
+    return list;
+  }
+  // Prognosens försening i ord: ±1 min är i tid (som i stationslistan)
+  function endDelayShort(d){
+    if(d==null) return '';
+    if(Math.abs(d)<=1) return 'i tid';
+    return d>0 ? `+${d}` : `−${-d}`;
+  }
+  /* Panelens rad, alltid en rad: slutstationens prognos och det viktigaste att hålla koll på, sedan hur många till.
+     "Göteborg C 12:11 i tid · knappt byte Oslo · 1 till". Tryck öppnar Info. */
   function infoHeadline(m){
     if(!INFO || !state.trainNumber) return null;
     if(!m){
       if(infoState.error && !infoState.line) return { text:`Info: ${infoState.error}`, level:0 };
       return infoState.line ? null : { text:'Info: hämtar läget framåt…', level:0 };
     }
-    // Kort, så att raden får plats på telefonen: "Hällekis 05:33 +6 · möte Råbäck · 1 anslutning missas"
     const parts=[];
     const endName=sigName(m.end.sig);
-    const d=m.end.delayMin;
     if(m.end.arrived) parts.push(`Framme i ${endName}`);
-    else parts.push(`${endName} ${roundClock(m.end.predArr)} ${d===0?'i tid':(d>0?'+'+d:'−'+(-d))}`);
-    if(m.reason && !m.end.arrived) parts.push(`möte ${sigName(m.reason.sig)}`);
-    const missed=m.missed+(m.midMissed||0);
-    if(missed) parts.push(`${missed} anslutning${missed>1?'ar':''} missas`);
-    else if(m.tight) parts.push(`${m.tight} knapp${m.tight>1?'a':''} anslutning${m.tight>1?'ar':''}`);
-    if(m.actions && m.actions.length) parts.push('☎ ring trafikledningen');
-    if(m.deviations.length) parts.push(m.deviations[0].text);
-    if(m.messages.length) parts.push(m.messages[0].header);
-    const t=tourStatus();
-    if(t && t.level) parts.push(t.turnMin<TOUR_LATE_MIN ? `nästa tur ${t.otn} blir sen` : `vändtid ${t.turnMin} min`);
-    return { text:parts.join(' · '), level:Math.max(m.level, t ? t.level : 0) };
+    else parts.push(`${endName} ${roundClock(m.end.predArr)} ${endDelayShort(m.end.delayMin)}`);
+    const items=watchItems(m);
+    if(items.length) parts.push(items[0].short || items[0].text);
+    if(items.length>1) parts.push(`${items.length-1} till`);
+    const level=items.length ? Math.max.apply(null, items.map(a=>a.level)) : (m.end.arrived ? 0 : (m.end.delayMin>=6 ? 2 : (m.end.delayMin>=2 ? 1 : 0)));
+    return { text:parts.join(' · '), level, count:items.length };
+  }
+
+  /* Listan överst i Info: en mening per sak, samma som siffran på fliken. ☎-förslaget med plats och spår under. */
+  function watchListHtml(m, items){
+    if(!items.length) return '<div class="watch watch-ok"><div class="watch-row"><span class="wdot ok" aria-hidden="true"></span><span>Inget som påverkar resan just nu</span></div></div>';
+    const acts=new Map((m.actions||[]).map(a=>[a.c.key, a]));
+    return '<div class="watch"><div class="watch-title">Att hålla koll på</div>' + items.map(a=>{
+      let sub='';
+      if(a.kind==='ring' && acts.has(a.ck)) sub=INFO.actionText(acts.get(a.ck), { name:sigName, clock:roundClock }).sub;
+      return `<div class="watch-row l${a.level}${a.kind==='ring'?' ring':''}"><span class="wdot" aria-hidden="true">${a.kind==='ring'?'☎':''}</span>` +
+        `<span>${escapeHtml(a.text)}${sub?`<small>${escapeHtml(sub)}</small>`:''}</span></div>`;
+    }).join('') + '</div>';
   }
 
   function infoRow(level, time, title, sub, status){
@@ -4894,20 +5072,22 @@
       `<span class="ir-txt"><b>${title}</b>${sub?`<small>${sub}</small>`:''}</span><span class="ir-s">${status||''}</span></div>`;
   }
 
+  // Varifrån det mötande tågets tid kommer. "plan" betyder att Trafikverket inte rapporterat något än.
   function sourceText(src){
-    return { 'faktisk':'rapporterat', 'trafikverket':'enligt Trafikverket', 'senast':'räknat från senaste rapporten', 'plan':'enligt tidtabell',
-      'position':'räknat från tågets position' }[src] || '';
+    return { 'faktisk':'rapporterat', 'trafikverket':'enligt Trafikverket', 'senast':'enligt senaste rapport', 'plan':'ingen rapport än',
+      'position':'enligt tågets GPS' }[src] || '';
   }
-  /* "4,2 km från Vara · 85 km/h · 30 s sedan", "vid Vara" eller "har passerat Vara mot oss". along: räknat längs
-     banan (gångprofilernas GPS-spår), annars fågelvägen. */
+  /* Det mötande tågets position (2026-11-26f, kortare): "nu 4,2 km längs banan från Vara", "vid Vara" eller "har
+     passerat Vara mot oss". Åldern bara när positionen är minst en minut gammal. along: räknat längs banan
+     (gångprofilernas GPS-spår), annars fågelvägen. */
   function positionText(p, place){
     if(!p) return '';
-    const age = p.ageS<90 ? `${p.ageS} s sedan` : `${Math.round(p.ageS/60)} min sedan`;
-    const speed = p.speedKmh!=null ? ` · ${Math.round(p.speedKmh)} km/h` : '';
-    if(p.side==='at') return `vid ${place}${speed} · ${age}`;
-    if(p.side==='passed') return `har passerat ${place} mot oss${p.along ? ` (${formatDistance(p.distM)} längs banan)` : ''} · ${age}`;
-    if(p.side==='behind') return `har passerat oss · ${age}`;
-    return `${formatDistance(p.distM)} ${p.along ? 'längs banan ' : ''}från ${place}${speed} · ${age}`;
+    const us = state.purpose==='follow' ? 'tåget' : 'oss';
+    const age = p.ageS>=60 ? ` · position ${Math.round(p.ageS/60)} min gammal` : '';
+    if(p.side==='at') return `vid ${place}${age}`;
+    if(p.side==='passed') return `har passerat ${place} mot ${us}${p.along ? ` (${formatDistance(p.distM)} längs banan)` : ''}${age}`;
+    if(p.side==='behind') return `har passerat ${us}${age}`;
+    return `nu ${formatDistance(p.distM)} ${p.along ? 'längs banan ' : ''}från ${place}${age}`;
   }
 
   /* Ett möte. m.sig är tidtabellens mötesplats, m.at där mötet blir: flyttat närmare oss när det mötande tåget
@@ -4918,43 +5098,61 @@
     const L=line[atI];
     const planned=L.advDep!=null ? L.advDep : L.plannedDep;
     const train=m.ident||m.otn;
+    const follow=state.purpose==='follow';
+    const we=follow ? 'tåget' : 'vi', us=follow ? 'tåget' : 'oss';
     const their = m.canceled ? 'inställt' : (m.theirDelayMin>0 ? `${m.theirDelayMin} min sent` : 'i tid');
     let moved='';
     if(m.onLine) moved=`möts på dubbelspåret efter ${sigName(at)} (enligt plan i ${sigName(m.sig)})`;
     else if(at!==m.sig){
       const byPos = m.moveVia==='position';
       moved = m.move==='rapporterat'
-        ? (byPos ? `flyttat hit från ${sigName(m.sig)} – ${train} är ute på enkelspåret mot oss enligt tågets position`
-                 : `flyttat hit från ${sigName(m.sig)} – ${train} har passerat ${sigName(m.sig)}`)
-        : `troligen hit i stället för ${sigName(m.sig)} – ${train} hinner först till enkelspåret`;
+        ? (byPos ? `flyttat hit från ${sigName(m.sig)} – ${train} är ute på enkelspåret mot ${us} enligt tågets position`
+                 : `flyttat hit från ${sigName(m.sig)} – ${train} har redan passerat ${sigName(m.sig)}`)
+        : `troligen hit i stället för ${sigName(m.sig)} – ${train} hinner först in på enkelspåret`;
     }
-    else if(m.moved) moved = m.movedVia==='position' ? `mötet flyttat närmare oss – ${train} har passerat ${sigName(m.sig)} enligt tågets position` : 'mötet flyttat närmare oss';
+    else if(m.moved) moved = m.movedVia==='position' ? `mötet flyttat närmare ${us} – ${train} har passerat ${sigName(m.sig)} enligt tågets position` : `mötet flyttat närmare ${us}`;
     const sub=[
-      `${escapeHtml(train)} ${their}${m.canceled?'':' ('+sourceText(m.their.source)+')'}`,
-      escapeHtml(moved),
-      m.position ? escapeHtml(positionText(m.position, sigName(at))) : '',
+      m.canceled ? their : `${their}${m.their && m.their.source ? ' ('+sourceText(m.their.source)+')' : ''}`,
       // Spårtypen från linjeboken, annars räknad ur tidtabellen (enkelspår när inga tåg möts mellan stationerna)
       m.single ? (m.book ? 'enkelspår' : 'troligen enkelspår') : 'dubbelspår',
-      m.waitMin>=1 ? `vi avgår ca ${roundClock(m.ourDep)}` : ''
-    ].filter(Boolean).join(' · ');
-    const status = m.waitMin>=1 ? `<span class="${m.waitMin>=5?'dl-very-late':'dl-late'}">+${m.waitMin} min</span><small>väntan</small>`
+      m.position ? positionText(m.position, sigName(at)) : '',
+      moved,
+      m.waitMin>=1 ? `${we} åker ca ${roundClock(m.ourDep)}` : ''
+    ].filter(Boolean).map(escapeHtml).join(' · ');
+    const status = m.waitMin>=1 ? `<span class="${m.waitMin>=5?'dl-very-late':'dl-late'}">+${m.waitMin} min</span><small>${we} väntar</small>`
       : '<span class="dl-live">ingen väntan</span>';
-    return infoRow(m.level, roundClock(planned), `${escapeHtml(sigName(at))} · möte ${escapeHtml(train)}`, sub, status);
+    return infoRow(m.level, roundClock(planned), `Möte ${escapeHtml(train)} i ${escapeHtml(sigName(at))}`, sub, status);
+  }
+  /* En störning (OperativeEvent): vad i ord, var på vår linje, sedan när och om den är klar innan vi är där.
+     Vänster kolumn = när vi är vid första berörda plats. Trafikverket anger inte vilket tåg som har ett fordonsfel. */
+  function messageRowHtml(msg){
+    const s=msg.sigs||[];
+    const where = s.length>1 ? `${sigName(s[0])} – ${sigName(s[s.length-1])}` : (s[0] ? `vid ${sigName(s[0])}` : '');
+    const sameDay = (a,b)=>new Date(a).toDateString()===new Date(b).toDateString();
+    const since = msg.start!=null ? `sedan ${sameDay(msg.start, Date.now()) ? '' : (sameDay(msg.start, Date.now()-86400000) ? 'i går ' : new Date(msg.start).toLocaleDateString('sv-SE', { day:'numeric', month:'short' })+' ')}${roundClock(msg.start)}` : '';
+    const text = msg.text && msg.text!==msg.title ? (msg.text.length>160 ? msg.text.slice(0, 157)+'…' : msg.text) : '';
+    const sub = [ [where, since].filter(Boolean).join(' · '), msg.vehicle ? 'Trafikverket anger inte vilket tåg.' : '', text ]
+      .filter(Boolean).map(escapeHtml).join('<br>');
+    const until = msg.end!=null ? `<small>klart ca ${roundClock(msg.end)}</small>` : '';
+    const status = msg.clear ? `<span class="mut">klart före ${state.purpose==='follow'?'tåget':'oss'}</span>${until}` : `<span class="dl-late">pågår</span>${until}`;
+    return infoRow(msg.level, msg.ourT!=null ? roundClock(msg.ourT) : '', escapeHtml(msg.title || msg.header), sub, status);
   }
 
   // Statusen säger åt vilket håll bytet går: från oss (de ska hinna till tåget eller bussen) eller till oss
   // (resenärerna ska hinna till vårt tåg – där är det vi som kan behöva vänta)
   function connectionStatusHtml(c, incoming){
+    const follow=state.purpose==='follow';
+    const we=follow ? 'tåget' : 'vi', us=follow ? 'tåget' : 'oss';
     if(c.status==='inställt') return '<span class="dl-late">inställt</span>';
     if(c.status==='avgått') return '<span class="dl-very-late">avgått</span>';
     if(c.status==='missas'){
-      const why = c.transferMin<0 ? (incoming?'kommer efter vi gått':'går före vi är framme') : (incoming?'kommer när vi går':'går när vi kommer fram');
-      return `<span class="dl-very-late">${incoming?'hinner inte till oss':'missas'}</span><small>${why}</small>`;
+      const why = c.transferMin<0 ? (incoming?`kommer efter ${we} gått`:`går före ${we} är framme`) : (incoming?`kommer när ${we} går`:`går när ${we} kommer fram`);
+      return `<span class="dl-very-late">${incoming?`hinner inte till ${us}`:'missas'}</span><small>${why}</small>`;
     }
     const cls = c.status==='knappt' ? 'dl-late' : 'dl-live';
     // Knappt enligt plan (egen anslutning med kort planerat byte): visas, men varnar inte
     const plan = c.status==='knappt' && c.asPlanned ? ' enligt plan' : '';
-    const word = (incoming ? (c.status==='knappt' ? 'knappt till oss' : 'hinner till oss') : (c.status==='knappt' ? 'knappt att byta' : 'att byta')) + plan;
+    const word = (incoming ? (c.status==='knappt' ? `knappt till ${us}` : `hinner till ${us}`) : (c.status==='knappt' ? 'knappt att byta' : 'att byta')) + plan;
     return `<span class="${cls}">${c.transferMin} min</span><small>${word}</small>`;
   }
   // Radens rubrik: → dit resenärerna åker vidare från oss, ← varifrån de kommer till oss
@@ -4967,33 +5165,37 @@
     return [escapeHtml(trainText(c)), c.track?`${c.kind==='buss'?'läge':'spår'} ${escapeHtml(c.track)}${plat}`:'', delay].filter(Boolean).join(' · ');
   }
 
-  // En anslutning: ☆ framför, tryck markerar att resenärer ska byta (★)
+  /* En anslutning. ☆ är en egen knapp (44 px): tryck markerar att resenärer byter här (★), och appen bevakar bytet.
+     Förut markerade hela raden, så den som tryckte för att läsa markerade av misstag (2026-11-26f). */
   function connRow(c, title, incoming){
-    return `<div class="info-row conn-row${c.level?' l'+c.level:''}${c.marked?' marked':''}" role="button" tabindex="0" data-info="mark" data-key="${escapeHtml(c.key||'')}" aria-pressed="${c.marked?'true':'false'}">` +
+    return `<div class="info-row conn-row${c.level?' l'+c.level:''}${c.marked?' marked':''}">` +
+      `<button type="button" class="star-btn" data-info="mark" data-key="${escapeHtml(c.key||'')}" aria-pressed="${c.marked?'true':'false'}" aria-label="${c.marked?'Ta bort markeringen':'Resenärer byter här – bevaka'}">${c.marked?'★':'☆'}</button>` +
       `<span class="ir-t">${roundClock(c.adv)}</span>` +
-      `<span class="ir-txt"><b><span class="star" aria-hidden="true">${c.marked?'★':'☆'}</span>${title}${c.own && connSettings().mode!=='mina' ? ' <span class="own-tag">min</span>' : ''}</b><small>${connectionSub(c)}</small></span>` +
+      `<span class="ir-txt"><b>${title}${c.own && connSettings().mode!=='mina' ? ' <span class="own-tag">min</span>' : ''}</b><small>${connectionSub(c)}</small></span>` +
       `<span class="ir-s">${connectionStatusHtml(c, incoming)}</span></div>`;
   }
-  // Förslaget när en markerad anslutning blir knapp eller missas (railtimer-info.js: actions, actionText), högst två rader
-  function actionRowHtml(a){
-    const t=INFO.actionText(a, { name:sigName, clock:roundClock });
-    return `<div class="info-row action l2"><span class="ir-t" aria-hidden="true">☎</span><span class="ir-txt"><b>${escapeHtml(t.title)}</b><small>${escapeHtml(t.sub)}</small></span><span class="ir-s"></span></div>`;
-  }
 
-  // Valet Tåg | Buss | Båda överst i anslutningarna. Bara utan Västtrafikmodulen går bara Tåg att välja.
+
+  /* Rubriken Byten med valet Tåg | Buss | Båda | Mina till höger (2026-11-26f). Varningar: bara valda | alla ligger
+     under ⋮ → Inställningar → Under resan; här står bara en rad när den är av. Pilförklaringen finns under Så
+     räknas det, och ☆-tipset visas de första resorna tills något markerats. */
   function connControlHtml(mode, alerts, vtOn){
     const b=(k, label)=>`<button type="button" data-info="conn-${k}" aria-pressed="${mode===k}"${!vtOn && (k==='buss' || k==='bada')?' disabled':''}>${label}</button>`;
-    let h=`<div class="conn-ctl"><span class="cc-label">Anslutningar</span>` +
-      `<span class="seg" role="group" aria-label="Visa anslutningar">${b('tag','Tåg')}${b('buss','Buss')}${b('bada','Båda')}${b('mina','Mina')}</span>`;
-    if(vtOn || mode==='mina') h+=`<button type="button" class="cc-alerts" data-info="conn-alerts" aria-pressed="${alerts}" title="Om varningarna, panelens rad och utropet bara gäller det som visas">Varningar: ${alerts?'bara valda':'alla'}</button>`;
-    h+='</div>';
+    let h=`<div class="info-sec conn-head"><span>Byten</span>` +
+      `<span class="seg" role="group" aria-label="Visa byten">${b('tag','Tåg')}${b('buss','Buss')}${b('bada','Båda')}${b('mina','Mina')}</span></div>`;
     if(!vtOn) h+='<p class="info-hint">Bussarna från Västtrafik går inte att hämta – ladda om appen.</p>';
     else if(mode!=='tag' && infoState.vtError) h+=`<p class="info-hint err">Västtrafik: ${escapeHtml(String(infoState.vtError).replace(/\.$/,''))}.${infoState.vtFetchedAt?` Bussarna är från ${formatClock(infoState.vtFetchedAt)}.`:''} <button type="button" class="linkish" data-info="vt-settings">Västtrafik-inställningar</button></p>`;
-    else if(!alerts && mode!=='bada') h+='<p class="info-hint">Varningarna och utropet gäller alla anslutningar, även de dolda.</p>';
+    if(!alerts && mode!=='bada') h+='<p class="info-hint">Varnar för alla byten, även dolda (⋮ → Inställningar).</p>';
     if(mode==='mina') h+=ownSummaryHtml(infoState.model);
-    h+='<p class="info-hint conn-legend">→ resenärer byter från oss · ← resenärer byter till oss</p>';
-    if(!markedConnections().size) h+='<p class="info-hint">Tryck ☆ på ett byte som resenärer gör.</p>';
+    if(!markedConnections().size && starTipWanted()) h+='<p class="info-hint">☆ = resenärer byter här – appen bevakar bytet.</p>';
     return h;
+  }
+  // ☆-tipset: de tre första resorna utan markeringar (räknas när resan startar)
+  const STORAGE_KEY_STAR_TIP = 'railtimer_star_tip_v1';
+  function starTipWanted(){ return (Number(readJsonKey(STORAGE_KEY_STAR_TIP, 0))||0)<=3; }
+  function countStarTip(){
+    if(markedConnections().size) return;
+    try{ localStorage.setItem(STORAGE_KEY_STAR_TIP, JSON.stringify((Number(readJsonKey(STORAGE_KEY_STAR_TIP, 0))||0)+1)); }catch(e){}
   }
   /* Med valet Mina: vilka anslutningar som är dina, och för dem som inte syns varför (inte på resan, vi stannar
      inte där, inte hittade). Ändras under ⋮ → Inställningar → Mina anslutningar. */
@@ -5021,16 +5223,14 @@
     return `<p class="info-hint own-sum">Mina: ${list.map(e=>escapeHtml(ownLabel(e))).join(' · ')} ${edit}</p>` +
       (why.length ? `<p class="info-hint">${why.join('<br>')}</p>` : '');
   }
-  // Rubriken för ett anslutningsavsnitt, med valet och hur många som är dolda: "· bara buss · 2 tåg dolda"
-  function connSecHtml(title, mode, hidden, note){
-    const parts=note ? [note] : [];
-    if(mode==='mina') parts.push('bara mina');
-    else if(mode==='buss') parts.push('bara buss');
-    else if(mode==='tag' && vtConfigured()) parts.push('bara tåg');
+  // Rubriken för ett avsnitt med byten. Till höger hur många som är dolda av valet, som länk som visar Båda.
+  function connSecHtml(title, mode, hidden){
     const h=hidden||{};
+    const parts=[];
     if(h['tåg']) parts.push(`${h['tåg']} tåg ${h['tåg']>1?'dolda':'dolt'}`);
     if(h.buss) parts.push(`${h.buss} buss${h.buss>1?'ar dolda':' dold'}`);
-    return `<div class="info-sec"><span>${escapeHtml(title)}${parts.length?` <small class="sec-note">· ${parts.join(' · ')}</small>`:''}</span></div>`;
+    const more = parts.length ? `<button type="button" class="linkish sec-note" data-info="conn-bada">${parts.join(' · ')}</button>` : '';
+    return `<div class="info-sec sub"><span>${escapeHtml(title)}</span>${more}</div>`;
   }
   const connNoun = mode => mode==='buss' ? 'bussar' : (mode==='mina' ? 'av dina anslutningar' : 'anslutningar');
   // Varför det inte finns några bussar vid en station: hämtas fortfarande, eller ingen hållplats nära stationen
@@ -5050,38 +5250,43 @@
     if(b.sections>=b.of) return 'Enkel- eller dubbelspår enligt Trafikverkets linjebok.';
     return `Enkel- eller dubbelspår enligt Trafikverkets linjebok för ${b.sections} av ${b.of} sträckor. Övriga: ${rest}.`;
   }
+  /* Infofliken (ordningen 2026-11-26f): prognos, Att hålla koll på (samma som siffran på fliken), utrop, längs vägen,
+     byten (till oss i startstationen, längs vägen, från oss i slutstationen), nästa tur, och sist Så räknas det.
+     André 2026-11-26: "Infon är svår att fatta?" */
   function infoPaneHtml(m){
     const st = text => `<div class="info-state">${text}</div>`;
     if(!INFO) return st('Infon kunde inte laddas.');
-    if(!state.trainNumber) return st('Infon bygger på tågnumret. Starta resan med tågnummer, så visas möten, prognos och anslutningar här.');
+    if(!state.trainNumber) return st('Infon bygger på tågnumret. Starta resan med tågnummer, så visas möten, prognos och byten här.');
     if(!m){
       if(infoState.error) return st(`Ingen kontakt med Trafikverket (${escapeHtml(infoState.error)}). Försöker igen varje minut.`);
       return st('Hämtar tågen på linjen från Trafikverket…');
     }
+    const follow=state.purpose==='follow';
+    const we=follow ? 'tåget' : 'vi', us=follow ? 'tåget' : 'oss';
     const line=infoState.line;
     const endName=sigName(m.end.sig);
     const stale = infoState.fetchedAt && Date.now()-infoState.fetchedAt>INFO_STALE_MS;
-    const updated = infoState.fetchedAt ? `uppdaterad ${formatClock(infoState.fetchedAt)}${stale?' (gammal)':''}` : '';
+    let html='';
+    if(stale) html+=`<p class="info-stale">⚠ Senast uppdaterad ${formatClock(infoState.fetchedAt)} – ingen kontakt med Trafikverket</p>`;
+
+    // Prognosen till slutstationen
     const sub=[
-      m.end.arrived ? '' : `plan ${roundClock(m.end.adv)}`,
+      m.end.arrived ? '' : `Plan ${roundClock(m.end.adv)}`,
       m.end.trvEst!=null && !m.end.arrived ? `Trafikverket ${roundClock(m.end.trvEst)}` : '',
       m.end.track ? `spår ${escapeHtml(m.end.track)}` : '',
-      m.recoveryMin>0 && !m.end.arrived ? `tar igen ca ${m.recoveryMin} min` : '',
-      m.posAt && !m.end.arrived ? (state.purpose==='follow' ? 'räknat från var tåget är' : 'räknat från var vi är') : '',
-      updated
+      m.recoveryMin>0 && !m.end.arrived ? `tar igen ca ${m.recoveryMin} min` : ''
     ].filter(Boolean).join(' · ');
-    let html=`<div class="info-head"><div class="ih-label">${m.end.arrived?'Framme i':'Prognos'} ${escapeHtml(endName)}</div>` +
-      `<div class="ih-main"><b>${roundClock(m.end.predArr)}</b><span class="ih-delay ${delayCls(m.end.delayMin)}">${delayText(m.end.delayMin)}</span>` +
-      `${m.reason && !m.end.arrived ? `<span class="ih-why">möte i ${escapeHtml(sigName(m.reason.sig))}</span>` : ''}</div>` +
-      `<div class="ih-sub">${sub}</div></div>`;
+    const d=m.end.delayMin;
+    html+=`<div class="info-head"><div class="ih-label">${m.end.arrived?'Framme i':'Beräknad ankomst ·'} ${escapeHtml(endName)}</div>` +
+      `<div class="ih-main"><b>${roundClock(m.end.predArr)}</b><span class="ih-delay ${delayCls(d)}">${d!=null && Math.abs(d)<=1 ? 'i tid' : delayText(d)}</span>` +
+      `${m.reason && !m.end.arrived ? `<span class="ih-why">försenad av möte i ${escapeHtml(sigName(m.reason.sig))}</span>` : ''}</div>` +
+      (sub ? `<div class="ih-sub">${sub}</div>` : '') + '</div>';
 
-    // Förslag: ring trafikledningen när en markerad anslutning blir knapp eller missas (högst två)
-    // (inte i Var är tåget? – man är inte på tåget)
-    const onTrain=state.purpose!=='follow';
-    if(onTrain && m.actions && m.actions.length) html+=`<div class="info-sec"><span>Åtgärd</span></div>${m.actions.slice(0, 2).map(actionRowHtml).join('')}`;
+    // Att hålla koll på: samma lista som siffran på fliken och panelens rad
+    html+=watchListHtml(m, watchItems(m));
 
-    // Färdig text att ropa ut när vi är sena eller en anslutning påverkas
-    const ut=onTrain ? INFO.announcement(m, { name:sigName, clock:roundClock }) : null;
+    // Färdig text att ropa ut när vi är sena eller ett byte påverkas (inte i Var är tåget? – man är inte på tåget)
+    const ut=!follow ? INFO.announcement(m, { name:sigName, clock:roundClock }) : null;
     if(ut){
       const lang=infoState.utropLang==='en' ? 'en' : 'sv';
       const open = infoState.utropOpen!=null ? infoState.utropOpen : state.purpose==='info';
@@ -5094,77 +5299,73 @@
         `<p class="utrop" id="utropText">${escapeHtml(ut[lang])}</p></details>`;
     }
 
-    // Nästa tåg i dagens tur och vändtiden dit
-    const tour=tourStatus();
-    if(tour) html+=`<div class="info-sec"><span>Nästa tur</span></div>${tourRowHtml(tour)}`;
-
     // Längs vägen: möten, avvikelser för vårt tåg och störningar, i ordning längs linjen
-    const idxOf=new Map(line.map((l,i)=>[l.sig,i]));
     const rows=[];
     for(const mt of m.meetings) rows.push({ i:mt.atI!=null ? mt.atI : mt.i, html:meetingRow(mt, line) });
-    for(const d of m.deviations){
-      const L=line[d.i];
-      const t = d.kind==='arr' ? (L.advArr!=null?L.advArr:L.plannedArr) : (L.advDep!=null?L.advDep:L.plannedDep);
-      rows.push({ i:d.i, html:infoRow(1, roundClock(t), escapeHtml(sigName(d.sig)), escapeHtml(d.text), '') });
+    for(const dv of m.deviations){
+      const L=line[dv.i];
+      const t = dv.kind==='arr' ? (L.advArr!=null?L.advArr:L.plannedArr) : (L.advDep!=null?L.advDep:L.plannedDep);
+      rows.push({ i:dv.i, html:infoRow(1, roundClock(t), escapeHtml(sigName(dv.sig)), escapeHtml(dv.text), '') });
     }
-    for(const msg of m.messages){
-      const i=Math.min.apply(null, msg.sigs.map(s=>idxOf.has(s)?idxOf.get(s):Infinity));
-      const where=msg.sigs.slice(0, 3).map(sigName).join(', ') + (msg.sigs.length>3?' …':'');
-      const text=msg.text.length>160 ? msg.text.slice(0, 157)+'…' : msg.text;
-      rows.push({ i, html:infoRow(1, '', escapeHtml(msg.header), escapeHtml([where, text].filter(Boolean).join(' · ')), '') });
-    }
+    for(const msg of m.messages) rows.push({ i:msg.i!=null ? msg.i : Infinity, html:messageRowHtml(msg) });
     rows.sort((a,b)=>a.i-b.i);
     html+=`<div class="info-sec"><span>Längs vägen</span></div>`;
-    html+= rows.length ? rows.map(r=>r.html).join('') : '<div class="info-empty">Inga möten eller störningar framför oss.</div>';
+    html+= rows.length ? rows.map(r=>r.html).join('') : '<div class="info-empty">Inga möten eller störningar framför.</div>';
 
-    // Anslutningar: valet Tåg | Buss | Båda (connSettings), sedan längs vägen, till oss i startstationen och i
-    // slutstationen. Rubrikerna säger valet och hur många som är dolda, så att ett glömt val syns.
+    // Byten: valet Tåg | Buss | Båda | Mina (connSettings) i rubriken. Varje avsnitt säger hur många som är dolda.
     const D=INFO.DEFAULTS;
     const mode=m.connMode||'tag';
     html+=connControlHtml(mode, m.connAlerts!==false, vtConfigured());
     const waitingBuses = mode!=='tag' && !infoState.vtFetchedAt && !infoState.vtError;
     const anyHidden = h => !!(h && (h['tåg'] || h.buss));
 
-    // Vid stationerna längs vägen: tåg och bussar därifrån efter vår ankomst, och de som ansluter till oss där
+    // Som byter till oss i startstationen (bara före avgång). Med bussar visas avsnittet alltid, så att det syns
+    // om det inte finns några – och varför.
+    if(m.incoming && (m.incoming.length || (mode!=='mina' && (anyHidden(m.incomingHidden) || mode!=='tag')))){
+      const startName=sigName(line[0].sig);
+      html+=connSecHtml(`Byter till ${us} i ${startName}`, mode, m.incomingHidden);
+      html+= m.incoming.length
+        ? m.incoming.map(c=>connRow(c, connInTitle(c), true)).join('')
+        : `<div class="info-empty">${busEmptyText(line[0].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} kommer till ${escapeHtml(startName)} ${D.transferMin}–${D.incomingWindowMin} min före avgång.`}</div>`;
+    }
+
+    // Vid stationerna längs vägen: tåg och bussar därifrån efter vår ankomst, och de som byter till oss där
     if((m.stops && m.stops.length) || anyHidden(m.stopsHidden)){
-      html+=connSecHtml('Byten längs vägen', mode, m.stopsHidden, `stationer inom ${D.midHorizonMin} min`);
-      for(const st of m.stops){
-        const where=escapeHtml(sigName(st.sig));
+      html+=connSecHtml('Byten längs vägen', mode, m.stopsHidden);
+      for(const stp of m.stops){
+        const where=escapeHtml(sigName(stp.sig));
         // Bytena räknas från när vi är framme där, inte från nu: säg det
-        const eta=m.preds && m.preds[st.i] ? m.preds[st.i].arr : null;
-        if(eta!=null) html+=`<div class="info-stop">${where} · vi är där ca ${roundClock(eta)}</div>`;
-        for(const c of st.connections) html+=connRow(c, connOutTitle(c), false);
-        for(const c of st.incoming) html+=connRow(c, connInTitle(c), true);
+        const eta=m.preds && m.preds[stp.i] ? m.preds[stp.i].arr : null;
+        if(eta!=null) html+=`<div class="info-stop">${where} · ${we} är där ca ${roundClock(eta)}</div>`;
+        for(const c of stp.connections) html+=connRow(c, connOutTitle(c), false);
+        for(const c of stp.incoming) html+=connRow(c, connInTitle(c), true);
       }
       if(!m.stops.length) html+=`<div class="info-empty">Inga ${connNoun(mode)} längs vägen.</div>`;
     }
 
-    // Som ansluter till oss i startstationen (bara före avgång). Med bussar visas avsnittet alltid, så att det syns
-    // om det inte finns några – och varför.
-    if(m.incoming && (m.incoming.length || (mode!=='mina' && (anyHidden(m.incomingHidden) || mode!=='tag')))){
-      const startName=sigName(line[0].sig);
-      html+=connSecHtml(`Byter till oss i ${startName}`, mode, m.incomingHidden);
-      html+= m.incoming.length
-        ? m.incoming.map(c=>connRow(c, connInTitle(c), true)).join('')
-        : `<div class="info-empty">${busEmptyText(line[0].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} kommer till ${escapeHtml(startName)} ${D.transferMin}–${D.incomingWindowMin} min före vår avgång.`}</div>`;
-    }
-
-    // Anslutningar i slutstationen. Ingen egen bytestid: minuterna att byta visas (se connectionStatus i railtimer-info.js)
-    html+=connSecHtml(`Byter från oss i ${endName}`, mode, m.connectionsHidden);
+    // Byten i slutstationen. Ingen egen bytestid: minuterna att byta visas (se connectionStatus i railtimer-info.js)
+    html+=connSecHtml(`Byter från ${us} i ${endName}`, mode, m.connectionsHidden);
     html+= m.connections.length
       ? m.connections.map(c=>connRow(c, connOutTitle(c), false)).join('')
-      : `<div class="info-empty">${mode==='mina' ? `Inga av dina anslutningar i ${escapeHtml(endName)}.` : (busEmptyText(line[line.length-1].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst enligt tidtabell.`)}</div>`;
+      : `<div class="info-empty">${mode==='mina' ? `Inga av dina anslutningar i ${escapeHtml(endName)}.` : (busEmptyText(line[line.length-1].sig, mode, waitingBuses) || `Inga ${connNoun(mode)} ${D.transferMin}–${D.connectionWindowMin} min efter ankomsten enligt tidtabell.`)}</div>`;
+
+    // Nästa tåg i dagens tur och vändtiden dit (syns i Att hålla koll på när den är knapp)
+    const tour=tourStatus();
+    if(tour) html+=`<div class="info-sec"><span>Nästa tur</span></div>${tourRowHtml(tour)}`;
 
     const basis = (m.recoveryObs ? `Trafikverkets tider och egna gångtider (upp till ${m.recoveryObs} körningar per sträcka)` : 'Trafikverkets tider och tidtabellen') +
       (legProfiles.size ? '. Till nästa station räknas tiden från var vi är, ur tidigare GPS-spår på samma sträcka' : '');
+    const fromPos = m.posAt && !m.end.arrived ? ` Nu ${follow ? 'räknat från var tåget är' : 'räknat från var vi är'}.` : '';
     const notShown=(m.messagesHidden||[]).filter(h=>h.reason!=='inte under resan').length;
     const what = mode==='buss' ? 'bussar' : (mode==='tag' ? 'tåg' : 'tåg och bussar');
-    const transferNote=`Byter från oss (→): ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter vår ankomst åt ett annat håll; där är det de som kan behöva vänta på oss. Byter till oss (←): ${what} som kommer före vår avgång; där är det vi som kan behöva vänta. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som vi kommer. Blir ett byte du markerat med ★ eller lagt in under Mina anslutningar knappt eller missas, föreslår appen att ringa trafikledningen. ` +
-      (mode==='mina' ? `Mina: dina egna anslutningar (⋮ → Inställningar → Mina anslutningar) och de du markerat med ★, vid alla stationer framför oss där vi stannar – från oss upp till ${D.ownWindowMin/60} h efter vår ankomst, till oss upp till ${D.ownIncomingWindowMin} min före vår avgång, också längs vår linje. En egen anslutning med kortare byte enligt tidtabell varnar först när det blir kortare än planerat. ` : '') +
+    const transferNote=`→ betyder att resenärer byter från ${us}: ${what} som enligt tidtabell går ${D.transferMin}–${D.connectionWindowMin} min efter ankomsten åt ett annat håll; där är det de som kan behöva vänta. ← betyder att resenärer byter till ${us}: ${what} som kommer före avgång; där är det ${we} som kan behöva vänta. Knappt = under ${D.transferMin} min att byta, missas = tåget går före eller samtidigt som ${we} kommer. ☆ = resenärer byter här: blir ett byte du markerat med ★ eller lagt in under Mina anslutningar knappt eller missas, föreslår appen att ringa trafikledningen. ` +
+      (mode==='mina' ? `Mina: dina egna anslutningar (⋮ → Inställningar → Mina anslutningar) och de du markerat med ★, vid alla stationer framför där tåget stannar – från ${us} upp till ${D.ownWindowMin/60} h efter ankomsten, till ${us} upp till ${D.ownIncomingWindowMin} min före avgång, också längs vår linje. En egen anslutning med kortare byte enligt tidtabell varnar först när det blir kortare än planerat. ` : '') +
       (mode!=='tag' ? `Bussarna kommer från Västtrafik (hållplatser inom ${VT ? VT.DEFAULTS.stopRadiusM : 350} m från stationen), tågen från Trafikverket. ` : '');
+    const msgNote = 'Störningar kommer från Trafikverkets trafikhändelser. Trafikverket anger platserna men inte vilket tåg som har ett fordonsfel. En störning som beräknas vara klar innan vi är där räknas inte bland det att hålla koll på. ';
     // Felet syns alltid. Förklaringen av reglerna är ihopfälld: den behövs sällan under resan.
     if(infoState.error) html+=`<p class="info-hint err">Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).</p>`;
-    html+=`<details class="info-foot"${infoFootOpen?' open':''}><summary>Så räknas det</summary>${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. ${trackNote(m)} Är vi sena räknar appen med att tågklareraren flyttar mötet närmare oss när det ger minst väntan sammanlagt (troligen), till en plats där tåg kan mötas: med möteslängd enligt Trafikverket, eller där tåg enligt tidtabell står samtidigt. Samma eller annan plattform vid ett byte är enligt Trafikverkets järnvägsnätsbeskrivning. Är det mötande tåget sent räknas med mötet enligt tidtabell.${infoAxis() ? ' Mötande tågs position jämförs med mötesplatserna längs banan, efter tidigare GPS-spår: är tåget ute på enkelspåret mot oss väntar vi på mötesplatsen före, och har det passerat oss är mötet klart. Där banan inte är uppmätt räknas fågelvägen, och positionen används bara som undre gräns.' : ''}</details>`;
+    const updated = infoState.fetchedAt ? `<span class="foot-upd">uppdaterad ${formatClock(infoState.fetchedAt)}</span>` : '';
+    html+=`<details class="info-foot"${infoFootOpen?' open':''}><summary>Så räknas det${updated}</summary>Prognosen bygger på ${basis}.${fromPos} ${transferNote}${msgNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}${trackNote(m)} Är vi sena räknar appen med att tågklareraren flyttar mötet närmare oss när det ger minst väntan sammanlagt (troligen), till en plats där tåg kan mötas: med möteslängd enligt Trafikverket, eller där tåg enligt tidtabell står samtidigt. Samma eller annan plattform vid ett byte är enligt Trafikverkets järnvägsnätsbeskrivning. Är det mötande tåget sent räknas med mötet enligt tidtabell.${infoAxis() ? ' Mötande tågs position jämförs med mötesplatserna längs banan, efter tidigare GPS-spår: är tåget ute på enkelspåret mot oss väntar vi på mötesplatsen före, och har det passerat oss är mötet klart. Där banan inte är uppmätt räknas fågelvägen, och positionen används bara som undre gräns.' : ''}</details>`;
     return html;
   }
 
@@ -5177,13 +5378,19 @@
     const m=state.running ? infoState.model : null;
     const head=state.running ? infoHeadline(m) : null;
     np.hidden=!head;
-    np.textContent=head ? head.text : '';
+    if(head){
+      const span=document.createElement('span');
+      span.className='npi-text';
+      span.textContent=head.text;
+      np.replaceChildren(span);
+    }else np.textContent='';
     np.className='np-info'+(head && head.level ? ' l'+head.level : '');
-    const tour=state.running && m ? tourStatus() : null;
-    const att=m ? m.attention + (tour && tour.level ? 1 : 0) : 0;
-    count.hidden=!att;
-    count.textContent=att ? String(att) : '';
-    count.className='tab-count'+(m && (m.level>=2 || (tour && tour.level>=2)) ? ' l2' : '');
+    np.setAttribute('aria-label', head ? `${head.text}. Öppna Info` : 'Info');
+    // Siffran på fliken är antalet rader i Att hålla koll på
+    const items=m ? watchItems(m) : [];
+    count.hidden=!items.length;
+    count.textContent=items.length ? String(items.length) : '';
+    count.className='tab-count'+(items.some(a=>a.level>=2) ? ' l2' : '');
     const html=infoPaneHtml(m);
     if(html!==infoState.lastHtml){
       infoState.lastHtml=html;
@@ -5191,20 +5398,38 @@
     }
   }
 
-  // Stationer: panel, karta och stationslistan. Info: hela ytan under flikarna (CSS: #journey.show-info)
+  /* Flikarna i resvyn (2026-11-26f): Stationer (panelen och listan), Karta (panelen och kartan på hela ytan)
+     och Info (hela ytan). Liggande och på bred skärm står kartan alltid till vänster, och fliken Karta döljs
+     (CSS: #journey.show-map, .show-info). André 2026-11-26: "När man kollar stationer så är det en väldigt liten
+     ruta längst ned." */
+  const WIDE_QUERY = '(orientation:landscape) and (max-height:540px), (min-width:820px)';
+  function wideLayout(){
+    try{ return window.matchMedia(WIDE_QUERY).matches; }catch(e){ return false; }
+  }
+  // Fliken resan öppnar på: Info i Bara info, Karta i Var är tåget? (frågan är var tåget är), annars Stationer
+  function defaultTab(){
+    if(state.purpose==='info') return 'info';
+    if(state.purpose==='follow' && !wideLayout()) return 'map';
+    return 'stations';
+  }
   function setInfoTab(tab){
-    infoState.tab = tab==='info' ? 'info' : 'stations';
+    if(tab==='map' && wideLayout()) tab='stations';
+    infoState.tab = tab==='info' || tab==='map' ? tab : 'stations';
     const journey=document.getElementById('journey');
     if(!journey) return;
-    const showInfo=infoState.tab==='info';
-    journey.classList.toggle('show-info', showInfo);
-    document.getElementById('tabStations').setAttribute('aria-selected', String(!showInfo));
-    document.getElementById('tabInfo').setAttribute('aria-selected', String(showInfo));
-    if(showInfo){ document.getElementById('infoView').scrollTop=0; renderInfo(); }
+    const t=infoState.tab;
+    journey.classList.toggle('show-info', t==='info');
+    journey.classList.toggle('show-map', t==='map');
+    document.getElementById('tabStations').setAttribute('aria-selected', String(t==='stations'));
+    document.getElementById('tabMap').setAttribute('aria-selected', String(t==='map'));
+    document.getElementById('tabInfo').setAttribute('aria-selected', String(t==='info'));
+    applyMapSettings();
+    updateInfoNext();
+    if(t==='info'){ document.getElementById('infoView').scrollTop=0; renderInfo(); }
     else{
       // Kartan var dold och får sin storlek först nu
       if(state.running) renderRouteMap(true);
-      scrollToNextStation(true);
+      if(t==='stations') scrollToNextStation(true);
     }
     syncBackGuard();
   }
@@ -5257,14 +5482,8 @@
   // Det viktigaste läses också upp (speak), i ord som går att höra: inga tågnummer, "minuter" utskrivet.
   function notifyInfo(m){
     if(state.purpose==='follow') return; // Var är tåget?: man är inte på tåget, inget vibrerar eller läses upp
-    // Reglerna och texterna finns i railtimer-info.js (INFO.alerts); här läggs nästa tur till
-    const list=INFO.alerts(m, { name:sigName, clock:roundClock });
-    const minutes = n => `${n} minut${n===1?'':'er'}`;
-    const t=tourStatus();
-    if(t && t.level) list.push({ key:`tour|${t.otn}`, level:t.level,
-      text:t.turnMin<TOUR_LATE_MIN ? `Nästa tur ${t.otn} ${formatClock(t.dep)}: vändtiden räcker inte` : `Nästa tur ${t.otn} ${formatClock(t.dep)}: vändtid ca ${t.turnMin} min`,
-      say:t.turnMin<TOUR_LATE_MIN ? `Vändtiden i ${t.fromName} räcker inte. Nästa tur blir sen.` : `Vändtiden i ${t.fromName} blir cirka ${minutes(t.turnMin)}.` });
-    const alerts=INFO.newAlerts(list, infoState.notified);
+    // Reglerna och texterna finns i railtimer-info.js (INFO.alerts); samma lista som Att hålla koll på (watchItems)
+    const alerts=INFO.newAlerts(watchItems(m), infoState.notified);
     if(!alerts.length) return;
     const top=alerts[0];
     vibrate(top.level>=2 ? [150,80,150,80,150] : [120,80,120]);
@@ -5282,6 +5501,20 @@
     return ` <span class="badge ${d.cls}">${d.cls==='early'?Math.abs(d.min)+' min tidig':(d.cls==='live'?'I tid':d.text)}</span>`;
   }
 
+  /* Resans rad i appens rubrik (2026-11-26f): "Tåg 3344 → Hällekis". Hela texten (startstation, det andra
+     tågnumret, fordon eller läge) står i title och i #journeyTitle (dold under resan, läses av testerna). */
+  function journeyShortTitle(){
+    const endName=state.route[state.route.length-1]?.name || '?';
+    const n=enteredTrain();
+    if(n) return `Tåg ${n} → ${endName}`;
+    return `${state.route[0]?.name || '?'} → ${endName}`;
+  }
+  function setJourneyTitle(){
+    const full=journeyTitleText();
+    if(els.journeyTitle) els.journeyTitle.textContent=full;
+    const t=document.getElementById('headerTrip');
+    if(t){ t.textContent=journeyShortTitle(); t.title=full; }
+  }
   // Resvyns rubrik: tåg, rutt och fordon på en rad
   function journeyTitleText(){
     const startName=state.route[0]?.name || '?';
@@ -5381,8 +5614,9 @@
     if(station.missedReason) note='missad – avbrott';
     else if(fr && fr.unsure===idx) note='ankom · avgången inte rapporterad';
     else if(fr && state.nextIndex===idx && fr.est && fr.est.by==='plan' && fr.est.behind) note='nästa enligt tidtabellen';
-    else if(fr && !station.followPassed && fr.est && fr.est.by==='plan' && fr.est.behind && idx>fr.passedIdx && idx<fr.est.idx) note='bör ha passerats – ingen rapport';
-    else if(fr && station.followPassed && !station.actualArrival && !station.actualDeparture && idx>0) note='passerad – ingen tid';
+    // Bara på den sista raden av dem, så att samma text inte upprepas rad efter rad (2026-11-26f)
+    else if(fr && !station.followPassed && fr.est && fr.est.by==='plan' && fr.est.behind && idx>fr.passedIdx && idx===fr.est.idx-1) note='bör ha passerats – ingen rapport';
+    else if(fr && station.followPassed && !station.actualArrival && !station.actualDeparture && idx>0 && !(state.route[idx+1] && state.route[idx+1].followPassed && !state.route[idx+1].actualArrival && !state.route[idx+1].actualDeparture)) note='passerad – ingen tid';
     else if(currentStationIndex()===idx) note = station.actualArrival ? `står här · ${formatDuration((Date.now()-new Date(station.actualArrival))/1000)}` : 'står här';
     else if(state.nextIndex===idx) note = (station.lastSeenDistance!=null ? formatDistance(station.lastSeenDistance)+' kvar' : 'nästa') + (station.shouldStop?'':' · passeras');
     else if(!station.shouldStop) note='passeras';
@@ -5772,6 +6006,7 @@
       const own=loadOwnConnections();
       ownEl.textContent = own.length ? own.slice(0, 3).map(ownLabel).join(', ') + (own.length>3 ? ` och ${own.length-3} till` : '') : 'Inga ännu – visas med valet Mina i Info';
     }
+    setMenuToggle(document.getElementById('btnConnAlerts'), connSettings().alerts!==false);
     updateLogCount();
   }
 
@@ -6475,10 +6710,12 @@
   function saveMapSettings(){
     try{ localStorage.setItem(STORAGE_KEY_MAP, JSON.stringify(mapSettings)); }catch(e){}
   }
+  // Dold karta (✕) bara liggande och på bred skärm; stående är fliken Karta valet
+  function mapCollapsedNow(){ return !!mapSettings.hidden && wideLayout(); }
   function applyMapSettings(){
     const c=document.getElementById('routeMapContainer');
     if(!c) return;
-    c.classList.toggle('collapsed', !!mapSettings.hidden);
+    c.classList.toggle('collapsed', mapCollapsedNow());
     document.getElementById('mapFollow').setAttribute('aria-pressed', String(mapSettings.mode==='follow'));
     document.getElementById('mapWhole').setAttribute('aria-pressed', String(mapSettings.mode==='all'));
   }
@@ -6541,21 +6778,22 @@
     return p[1]!=null && p[2]!=null && !(p[3]!=null && p[3]>100);
   }
 
-  // Stationens färg på kartan: grå ej passerad, orange här, grön klar, blå nästa
+  /* Stationens färg på kartan (2026-11-26f): grå ej passerad, grön klar, vit här, vit ring nästa. Blått är bara
+     tågets position från Trafikverket och orange bara "håll koll", så att färgerna betyder en sak var. */
   function mapStationColor(st, idx){
     const isLast=idx===state.route.length-1;
     if(st.missedReason) return 'var(--mut)';
-    if(currentStationIndex()===idx) return 'var(--sec)';
+    if(currentStationIndex()===idx) return 'var(--ink)';
     const done = st.followPassed || (idx===0 ? !!st.actualDeparture : (isLast ? !!st.actualArrival : !!(st.actualArrival && st.actualDeparture)));
     if(done) return 'var(--pri)';
-    if(state.nextIndex===idx) return 'var(--blue)';
+    if(state.nextIndex===idx) return 'next';
     return 'var(--mut)';
   }
 
   function renderRouteMap(force){
     const container=document.getElementById('routeMap');
     if(!container || !state.route || state.route.length<2) return;
-    if(mapSettings.hidden) return;
+    if(mapCollapsedNow()) return;
     const pts=state.route.map((s,idx)=>({ s, idx })).filter(o=>o.s.lat!=null && o.s.lon!=null);
     if(pts.length<2) return;
 
@@ -6644,7 +6882,10 @@
       const x=X(+o.s.lon), y=Y(+o.s.lat);
       const isFocus=o.idx===focusIdx;
       const r=isFocus?7:5;
-      svg+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${mapStationColor(o.s, o.idx)}" stroke="#14171c" stroke-width="2"/>`;
+      const col=mapStationColor(o.s, o.idx);
+      svg+= col==='next'
+        ? `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="#14171c" stroke="var(--ink)" stroke-width="2.5"/>`
+        : `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${col}" stroke="#14171c" stroke-width="2"/>`;
       const show = follow ? (o.idx>=lo && o.idx<=hi) : (o.idx===0 || o.idx===state.route.length-1 || isFocus);
       if(show && x>-50 && x<width+50 && y>-20 && y<height+20) labels.push({ x, y, r, text:o.s.name, focus:isFocus });
     });
@@ -8397,7 +8638,7 @@
 
     const startName = state.route[0]?.name || '?';
     const endName = state.route[state.route.length-1]?.name || '?';
-    els.journeyTitle.textContent=journeyTitleText();
+    setJourneyTitle();
 
     renderedRouteKey='';
     renderRouteCards();
@@ -8564,7 +8805,7 @@
     if(menuIsOpen()) return 'menu';
     if(OVERLAY_VIEWS.includes(currentView)) return 'overlay';
     if(state.running && currentView==='journey'){
-      if(infoState.tab==='info' && state.purpose!=='info') return 'stations';
+      if(infoState.tab!==defaultTab()) return defaultTab(); // Karta och Info går tillbaka till fliken resan öppnade på
       return 'journey';
     }
     return null;
@@ -8594,7 +8835,7 @@
     const target=backTarget();
     if(target==='menu') closeAllMenus();
     else if(target==='overlay') closeOverlay();
-    else if(target==='stations') setInfoTab('stations');
+    else if(target==='stations' || target==='map' || target==='info') setInfoTab(target);
     else if(target==='journey'){
       backExitUntil=Date.now()+BACK_EXIT_MS;
       showHeaderStatus('Resan pågår. Tryck bakåt igen för att lämna appen – mätningen stannar då.', true);

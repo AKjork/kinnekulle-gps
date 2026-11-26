@@ -177,7 +177,10 @@ test('flyttat möte: förutsett när vi är sena – det mötande tåget hinner 
   assert.equal(old.end.delayMin, 13);
   // Meddelandet och utropet säger att mötet troligen flyttas, inte att det mötande tåget är sent
   const a = I.alerts(m, { name: s => ROUTE.get(s) || s }).find(x => x.key === 'm|24360|Vr');
-  assert.equal(a.text, 'Möte Järpås i stället för Vara (troligen): vi väntar ca 7 min på 24360');
+  assert.equal(a.text, 'Möte i Järpås i stället för Vara (troligen): vi väntar ca 7 min på 24360');
+  assert.equal(a.short, 'möte Järpås: vänta 7 min', 'panelens korta rad');
+  assert.equal(I.alerts(m, { name: s => ROUTE.get(s) || s, follow: true }).find(x => x.key === 'm|24360|Vr').text,
+    'Möte i Järpås i stället för Vara (troligen): tåget väntar ca 7 min på 24360', 'Var är tåget?: tåget, inte vi');
   assert.equal(a.say, 'Mötet flyttas troligen till Järpås. Vi väntar där cirka 7 minuter.');
   const ut = I.announcement(m, { name: s => ROUTE.get(s) || s, clock: t => new Date(t).toTimeString().slice(0, 5) });
   assert.match(ut.sv, /^Vi är cirka 19 minuter försenade på grund av väntan på mötande tåg\./);
@@ -384,11 +387,17 @@ test('störningar (OperativeEvent): bara de som berör resten av vår linje och 
     { Id: 'g', EventType: { Description: 'Banarbete' }, StartDateTime: T('10:30'), TrafficImpact: [{ PublicMessage: { Header: 'Spårarbete Vara–Vedum' }, FromLocation: [{ Signature: 'Vr' }], ToLocation: [{ Signature: 'Vdm' }] }] }
   ];
   const m = setup([], { messages });
-  assert.deepEqual(m.messages.map(x => x.id), ['a', 'f']);
-  assert.equal(m.messages[0].header, 'Signalfel i Vedum', 'senast ändrade publika meddelandet');
-  assert.equal(m.messages[0].text, 'Tågen kör med nedsatt fart.');
-  assert.deepEqual(m.messages[0].sigs, ['Vdm']);
-  assert.equal(m.messages[0].end, at('13:00'));
+  // I ordning längs linjen (2026-11-26f): Vara–Vedum före Vedum
+  assert.deepEqual(m.messages.map(x => x.id), ['f', 'a']);
+  assert.equal(m.messages[1].header, 'Signalfel i Vedum', 'senast ändrade publika meddelandet');
+  assert.equal(m.messages[1].title, 'Signalfel i Vedum', 'Trafikverkets egen rubrik går före');
+  assert.equal(m.messages[0].title, 'Växelfel', 'händelsetypen i ord');
+  assert.equal(m.messages[1].text, 'Tågen kör med nedsatt fart.');
+  assert.deepEqual(m.messages[1].sigs, ['Vdm']);
+  assert.deepEqual(m.messages[0].sigs, ['Vr', 'Vdm'], 'platserna i linjens ordning');
+  assert.equal(m.messages[1].end, at('13:00'));
+  assert.equal(m.messages[1].clear, false, 'pågår när vi är där');
+  assert.ok(m.messages[1].ourT > at('11:00'), 'när vi är vid första berörda plats');
   // Det som inte visas, och varför (sparas i körningen)
   assert.deepEqual(m.messagesHidden.map(x => [x.id, x.reason]), [['c', 'inte under resan'], ['d', 'planerat arbete'], ['e', 'annan bana'], ['g', 'planerat arbete']]);
   assert.equal(m.messagesHidden[1].header, 'Banarbete', 'utan publikt meddelande: händelsetypen');
@@ -797,21 +806,24 @@ test('meddelanden: texter och nycklar, och samma sak meddelas en gång per nivå
   const m = {
     meetings: [{ level: 2, otn: '24360', ident: '24360', sig: 'Vr', theirDelayMin: 6, waitMin: 6 }],
     connections: [{ level: 1, otn: '3049', status: 'knappt', transferMin: 3, adv: at('11:49'), to: ['G'] }],
-    incoming: [], stops: [], deviations: [{ sig: 'Hr', text: 'Spårändrat' }], messages: []
+    incoming: [], stops: [], deviations: [{ sig: 'Hr', text: 'Spårändrat' }], messages: [],
+    end: { sig: 'Hr' }
   };
   const list = I.alerts(m, { name: s => ({ Vr: 'Vara', G: 'Göteborg C', Hr: 'Herrljunga C' })[s] || s, clock });
+  // Viktigast först: nivå 2, sedan möte före knappt byte före avvikelse (2026-11-26f)
   assert.deepEqual(list.map(a => a.text), [
-    'Möte Vara: 24360 är 6 min sent – vi väntar ca 6 min',
-    'Anslutning 11:49 Göteborg C: knappt (3 min)',
+    'Möte i Vara: vi väntar ca 6 min på 24360 (6 min sent)',
+    'Byte till Göteborg C 11:49 i Herrljunga C: 3 min – knappt',
     'Herrljunga C: Spårändrat'
   ]);
+  assert.deepEqual(list.map(a => a.short), ['möte Vara: vänta 6 min', 'knappt byte Göteborg C', 'Spårändrat Herrljunga C']);
   assert.equal(list[1].say, 'Anslutningen mot Göteborg C 11:49 blir knapp.');
   const notified = new Map([['d|Hr|Spårändrat', 1]]);
   assert.deepEqual(I.newAlerts(list, notified).map(a => a.key), ['m|24360|Vr', 'c|3049']);
   assert.deepEqual(I.newAlerts(list, notified), [], 'redan meddelat');
   m.connections[0].level = 2;
   m.connections[0].status = 'missas';
-  assert.deepEqual(I.newAlerts(I.alerts(m, { clock }), notified).map(a => a.text), ['Anslutning 11:49 G: missas'], 'värre: meddelas igen');
+  assert.deepEqual(I.newAlerts(I.alerts(m, { clock }), notified).map(a => a.text), ['Byte till G 11:49 i Hr missas – går när vi kommer fram'], 'värre: meddelas igen');
 });
 
 test('loggen över Trafikverkets svar: bara ändringar, mötande tågs position och vad appen räknade med', () => {
@@ -1186,4 +1198,49 @@ test('tågpositioner: bara dagens körning när avgångsdatumet anges, och rader
   assert.equal(I.parsePositions(list, { date: '2026-11-24' }).size, 0, 'ingen position för en annan dag');
   assert.equal(I.parsePositions(list).get('23248').t, Date.parse('2026-11-26T08:36:28.000+01:00'), 'utan datum: den senaste som inte är raderad');
   assert.ok(I.queryPositions(['23248']).includes('<INCLUDE>Train.OperationalTrainDepartureDate</INCLUDE>'));
+});
+
+test('störningar: händelsetypen i ord, var händelsen är och att det är ett fordonsfel (provet 2026-11-26)', () => {
+  // O261126-030 i provet: fordonsfel mellan Veas och Vpm, påverkan Vänersborg – Göteborg C till 11:00, inget tågnummer
+  const raw = {
+    OperativeEventId: 'O261126-030', EventType: { Description: 'Dragfordon/motorvagn', EventTypeCode: '34' },
+    StartDateTime: '2026-11-26T08:19:39.236+01:00', EventState: 1,
+    EventSection: [{ FromLocation: { Signature: 'Veas' }, ToLocation: { Signature: 'Vpm' } }],
+    TrafficImpact: [{ StartDateTime: '2026-11-26T08:19:54.941+01:00', EndDateTime: '2026-11-26T11:00:00.000+01:00',
+      SelectedSection: [{ SectionLocation: [{ Signature: 'Öx', Affected: true }, { Signature: 'Gas', Affected: true }, { Signature: 'G', Affected: true }] }] }]
+  };
+  const m = I.parseMessage(raw);
+  assert.deepEqual(m.at, ['Veas', 'Vpm'], 'var händelsen är');
+  assert.equal(m.vehicle, true);
+  assert.equal(I.messageTitle(m), 'Fel på ett tåg (lok eller motorvagn)');
+  assert.equal(m.end, Date.parse('2026-11-26T11:00:00.000+01:00'));
+  // Trafikverkets egen rubrik går före
+  const pub = I.parseMessage(Object.assign({}, raw, { TrafficImpact: [{ PublicMessage: { Header: 'Fordonsfel vid Trollhättan', Description: 'Tåg kan bli försenade.' } }] }));
+  assert.equal(I.messageTitle(pub), 'Fordonsfel vid Trollhättan');
+  assert.equal(I.messageTitle(I.parseMessage({ EventType: { Description: 'Spårväxel' } })), 'Växelfel');
+  assert.equal(I.messageTitle(I.parseMessage({ EventType: { Description: 'Spår (t.ex. solkurva, skevningsfel, spårlägesfel)' } })), 'Fel på spåret');
+  assert.equal(I.messageTitle(I.parseMessage({ EventType: { Description: 'Annat (järnväg)' } })), 'Trafikstörning');
+});
+
+test('störningar längs vägen: när vi är där, klar före oss räknas inte, och texten säger vad, var och sedan när', () => {
+  const messages = [
+    // Fordonsfel Vara–Vedum som pågår till 13:00
+    { Id: 'f', EventType: { Description: 'Dragfordon/motorvagn' }, StartDateTime: T('10:20'),
+      TrafficImpact: [{ FromLocation: [{ Signature: 'Vr' }], ToLocation: [{ Signature: 'Vdm' }], EndDateTime: T('13:00') }] },
+    // Växelfel i Vedum som är klart 11:15, innan vi är där (11:30); nu är 10:55
+    { Id: 'v', EventType: { Description: 'Spårväxel' }, StartDateTime: T('10:00'),
+      TrafficImpact: [{ Location: { LocationSignature: 'Vdm' }, EndDateTime: T('11:15') }] }
+  ];
+  const m = setup([], { messages });
+  const f = m.messages.find(x => x.id === 'f'), v = m.messages.find(x => x.id === 'v');
+  assert.equal(f.title, 'Fel på ett tåg (lok eller motorvagn)');
+  assert.equal([f.clear, f.level].join(), 'false,1', 'pågår när vi är där');
+  assert.ok(f.ourT != null && f.i < v.i, 'Vara före Vedum, med vår tid där');
+  assert.equal([v.clear, v.level].join(), 'true,0', 'klar innan vi är där');
+  const name = s => ({ Vr: 'Vara', Vdm: 'Vedum' })[s] || s;
+  const clock = t => new Date(Math.round(t / 60000) * 60000).toTimeString().slice(0, 5);
+  const list = I.alerts(m, { name, clock }).filter(a => a.kind === 'storning');
+  assert.deepEqual(list.map(a => a.text), [`Fel på ett tåg (lok eller motorvagn) vid Vara – Vedum, sedan ${clock(at('10:20'))}`], 'bara den som pågår');
+  assert.equal(list[0].short, 'störning Vara');
+  assert.equal(list[0].say, 'Trafikstörning vid Vara: fel på ett tåg (lok eller motorvagn).');
 });

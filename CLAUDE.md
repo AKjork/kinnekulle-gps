@@ -2135,3 +2135,83 @@ André 2026-11-26, efter att ha provat Var är tåget?: "Det fungerade. Dock är
 - `node --test "tests/*.test.js"` (238).
 - `node tests/run-browser-tests.mjs`, nytt: *startsidan: RailTimer i rubriken och ⋮ → Startsidan tar en dit; under en resa finns Avsluta överst och kräver två tryck*. Det täcker resan, sidorna, rapporten, startsidan, två tryck och ikonerna. *var är tåget: startformuläret …* provar nu att Sluta följa går direkt till startsidan, de senast följda tågen och RailTimer i rubriken.
 - Bilder: `--shot=startformular`, `--shot=startformular-var-ar-taget` (senast följda), `--shot=resa` och `--shot=resa-liggande` (Avsluta överst) och `--shot=rapport`.
+
+## Uppdatering (2026-11-26f): resvyn och Info efter en UX-granskning
+
+André 2026-11-26, med två bilder från iPhone (Var är tåget? för 13305):
+- "Infon är svår att fatta? Vem/vilka har problem med dragfordon/motorvagn?"
+- "När man kollar stationer så är det en väldigt liten ruta längst ned."
+- "Du behöver koppla in en ui/ux agent som kan se över frontend på appen. Nu är det inte bra."
+
+En agent granskade resvyn, Info och startsidan. Granskningen finns i projektet (`claude/ux-granskning-2026-11-26.md`). Uppmätt på Andrés bild: stationslistan fick 127 av 852 px (två stationer), panelen och kartan 50 %.
+
+Appversion `2026-11-26f`. Logiken för ankomst och avgång är oförändrad.
+
+### Resvyn
+- **Tre flikar: Stationer | Karta | Info** (`setInfoTab('stations'|'map'|'info')`, `#journey.show-map`, `.show-info`).
+  - Stående telefon: Stationer = panelen och listan, Karta = panelen och kartan på hela ytan, Info = hela ytan. Listan visar nu ca 8 stationer.
+  - Liggande och skärmar ≥ 820 px (`WIDE_QUERY`, `wideLayout()`): som förut, kartan står alltid till vänster och fliken Karta döljs. Panelen spänner över två rader så att listan börjar direkt under flikarna.
+  - **Förvald flik** (`defaultTab()`): Mät tidtabell Stationer, Bara info Info, Var är tåget? Karta. Också vid Återuppta. Bakåt går till den förvalda fliken.
+  - ✕ (dölj kartan) gäller bara liggande (`mapCollapsedNow()`); stående är fliken valet. Kartan ritas även dold, så att den har rätt innehåll när fliken väljs.
+  - Vrids telefonen med fliken Karta vald blir det Stationer.
+- **Resans rad i appens rubrik:** 🚂 *Tåg 3344 → Hällekis* [Avsluta] ⋮ (`journeyShortTitle`, `setJourneyTitle`, `#headerTrip`). Numret som skrevs, utan startstation och parentes. Hela texten står i `title` och i `#journeyTitle`, som är dold. `#btnFinishTop` ligger i rubriken. *GPS aktiv* visas inte under resan, *GPS saknas* syns.
+- `body.journey-mode` har `position:fixed; inset:0` i stället för `100dvh`. På Andrés bild var det ca 45 px tomt under listan i hemskärmsappen. Inte provat på telefon.
+- **Listan** rullar så att nästa station är andra raden, med den förra ovanför. I Var är tåget? också när Trafikverket ändrar nästa station och första gången.
+- *passerad – ingen tid* och *bör ha passerats* står bara på den sista sådana raden.
+
+### Panelen
+- **Tre värden:** plan, tid kvar och *mot tidtabell* (förut *avvikelse*). ±1 min visas som *I tid*.
+- Farten står under avståndet: *kvar · 72 km/h* (`setNextSub1`, `speedSuffix`). GPS-noggrannheten bara när den är sämre än ±30 m, i gult. Den fjärde rutan (`#gpsSpeed`, `#gpsAccuracy`) är dold men fylls som förut.
+- Med beräknad ankomst: *kvar · ca 09:43*, eller *kvar · i tid* inom en minut från planen (förut *beräknat 09:43*).
+- **Info-raden** (`#npInfo`) är alltid en rad och ser ut som en knapp: färgad prick och kant, vit text, ›. Prognosen och det viktigaste att hålla koll på, sedan antal till: *Hällekis 05:33 +6 · byte till Mariestad missas · 1 till*.
+- **Källan i Var är tåget?** är en rad med tågets GPS (*📡 Tågets GPS · 12 s sedan · …*), och ett tryck visar allt. Utan tågets GPS visas hela texten, eftersom den är svaret på frågan.
+
+### Info
+- **Ordningen:** prognos, *Att hålla koll på*, utrop, längs vägen, byten, nästa tur och sist *Så räknas det* med *uppdaterad HH:MM*.
+- **Nästa station överst** (`#infoNext`, klistrad), eftersom panelen inte syns i Info stående: *Nästa: Blomberg 05:13 · +2 min · 1,5 km*. Tryck går till Stationer. Döljs liggande.
+- **Prognosen:** *Beräknad ankomst · Hällekis*, *försenad av möte i Råbäck*, och under bara *Plan 05:27 · spår 2*. Är uppgifterna äldre än 3 min står överst *⚠ Senast uppdaterad 09:31 – ingen kontakt med Trafikverket*.
+- **Att hålla koll på** (`watchItems`, `watchListHtml`): en mening per sak, viktigast först. **Samma lista** ger siffran på fliken, panelens rad och meddelandena (`notifyInfo`), så att de inte kan gå isär. Utan något: *Inget som påverkar resan just nu* (grönt).
+  - Ordningen: nivå, sedan ☎ ring trafikledningen, byte som missas, möte med väntan, knappt byte, avvikelse, störning, vändtid.
+  - Ett byte med ☎-förslaget står bara som ☎, med plats och spår under. Avsnittet *Åtgärd* är borttaget.
+  - I Var är tåget? inget ☎.
+- **Texterna** (`INFO.alerts` i `railtimer-info.js`, används också av uppläsningen och toasten):
+  - *Byte till Oslo 12:14 i Göteborg C: 3 min – knappt*, *… missas – går före vi är framme*, *… har redan gått*;
+  - *Möte i Råbäck: vi väntar ca 5 min på 3347 (6 min sent)*, *Möte i Blomberg i stället för Råbäck (troligen): …*;
+  - *3337 från Skövde hinner inte till oss i Lidköping*.
+  - Varje sak har nu också `kind`, `prio`, `short` (panelens rad) och `ck` (anslutningens nyckel).
+  - Med `opts.follow` (Var är tåget?) står det *tåget* i stället för *vi* och *oss*. Det gäller även mötesraden, bytena och rubrikerna i Info.
+- **Störningar i klartext** (`messageTitle`, `messageRowHtml`): rubriken i ord, var på vår linje (*Vara – Vedum* eller *vid Vedum*) och sedan när. Vänster kolumn är när vi är vid första berörda plats. Status *pågår* med *klart ca 10:30*.
+  - Fordonsfel: *Fel på ett tåg (lok eller motorvagn)* och *Trafikverket anger inte vilket tåg.* (OperativeEvent har inget tågnummer, se provet 2026-11-26).
+  - En störning som beräknas vara klar innan vi är där (`clear`, `level` 0) står som *klart före oss* i grått och räknas inte i listan eller siffran.
+  - `compute` ger störningarna i linjens ordning, med `sigs` sorterade längs linjen, `i`, `ourT`, `clear`, `level` och `title`. Utropet använder `title` och bara de som pågår.
+- **Mötesraden** (`meetingRow`, `sourceText`, `positionText`): *Möte 3347 i Råbäck* (förut *Råbäck · möte 3347*), under *6 min sent (enligt Trafikverket) · enkelspår · nu 3,9 km från Råbäck · vi åker ca 05:28*.
+  - Källan *ingen rapport än* i stället för *enligt tidtabell*, som lät som en uppgift.
+  - Åldern på positionen bara när den är minst en minut, och farten visas inte.
+  - Status *+5 min, vi väntar* (förut *väntan*).
+- **Byten:** rubriken *Byten* med Tåg | Buss | Båda | Mina till höger.
+  - **Varningar: bara valda | alla** ligger under ⋮ → Inställningar → Under resan (*Varna bara för byten som visas*, `#btnConnAlerts`). I Info står bara en rad när den är av.
+  - Pilförklaringen står under *Så räknas det*.
+  - ☆-tipset (*☆ = resenärer byter här – appen bevakar bytet.*) visas de tre första resorna utan markeringar (`railtimer_star_tip_v1`).
+  - Rubrikerna i vanlig skrift. Det dolda står till höger som länk som visar Båda (*2 tåg dolda*). *bara tåg* och *stationer inom 30 min* är borttaget.
+  - **☆ är en egen knapp** (`.star-btn`, 44 px). Förut markerade hela raden, så den som tryckte för att läsa markerade av misstag.
+
+### Färger och läsbarhet
+- `--mut` #8b929b (5,1:1 på kortbakgrunden, förut 3,3:1), `--err` #f87171 och `--blue` #60a5fa.
+- Inga texter som ska läsas under 12 px. Tryckytor minst 44 px (flikarna, valen, ⋮, Avsluta, kartknapparna, senast följda tåg).
+- **Vid station** är neutral (vit kant), inte orange. Orange betyder bara *håll koll*.
+- Kartan: nästa station är en vit ring och stationen tåget står vid vit. Blått är bara tågets position från Trafikverket.
+- Valda knappar i val (`.seg`, Följ) är grå i stället för gröna, så att *vald* inte läses som *OK*.
+
+### Startsidan
+- Förklaring under alla tre valen, kortare: *Mäter ankomst och avgång med telefonens GPS. Sparas.*, *Möten, prognos och byten för tåget du är på. Inget sparas.*, *Följ ett tåg du inte är på – din GPS används inte. …*
+- Startknappen: *Starta mätningen*, *Starta resan*, *Visa var tåget är*.
+- *Fordonstyp* utan asterisk. Raden om att resan startar av sig själv har bara avgången under.
+- GPS-märket visas inte på startsidan; GPS-läget står under Start-knappen.
+
+### Inte gjort (granskningens P3)
+- Ihopfälld *Fler val* för dagens tur och anteckning, start och slut på en rad, rapporten med samma rader som stationslistan, typografisk skala och ljust läge för sol.
+
+### Tester
+- `node --test "tests/*.test.js"` (240), nya: *störningar längs vägen: när vi är där, klar före oss …* och *störningar: händelsetypen i ord …*. Meddelandetesterna har de nya texterna, `short` och `follow`.
+- `node tests/run-browser-tests.mjs` (144): flikarna (listan stor, Karta med panelen, ✕ bara liggande), Att hålla koll på och siffran, ☆ som egen knapp, varningarna under Inställningar och de nya texterna.
+- Bilder: `--shot=resa`, `--shot=info`, `--shot=info-tagvard`, `--shot=var-ar-taget`, `--shot=resa-liggande`, `--shot=startformular`.

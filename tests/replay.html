@@ -2176,12 +2176,14 @@ test('info: ett sent mötande tåg ger väntan, prognos och missad anslutning �
   assert(r.trv.calls[0].includes('name="OperationalTrainNumber" value="3344"'), 'först vårt tåg');
   assert(r.trv.calls[1].includes('<EQ name="LocationSignature" value="Rbk" />'), 'sedan tågen på linjen');
   const np = d.getElementById('npInfo');
-  assert(!np.hidden && /^Hällekis \d\d:\d\d \+\d+ · möte Råbäck · 1 anslutning missas$/.test(np.textContent), np.textContent);
-  assert(np.offsetHeight < 40, 'raden får plats på högst två rader: ' + np.offsetHeight);
+  // Panelens rad: prognosen och det viktigaste (bytet som missas går före mötet), sedan hur många till (2026-11-26f)
+  assert(!np.hidden && /^Hällekis \d\d:\d\d \+\d+ · byte till Mariestad missas · 1 till$/.test(np.textContent), np.textContent);
+  assert(np.offsetHeight < 50, 'raden är en rad: ' + np.offsetHeight);
   assert(np.classList.contains('l2'), 'raden är röd');
   assert(!d.getElementById('infoCount').hidden, 'siffra på fliken');
   assertEqual(r.vibrations.length, 1, 'vibrerar en gång');
-  assert(/^Möte Råbäck: 3347 är 6 min sent – vi väntar ca \d+ min \(och 1 till i Info\)$/.test(d.getElementById('journeyMsg').textContent), d.getElementById('journeyMsg').textContent);
+  assert(/^Byte till Mariestad \d\d:\d\d i Hällekis missas – går före vi är framme \(och 1 till i Info\)$/.test(d.getElementById('journeyMsg').textContent), d.getElementById('journeyMsg').textContent);
+  assertEqual(d.getElementById('infoCount').textContent, '2', 'siffran: bytet och mötet');
 
   np.click();
   const shown = id => r.w.getComputedStyle(d.getElementById(id)).display !== 'none';
@@ -2195,14 +2197,17 @@ test('info: ett sent mötande tåg ger väntan, prognos och missad anslutning �
   assert(infoBox.top - tabsBottom < 12 && r.w.innerHeight - infoBox.bottom < 20, `infon fyller ytan under flikarna: ${Math.round(infoBox.top)}–${Math.round(infoBox.bottom)} av ${r.w.innerHeight}`);
   assert(infoBox.height > 0.75 * r.w.innerHeight, 'infon är stor: ' + Math.round(infoBox.height));
   const pane = d.getElementById('infoPane');
-  assert(pane.textContent.includes('Prognos Hällekis'), 'prognos');
-  assert(pane.textContent.includes('Råbäck · möte 3347') && pane.textContent.includes('enkelspår') && pane.textContent.includes('enligt Trafikverket'), 'mötet');
+  assert(pane.textContent.includes('Beräknad ankomst · Hällekis') && pane.textContent.includes('försenad av möte i Råbäck'), 'prognos');
+  // Att hålla koll på: samma två som siffran, viktigast först
+  const watch = Array.from(pane.querySelectorAll('.watch-row')).map(e => e.textContent);
+  assert(watch.length === 2 && /^Byte till Mariestad \d\d:\d\d i Hällekis missas/.test(watch[0]) && /^Möte i Råbäck: vi väntar ca \d+ min på 3347 \(6 min sent\)$/.test(watch[1]), watch.join(' | '));
+  assert(pane.textContent.includes('Möte 3347 i Råbäck') && pane.textContent.includes('enkelspår') && pane.textContent.includes('enligt Trafikverket'), 'mötet');
   // Spårtypen från Trafikverkets linjebok (railtimer-infra.js): Kinnekullebanan är enkelspår, inte bara troligen
   assert(r.w.RailTimerInfra && r.w.RailTimerInfra.lines.length > 20, 'underlaget om infrastrukturen är inläst');
   assert(!pane.textContent.includes('troligen enkelspår'), 'enkelspår enligt linjeboken');
   assert(/Enkel- eller dubbelspår enligt Trafikverkets linjebok/.test(pane.textContent), 'Så räknas det: ' + pane.textContent.slice(-600));
   const rows = Array.from(pane.querySelectorAll('.info-row')).map(e => e.textContent);
-  assert(rows.some(t => t.startsWith(formatHm(Date.parse(r.rt.state.route[5].scheduledArrival) + 5 * 60000)) && t.includes('Mariestad') && t.includes('missas')), 'tåget 5 min efter missas: ' + rows.join(' | '));
+  assert(rows.some(t => t.includes(formatHm(Date.parse(r.rt.state.route[5].scheduledArrival) + 5 * 60000)) && t.includes('Mariestad') && t.includes('missas')), 'tåget 5 min efter missas: ' + rows.join(' | '));
   assert(rows.some(t => t.includes('Mariestad') && t.includes('att byta') && t.includes('Västtågen 3053') && t.includes('spår 2')), 'tåget 15 min efter hinns');
   assert(!rows.some(t => t.includes('3349')), 'tåget tillbaka mot Lidköping är ingen anslutning');
 
@@ -2222,7 +2227,12 @@ test('info: ett sent mötande tåg ger väntan, prognos och missad anslutning �
 
   d.getElementById('tabStations').click();
   assert(!d.getElementById('journey').classList.contains('show-info'), 'tillbaka till stationerna');
-  assert(shown('stationList') && shown('nextPanel') && shown('routeMapContainer') && !shown('infoView'), 'stationer, panel och karta igen');
+  // Stående: Stationer är panelen och listan, kartan har en egen flik (2026-11-26f)
+  assert(shown('stationList') && shown('nextPanel') && !shown('routeMapContainer') && !shown('infoView'), 'stationer och panel');
+  assert(d.getElementById('stationList').getBoundingClientRect().height > 0.45 * r.w.innerHeight, 'listan är stor: ' + Math.round(d.getElementById('stationList').getBoundingClientRect().height));
+  d.getElementById('tabMap').click();
+  assert(shown('routeMapContainer') && shown('nextPanel') && !shown('stationList'), 'Karta: panelen och kartan');
+  assert(r.w.getComputedStyle(d.getElementById('mapHide')).display === 'none', '✕ behövs inte när kartan är en flik');
   const svg = d.querySelector('#routeMap svg');
   assert(svg && Math.abs(svg.getBoundingClientRect().width - d.getElementById('routeMap').clientWidth) < 2, 'kartan ritas i rätt storlek');
   assert(d.scrollingElement.scrollHeight <= r.w.innerHeight + 1, 'sidan scrollar inte – bara listan');
@@ -2296,12 +2306,13 @@ test('info: flyttat möte – 3347 har åkt från Råbäck mot oss och vi vänta
   const mt = m.meetings[0];
   assertEqual([mt.sig, mt.at, mt.move, mt.moved], ['Rbk', 'Bmb', 'rapporterat', true], 'mötet flyttat till Blomberg');
   assert(mt.waitMin >= 1, 'vi väntar i Blomberg: ' + mt.waitMin);
-  assert(/· möte Blomberg ·/.test(d.getElementById('npInfo').textContent), 'panelen: ' + d.getElementById('npInfo').textContent);
   const texts = r.w.RailTimerInfo.alerts(m, { name: s => ({ Bmb: 'Blomberg', Rbk: 'Råbäck' })[s] || s }).map(a => a.text);
-  assert(texts.some(t => /^Möte Blomberg i stället för Råbäck: vi väntar ca \d+ min på 3347$/.test(t)), 'meddelandet: ' + texts.join(' | '));
+  assert(texts.some(t => /^Möte i Blomberg i stället för Råbäck: vi väntar ca \d+ min på 3347$/.test(t)), 'meddelandet: ' + texts.join(' | '));
   r.rt.setInfoTab('info');
   const pane = d.getElementById('infoPane').textContent;
-  assert(pane.includes('Blomberg · möte 3347') && pane.includes('flyttat hit från Råbäck – 3347 har passerat Råbäck'), 'fliken: ' + pane);
+  assert(pane.includes('Möte i Blomberg i stället för Råbäck'), 'Att hålla koll på: ' + pane);
+  assert(pane.includes('försenad av möte i Blomberg'), 'prognosen: ' + pane);
+  assert(pane.includes('Möte 3347 i Blomberg') && pane.includes('flyttat hit från Råbäck – 3347 har redan passerat Råbäck'), 'fliken: ' + pane);
   assert(pane.includes('flyttar mötet närmare oss'), 'förklaringen');
 
   // Loggen: vårt tåg och 3347 längs linjen, med rapporten från Råbäck och vad appen räknade med
@@ -2368,7 +2379,7 @@ test('gångprofil: GPS-spåren från GitHub ger beräknad ankomst från där tå
   // Panelen: tid kvar till den beräknade ankomsten
   r.rt.updateNextStopUI();
   const d = r.w.document;
-  assertEqual(d.getElementById('nextCountdownSub').textContent, 'beräknat ' + formatHm(est.t), 'panelen');
+  assert(['kvar · ca ' + formatHm(est.t), 'kvar · i tid'].includes(d.getElementById('nextCountdownSub').textContent), 'panelen: ' + d.getElementById('nextCountdownSub').textContent);
   // Info räknar ankomsten till Blomberg från positionen
   r.trv = fakeTrafikverketInfo(r.rt.state.route, { meetLateMin: 0 });
   r.w.fetch = r.trv.fetch;
@@ -2409,7 +2420,7 @@ test('längs banan: GPS-spåren ger linjen längs banan – 3347 ute på enkelsp
   r.rt.setInfoTab('info');
   const pane = r.w.document.getElementById('infoPane').textContent;
   assert(pane.includes('flyttat hit från Råbäck – 3347 är ute på enkelspåret mot oss enligt tågets position'), pane);
-  assert(/km längs banan från Blomberg · 80 km\/h/.test(pane), pane);
+  assert(/nu [\d,]+ km längs banan från Blomberg/.test(pane), pane);
   assert(pane.includes('jämförs med mötesplatserna längs banan'), 'förklaringen');
   // Körningen sparar att flytten kom från positionen
   r.rt.stopJourney(false, 'Avslutad manuellt');
@@ -2720,13 +2731,13 @@ test('info: mötande tågets position, anslutningar längs vägen och färdigt u
   r0.rt.setInfoTab('info');
   const pane = () => r0.w.document.getElementById('infoPane').textContent;
   assert(trv.calls.some(b => b.includes('objecttype="TrainPosition"') && b.includes('value="3347"')), 'positionen för det mötande tåget hämtas');
-  assert(/km från Råbäck · 0 km\/h · 30 s sedan/.test(pane()), pane());
+  assert(/Möte 3347 i Råbäck/.test(pane()) && /nu [\d,]+ km från Råbäck/.test(pane()), pane());
   // Byten längs vägen: åt vilket håll bytet går står i varje rad (→ från oss, ← till oss) och i statusen
   assert(pane().includes('Byten längs vägen') && /Blomberg · vi är där ca \d\d:\d\d/.test(pane()), pane());
   const midRows = Array.from(r0.w.document.querySelectorAll('#infoPane .conn-row')).map(e => e.textContent);
   assert(midRows.some(t => t.includes('→ Mariestad') && t.includes('Västtågen 3071') && /att byta|missas/.test(t)), midRows.join(' | '));
   assert(midRows.some(t => t.includes('← från Mariestad') && t.includes('Västtågen 3070') && t.includes('till oss')), midRows.join(' | '));
-  assert(pane().includes('→ resenärer byter från oss · ← resenärer byter till oss'), 'förklaringen av pilarna');
+  assert(pane().includes('→ betyder att resenärer byter från oss') && pane().includes('← betyder att resenärer byter till oss'), 'förklaringen av pilarna under Så räknas det');
   // Utropet: sena på grund av mötet, och anslutningen i Hällekis som missas
   const sv = r0.w.document.getElementById('utropText').textContent;
   assert(sv.startsWith('Vi är cirka') && sv.includes('på grund av möte med ett försenat tåg') && sv.includes('Beräknad ankomst till Hällekis'), sv);
@@ -2817,7 +2828,7 @@ test('buss: utan inställningar används den gemensamma nyckeln från GitHub –
   assertEqual(btn('tag').getAttribute('aria-pressed'), 'true', 'förval: Tåg');
   assert(!btn('buss').disabled && !btn('bada').disabled, 'Buss och Båda går att välja utan nyckel');
   assert(!infoPaneText(r).includes('nyckel'), 'inget att fylla i: ' + infoPaneText(r));
-  assert(infoPaneText(r).includes('Tryck ☆ på ett byte som resenärer gör.'), 'förklaringen till ☆');
+  assert(infoPaneText(r).includes('☆ = resenärer byter här – appen bevakar bytet.'), 'förklaringen till ☆');
   assertEqual(vt.calls.length, 0, 'med Tåg frågas inte Västtrafik');
   // Buss: token från vt-token.json (förbi cachen), sedan bussarna
   btn('buss').click();
@@ -2881,7 +2892,7 @@ test('buss: Buss visar bussarna i slutstationen och döljer tågen med antal; va
   r.rt.setInfoTab('info');
   const d = r.w.document;
   assert(!d.querySelector('[data-info="conn-buss"]').disabled, 'Buss går att välja med nyckel');
-  assert(infoPaneText(r).includes('Byter från oss i Hällekis · bara tåg'), 'rubriken säger valet: ' + infoPaneText(r));
+  assert(infoPaneText(r).includes('Byter från oss i Hällekis') && infoPaneText(r).includes('Byten'), 'rubrikerna: ' + infoPaneText(r));
   const vibBefore = r.vibrations.length;
   d.querySelector('[data-info="conn-buss"]').click();
   await realSleep(80);
@@ -2892,7 +2903,8 @@ test('buss: Buss visar bussarna i slutstationen och döljer tågen med antal; va
   assertEqual(m.connections[0].status, 'missas', 'B1 hinns inte när vi är 6 min sena');
   assertEqual(m.connections[1].delayMin, 2, 'B2 med Västtrafiks beräknade tid');
   assertEqual(m.connectionsHidden, { 'tåg': 2, buss: 0 }, 'två tåg dolda');
-  assert(infoPaneText(r).includes('Byter från oss i Hällekis · bara buss · 2 tåg dolda'), infoPaneText(r));
+  // Det dolda står till höger i rubriken, som länk som visar Båda
+  assert(d.querySelector('#infoPane .info-sec.sub [data-info="conn-bada"]').textContent === '2 tåg dolda', infoPaneText(r));
   const rows = connRows(r);
   assert(rows.some(t => t.includes('→ Mariestad Resecentrum') && t.includes('Buss B1') && t.includes('läge A') && t.includes('missas') && t.includes('går när vi kommer fram')), rows.join(' | '));
   assert(!rows.some(t => t.includes('Västtågen')), 'tågen syns inte');
@@ -2900,22 +2912,26 @@ test('buss: Buss visar bussarna i slutstationen och döljer tågen med antal; va
   assert(vt.calls.some(c => c.url.includes('/stop-areas/G-HLK/departures?startDateTime=')), 'avgångarna i Hällekis');
   assert(JSON.parse(r.w.localStorage.getItem('railtimer_vt_stops_v1')).Hlk.areas[0].gid === 'G-HLK', 'hållplatsen sparas per station');
   // Panelen, meddelandet och utropet följer valet
-  assert(/· 1 anslutning missas$/.test(d.getElementById('npInfo').textContent), d.getElementById('npInfo').textContent);
+  assert(/· byte till buss B1 mot Mariestad Resecentrum missas/.test(d.getElementById('npInfo').textContent), d.getElementById('npInfo').textContent);
   assert(r.vibrations.length > vibBefore, 'meddelande för bussen');
-  assert(d.getElementById('journeyMsg').textContent.includes('buss B1 Mariestad Resecentrum: missas'), d.getElementById('journeyMsg').textContent);
+  assert(d.getElementById('journeyMsg').textContent.includes('Byte till buss B1 mot Mariestad Resecentrum') && d.getElementById('journeyMsg').textContent.includes('missas'), d.getElementById('journeyMsg').textContent);
   assert(r.rt.spoken().some(t => t === `Anslutningen till bussen mot Mariestad Resecentrum ${formatHm(m.connections[0].adv)} hinns inte.`), r.rt.spoken().join(' | '));
   assert(d.getElementById('utropText').textContent.includes('Buss B1 mot Mariestad Resecentrum'), d.getElementById('utropText').textContent);
   // Hämtas inte igen inom två minuter
   const boards = vt.boards();
   await r.rt.refreshInfo();
   assertEqual(vt.boards(), boards, 'bussarna hämtas högst varannan minut');
-  // Varningarna gäller alla: tåget 3051 som missas räknas också
-  d.querySelector('[data-info="conn-alerts"]').click();
+  // Varningarna gäller alla: tåget 3051 som missas räknas också. Valet ligger under ⋮ → Inställningar (2026-11-26f).
+  const alertsBtn = d.getElementById('btnConnAlerts');
+  assert(!d.querySelector('[data-info="conn-alerts"]'), 'inte i Info längre');
+  alertsBtn.click();
   assertEqual(r.rt.infoModel().connAlerts, false, 'varningarna följer inte valet');
-  assert(/· 2 anslutningar missas$/.test(d.getElementById('npInfo').textContent), d.getElementById('npInfo').textContent);
-  assert(infoPaneText(r).includes('Varningarna och utropet gäller alla anslutningar, även de dolda.'), 'det står');
-  assertEqual(d.querySelector('[data-info="conn-alerts"]').textContent, 'Varningar: alla', 'knappen säger alla');
-  d.querySelector('[data-info="conn-alerts"]').click();
+  assertEqual(alertsBtn.getAttribute('aria-pressed'), 'false', 'reglaget av');
+  const wl = () => Array.from(d.querySelectorAll('#infoPane .watch-row')).map(e => e.textContent);
+  assert(wl().filter(t => t.includes('missas')).length === 2, 'två byten missas: ' + wl().join(' | '));
+  assertEqual(d.getElementById('infoCount').textContent, String(wl().length), 'siffran är antalet rader i listan');
+  assert(infoPaneText(r).includes('Varnar för alla byten, även dolda'), 'det står');
+  alertsBtn.click();
   // Båda: tåg och bussar i tidsordning
   d.querySelector('[data-info="conn-bada"]').click();
   await realSleep(50);
@@ -3004,10 +3020,10 @@ test('mina anslutningar: läggs till i Inställningar, och Mina i Info visar bar
   assertEqual(m.connections.map(c => [c.otn, c.status]), [['3349', 'ok'], ['3053', 'ok'], ['3055', 'ok']]);
   assertEqual(m.connectionsHidden, { 'tåg': 1, buss: 0 }, '3051 dold');
   const text = infoPaneText(r);
-  assert(text.includes('Byter från oss i Hällekis · bara mina · 1 tåg dolt'), text);
+  assert(text.includes('Byter från oss i Hällekis') && d.querySelector('#infoPane .info-sec.sub [data-info="conn-bada"]').textContent === '1 tåg dolt', text);
   assert(text.includes('Mina: Tåg 3055 Hällekis · Tåg 3349 Hällekis · Tåg 3053 Hällekis · Tåg 999 Hällekis'), text);
   assert(text.includes('Tåg 999 Hällekis: går inte därifrån inom 2 h efter vår ankomst'), text);
-  assert(!/anslutning missas/.test(d.getElementById('npInfo').textContent), 'varningarna följer valet: ' + d.getElementById('npInfo').textContent);
+  assert(!/missas/.test(d.getElementById('npInfo').textContent), 'varningarna följer valet: ' + d.getElementById('npInfo').textContent);
   assertEqual(JSON.parse(r.w.localStorage.getItem('railtimer_conn_v1')).mode, 'mina', 'valet sparas');
   // Ändra från Info, ta bort en, och tillbaka till resan
   d.querySelector('#infoPane [data-info="own-edit"]').click();
@@ -3039,7 +3055,7 @@ test('mina anslutningar: en egen anslutning som missas ger ☎ ring trafiklednin
   const m = r.rt.infoModel();
   assertEqual(m.connections.map(c => [c.otn, c.status, c.own, c.marked]), [['3051', 'missas', true, false]]);
   assertEqual(m.actions.map(a => a.c.otn), ['3051'], 'förslaget utan ★');
-  const act = d.querySelector('#infoPane .info-row.action');
+  const act = d.querySelector('#infoPane .watch-row.ring');
   assert(act && act.textContent.includes(`Ring trafikledningen: kan 3051 vänta ca ${m.actions[0].waitMin} min?`), act ? act.textContent : infoPaneText(r));
   assert(d.getElementById('npInfo').textContent.includes('☎ ring trafikledningen'), d.getElementById('npInfo').textContent);
   r.rt.stopJourney(false, 'test');
@@ -3058,7 +3074,10 @@ test('☆ markerad anslutning: knapp eller missad ger ☎ ring trafikledningen �
   assertEqual(r.rt.infoModel().actions.length, 0, 'inget förslag utan markering');
   const vib = r.vibrations.length;
   r.rt.clearSpoken();
+  // ☆ är en egen knapp: att trycka på raden markerar inget (2026-11-26f)
   row().click();
+  assertEqual(r.rt.infoModel().actions.length, 0, 'raden markerar inte');
+  row().querySelector('.star-btn').click();
   assert(d.getElementById('journeyMsg').textContent.startsWith('★ Resenärer byter – markerat för tåg 3344'), d.getElementById('journeyMsg').textContent);
   assert(row().classList.contains('marked') && row().textContent.includes('★'), 'markerad');
   assert(JSON.parse(r.w.localStorage.getItem('railtimer_conn_marks_v1'))['3344']['ut|Hlk|tåg|3051'], 'sparas för tågnumret');
@@ -3066,23 +3085,24 @@ test('☆ markerad anslutning: knapp eller missad ger ☎ ring trafikledningen �
   assertEqual(m.actions.length, 1, 'ett förslag');
   const wait = m.actions[0].waitMin;
   assert(wait >= 1 && wait <= 15, 'väntan ' + wait);
-  const act = d.querySelector('#infoPane .info-row.action');
+  const act = d.querySelector('#infoPane .watch-row.ring');
   assert(act && act.textContent.includes(`Ring trafikledningen: kan 3051 vänta ca ${wait} min?`), act ? act.textContent : infoPaneText(r));
   assert(act.textContent.includes('Hällekis → Mariestad') && act.textContent.includes('spår vid samma plattform?'), act.textContent);
-  assert(d.querySelector('#infoPane .info-sec').textContent === 'Åtgärd', 'överst, före utropet');
+  assert(d.querySelector('#infoPane .watch-row') === act, 'överst i Att hålla koll på');
+  assert(!Array.from(d.querySelectorAll('#infoPane .watch-row')).some(e => e.textContent.startsWith('Byte till Mariestad 05:32') || /Byte till Mariestad \d\d:\d\d i Hällekis missas/.test(e.textContent)), 'bytet står bara som ☎');
   assert(d.getElementById('npInfo').textContent.includes('☎ ring trafikledningen'), d.getElementById('npInfo').textContent);
   assert(r.vibrations.length === vib + 1, 'vibrerar');
   assert(r.rt.spoken()[0] === `Ring trafikledningen. Kan tåget mot Mariestad vänta cirka ${wait} minuter?`, r.rt.spoken().join(' | '));
-  assert(!infoPaneText(r).includes('Tryck ☆'), 'förklaringen behövs inte längre');
+  assert(!infoPaneText(r).includes('☆ = resenärer byter här – appen bevakar bytet.'), 'förklaringen behövs inte längre');
   await r.rt.refreshInfo();
   assertEqual(r.vibrations.length, vib + 1, 'meddelas en gång');
   // Tryck igen tar bort markeringen
-  row().click();
+  row().querySelector('.star-btn').click();
   assertEqual(r.rt.infoModel().actions.length, 0, 'borttagen');
-  assert(!d.querySelector('#infoPane .info-row.action'), 'inget förslag');
+  assert(!d.querySelector('#infoPane .watch-row.ring'), 'inget förslag');
   assertEqual(r.w.localStorage.getItem('railtimer_conn_marks_v1'), '{}', 'inget sparat');
   // Markera igen och avsluta: körningen sparar markeringen och att det föreslogs att ringa
-  row().click();
+  row().querySelector('.star-btn').click();
   r.rt.stopJourney(false, 'test');
   await realSleep(100);
   const logs = r.rt.loadLogs();
@@ -3160,11 +3180,11 @@ test('bara info: valet sparas, fordon och anteckningar behövs inte, Info öppna
   const d = r.w.document;
   const shown = id => !d.getElementById(id).hidden;
   assertEqual(d.getElementById('purposeMeasure').getAttribute('aria-pressed'), 'true', 'förval: Mät tidtabell');
-  assert(shown('vehicleGroup') && shown('notesGroup') && !shown('purposeHint'), 'fordon och anteckningar syns');
+  assert(shown('vehicleGroup') && shown('notesGroup') && d.getElementById('purposeHint').textContent.includes('Sparas'), 'fordon och anteckningar syns');
   d.getElementById('purposeInfo').click();
   assertEqual(r.w.localStorage.getItem('railtimer_purpose_v1'), 'info', 'valet sparas');
   assert(!shown('vehicleGroup') && !shown('notesGroup') && shown('purposeHint'), 'fordon och anteckningar döljs');
-  assertEqual(d.getElementById('btnStart').textContent, 'Starta Bara info', 'knappen');
+  assertEqual(d.getElementById('btnStart').textContent, 'Starta resan', 'knappen');
   // Kvar efter omstart
   const w2 = await loadApp();
   w2.localStorage.setItem('kmon_all_stations_v1', JSON.stringify({ timestamp: Date.now(), stations: STATION_LIST }));
@@ -3383,7 +3403,8 @@ test('startsidan: RailTimer i rubriken och ⋮ → Startsidan tar en dit; under 
   assertEqual(rt.currentView(), 'setup', 'knappen överst i rapporten');
   // Syftet med ikoner, och Var är tåget? utan GPS-märke
   assert(d.querySelector('#purposeFollow .pi'), 'ikon på valet');
-  assertEqual(d.getElementById('gpsStatusBadge').style.display, '', 'GPS-märket i Mät tidtabell');
+  // GPS-märket visas inte på startsidan (2026-11-26f): GPS-läget står under Start-knappen
+  assertEqual(d.getElementById('gpsStatusBadge').style.display, 'none', 'inte på startsidan');
   d.getElementById('purposeFollow').click();
   assertEqual(d.getElementById('gpsStatusBadge').style.display, 'none', 'inte i Var är tåget?');
   d.getElementById('purposeMeasure').click();
@@ -3414,7 +3435,9 @@ test('var är tåget: tågets GPS från Trafikverket – nästa station, avstån
   assert(/70 km\/h/.test(d.getElementById('gpsSpeed').textContent) && /tågets GPS/.test(d.getElementById('gpsAccuracy').textContent), 'farten från Trafikverket');
   assert(rt.state.route[1].followPassed && rt.state.route[2].followPassed, 'Filsbäck och Källby passerade');
   assert(d.querySelectorAll('#cards .card')[1].className.includes('done'), 'Filsbäck klar i listan');
-  assert(d.querySelectorAll('#cards .card')[1].textContent.includes('passerad – ingen tid'), 'utan tid: ' + d.querySelectorAll('#cards .card')[1].textContent);
+  // Bara den sista passerade raden utan tid säger det (2026-11-26f)
+  assert(d.querySelectorAll('#cards .card')[2].textContent.includes('passerad – ingen tid'), 'utan tid: ' + d.querySelectorAll('#cards .card')[2].textContent);
+  assert(!d.querySelectorAll('#cards .card')[1].textContent.includes('passerad – ingen tid'), 'inte upprepat: ' + d.querySelectorAll('#cards .card')[1].textContent);
   assertEqual(rt.state.route[0].departSource, 'trv', 'avgången från Lidköping är Trafikverkets');
   assert(d.getElementById('mapPos').classList.contains('trv'), 'kartans markör är tågets position (blå)');
   assert(rt.mapMarker() && rt.mapMarker().trv, 'markören');
@@ -3466,7 +3489,7 @@ test('var är tåget: utan tågets position bara rapporterna – "bör vara" enl
   assertEqual(d.getElementById('nextLabel').textContent, 'Nästa enligt tidtabellen', 'etiketten');
   assertEqual(d.getElementById('nextStop').textContent, 'Källby', 'nästa enligt tidtabellen');
   assertEqual([d.getElementById('nextValue1').textContent, d.getElementById('nextSub1').textContent], ['–', 'avstånd okänt'], 'inget avstånd');
-  assertEqual(d.getElementById('nextCountdownSub').textContent, `beräknat ${hm(st.base + 13 * 60000)}`, 'beräknad ankomst: plan + förseningen');
+  assertEqual(d.getElementById('nextCountdownSub').textContent, `kvar · ca ${hm(st.base + 13 * 60000)}`, 'beräknad ankomst: plan + förseningen');
   const src = d.getElementById('npSource').textContent;
   assert(src.includes('senaste positionen är 20 min gammal – används inte'), src);
   assert(src.includes('bör tåget nu vara mellan Filsbäck och Källby'), src);
@@ -3761,7 +3784,9 @@ test('tur: vändtiden till nästa tur visas i infofliken och panelen och läses 
   rt.updateInfo();
   const t = rt.tourStatus();
   assertEqual([t.otn, t.turnMin, t.level, t.sameStation], ['3346', 2, 1, true], 'vändtid 2 min, håll koll');
-  assert(r.w.document.getElementById('npInfo').textContent.includes('vändtid 2 min'), r.w.document.getElementById('npInfo').textContent);
+  // Vändtiden står i Att hålla koll på (panelens rad visar det viktigaste: bytet som missas)
+  assert(Array.from(r.w.document.querySelectorAll('#infoPane .watch-row')).some(e => e.textContent.includes('Nästa tur 3346') && e.textContent.includes('vändtid ca 2 min')), r.w.document.getElementById('infoPane').textContent);
+  assert(/· \d+ till$/.test(r.w.document.getElementById('npInfo').textContent), r.w.document.getElementById('npInfo').textContent);
   const pane = r.w.document.getElementById('infoPane').textContent;
   assert(pane.includes('Nästa tur') && pane.includes('3346 · Hällekis → Lidköping'), pane);
   assert(rt.spoken().includes('Vändtiden i Hällekis blir cirka 2 minuter.'), rt.spoken().join(' | '));
@@ -3829,10 +3854,19 @@ test('karta: Följ zoomar in kring tåget, Hela visar hela rutten, och valet spa
   d.getElementById('mapWhole').click();
   assert(gap() < zoomed * 0.8, `Hela visar mer av rutten (${Math.round(gap())} mot ${Math.round(zoomed)} px)`);
   assert(JSON.parse(r.w.localStorage.getItem('railtimer_map_v1')).mode === 'all', 'valet sparas');
+  // ✕ döljer kartan bara liggande och på bred skärm; stående är fliken Karta valet
+  r.w.frameElement.style.width = '900px';
+  await new Promise(res => setTimeout(res, 50));
   d.getElementById('mapHide').click();
   assert(d.getElementById('routeMapContainer').classList.contains('collapsed'), 'kartan dold');
   d.getElementById('mapShow').click();
   assert(!d.getElementById('routeMapContainer').classList.contains('collapsed'), 'kartan visas igen');
+  d.getElementById('mapHide').click();
+  r.w.frameElement.style.width = '';
+  await new Promise(res => setTimeout(res, 50));
+  r.rt.setInfoTab('map');
+  assert(!d.getElementById('routeMapContainer').classList.contains('collapsed'), 'stående: kartan visas i fliken Karta även om den dolts liggande');
+  d.getElementById('mapShow').click();
 });
 
 // ── Trafikverkets rapporterade tider (railtimer-trv.js) ──
