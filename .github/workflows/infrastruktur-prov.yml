@@ -1,0 +1,26 @@
+# Hämtar Trafikverkets publika underlag om infrastrukturen (linjebok, järnvägsnätsbeskrivningens bilagor) och skriver
+# dem i körningens logg, eftersom utvecklingsmiljön inte når bransch.trafikverket.se. Ett utvecklingssteg: inget
+# publiceras och inget svarar på frågor härifrån. Körs när skriptet ändras, eller för hand: Actions → Infrastruktur-prov.
+name: Infrastruktur-prov
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/infrastruktur-prov.yml'
+      - 'tools/infrastruktur-hamta.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  hamta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: pdftotext
+        run: command -v pdftotext || (sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils)
+      - name: Hämta underlagen
+        run: bash tools/infrastruktur-hamta.sh
