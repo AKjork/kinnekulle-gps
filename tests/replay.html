@@ -2197,6 +2197,10 @@ test('info: ett sent mötande tåg ger väntan, prognos och missad anslutning �
   const pane = d.getElementById('infoPane');
   assert(pane.textContent.includes('Prognos Hällekis'), 'prognos');
   assert(pane.textContent.includes('Råbäck · möte 3347') && pane.textContent.includes('enkelspår') && pane.textContent.includes('enligt Trafikverket'), 'mötet');
+  // Spårtypen från Trafikverkets linjebok (railtimer-infra.js): Kinnekullebanan är enkelspår, inte bara troligen
+  assert(r.w.RailTimerInfra && r.w.RailTimerInfra.lines.length > 20, 'underlaget om infrastrukturen är inläst');
+  assert(!pane.textContent.includes('troligen enkelspår'), 'enkelspår enligt linjeboken');
+  assert(/Enkel- eller dubbelspår enligt Trafikverkets linjebok/.test(pane.textContent), 'Så räknas det: ' + pane.textContent.slice(-600));
   const rows = Array.from(pane.querySelectorAll('.info-row')).map(e => e.textContent);
   assert(rows.some(t => t.startsWith(formatHm(Date.parse(r.rt.state.route[5].scheduledArrival) + 5 * 60000)) && t.includes('Mariestad') && t.includes('missas')), 'tåget 5 min efter missas: ' + rows.join(' | '));
   assert(rows.some(t => t.includes('Mariestad') && t.includes('att byta') && t.includes('Västtågen 3053') && t.includes('spår 2')), 'tåget 15 min efter hinns');

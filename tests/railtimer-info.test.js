@@ -34,7 +34,7 @@ const ROUTE = new Map([['Lkp', 'Lidköping'], ['Jp', 'Järpås'], ['Vr', 'Vara']
 
 function setup(rows, opts) {
   const o = opts || {};
-  const trains = I.groupTrains(OUR().concat(rows || []));
+  const trains = I.groupTrains((o.ourRows || OUR()).concat(rows || []));
   const our = I.nearestRun(trains, '23349', at('11:00'));
   const line = I.buildLine(our, 'Lkp', 'Hr');
   const known = new Map(Object.entries(o.known || {}));
@@ -42,7 +42,8 @@ function setup(rows, opts) {
     line, trains, ourKey: our.key, known, now: o.now != null ? o.now : at('10:55'),
     knownDouble: o.knownDouble, knownMeetPlaces: o.knownMeet, history: o.history, routeNames: ROUTE, opts: o.opts,
     messages: o.messages, positions: o.positions, coords: o.coords, ourPos: o.ourPos, axis: o.axis,
-    buses: o.buses, names: o.names, connMode: o.connMode, connAlerts: o.connAlerts, marked: o.marked, posAt: o.posAt, own: o.own
+    buses: o.buses, names: o.names, connMode: o.connMode, connAlerts: o.connAlerts, marked: o.marked, posAt: o.posAt, own: o.own,
+    infra: o.infra
   });
 }
 // Ungefärliga lägen längs linjen (norr → söder)
@@ -1053,3 +1054,120 @@ test('vårt tåg i flera delar (ett OTN var, samma ATN): ihopslaget, och delarna
   // Frågan gäller OTN eller ATN
   assert.match(I.queryOurTrain('3349', at('11:00')), /<OR><EQ name="OperationalTrainNumber" value="3349" \/><EQ name="AdvertisedTrainIdent" value="3349" \/><\/OR>/);
 });
+
+// ── Trafikverkets infrastruktur: linjeboken och järnvägsnätsbeskrivningen (railtimer-infra.js) ──
+// Testlinjen Lkp – Jp – Vr – Vdm – Hr med spårtypen k mellan Vara och Vedum
+const INFRA = k => ({ lines: [`Lkp E Jp E Vr ${k} Vdm E Hr`], meet: '', platforms: {} });
+
+test('linjeboken: spårtyp mellan två platser – grannar, längre sträckor, blandat, inom driftplats och olika linjer', () => {
+  const X = { lines: ['Aa E Bb E Cc D Dd D Ee', 'Ee - Ff - Gg D Hh', 'Kk D Ll ? Mm'] };
+  assert.equal(I.trackKind(X, 'Aa', 'Bb'), 'E');
+  assert.equal(I.trackKind(X, 'Bb', 'Aa'), 'E', 'åt båda hållen');
+  assert.equal(I.trackKind(X, 'Aa', 'Cc'), 'E', 'inte grannar: alla delar emellan enkelspår');
+  assert.equal(I.trackKind(X, 'Cc', 'Ee'), 'D');
+  assert.equal(I.trackKind(X, 'Bb', 'Dd'), null, 'enkel- och dubbelspår blandat');
+  assert.equal(I.trackKind(X, 'Ee', 'Ff'), null, 'inom en driftplats gäller inte termerna');
+  assert.equal(I.trackKind(X, 'Gg', 'Hh'), 'D');
+  assert.equal(I.trackKind(X, 'Ll', 'Mm'), null, 'blandat enligt underlaget');
+  assert.equal(I.trackKind(X, 'Aa', 'Hh'), null, 'inte på samma linje');
+  assert.equal(I.trackKind(X, 'Aa', 'Öö'), null, 'okänd plats');
+  assert.equal(I.trackKind(X, 'Aa', 'Aa'), null);
+  assert.equal(I.trackKind(null, 'Aa', 'Bb'), null, 'utan underlag');
+  assert.equal(I.trackKind({ lines: ['Aa F Bb'] }, 'Aa', 'Bb'), 'D', 'flerspår räknas som dubbelspår');
+  assert.equal(I.trackKind({ lines: ['Aa E Bb', 'Bb D Aa'] }, 'Aa', 'Bb'), null, 'linjer som inte är eniga');
+  assert.equal(I.trackKind({ lines: ['Aa E Bb', 'Bb E Aa'] }, 'Aa', 'Bb'), 'E');
+  // En plats två gånger på samma linje (en annan väg genom en driftplats): de närmaste förekomsterna gäller
+  assert.equal(I.trackKind({ lines: ['Hh - Ii - Hh D Jj'] }, 'Hh', 'Jj'), 'D');
+});
+
+test('linjeboken: enkelspår går före sparat dubbelspår och före möten mellan stationerna i tidtabellen', () => {
+  // 3346 möter oss mellan Vara och Vedum enligt tidtabell, och sträckan är sparad som dubbelspår (se testet ovan)
+  const other = train('3346', [['Vdm', null, '11:22'], ['Vr', '11:29', '11:29'], ['Jp', '11:38', null]]);
+  const late = MEET({ Vr: { a: { EstimatedTimeAtLocation: T('11:26') } } });
+  const m = setup(late.concat(other), { knownDouble: ['Vdm|Vr'], infra: INFRA('E') });
+  const mt = m.meetings.find(x => x.otn === '24360');
+  assert.equal(mt.single, true, 'enkelspår enligt linjeboken');
+  assert.equal(mt.book, true);
+  // 24360 in i Vara 11:26 + 1 min: vi åker 11:27 i stället för 11:21
+  assert.equal(mt.waitMin, 6);
+  assert.equal(m.end.delayMin, 6);
+  assert.equal(m.meetings.some(x => x.otn === '3346'), false, 'inget möte på sträckan');
+  assert.deepEqual(m.doubleSections, [], 'inget dubbelspår att spara');
+  assert.deepEqual(m.trackBook, { sections: 4, of: 4 });
+});
+
+test('linjeboken: dubbelspår utan möten i tidtabellen – vi väntar inte; utan linjeboken som förut', () => {
+  const late = MEET({ Vr: { a: { EstimatedTimeAtLocation: T('11:26') } } });
+  const m = setup(late, { infra: INFRA('D') });
+  assert.equal(m.meetings[0].single, false);
+  assert.equal(m.meetings[0].book, true);
+  assert.equal(m.meetings[0].waitMin, 0);
+  assert.equal(m.end.delayMin, 0);
+  assert.deepEqual(m.doubleSections, [], 'finns i linjeboken, inget att spara');
+  // Utan linjeboken: enkelspår, räknat ur tidtabellen
+  const m0 = setup(late);
+  assert.equal(m0.meetings[0].single, true);
+  assert.equal(m0.meetings[0].book, false);
+  assert.equal(m0.meetings[0].waitMin, 6);
+  assert.deepEqual(m0.trackBook, { sections: 0, of: 4 });
+  // Sträckor som linjeboken inte har: tidtabellen som förut
+  const part = setup(late, { infra: { lines: ['Lkp E Jp'], meet: '', platforms: {} } });
+  assert.deepEqual(part.trackBook, { sections: 1, of: 4 });
+  assert.equal(part.meetings[0].book, false);
+});
+
+test('mötesplatser från järnvägsnätsbeskrivningen: mötet flyttas till Järpås även när inga tåg setts mötas där', () => {
+  // Som "flyttat möte: det mötande tåget har åkt från Vara mot oss …", men Järpås är känd från underlaget
+  const rows = MEET({ Vr: { d: { TimeAtLocationWithSeconds: T('11:21') } } });
+  const book = setup(rows, { now: at('11:22'), known: LATE14, infra: { lines: [], meet: 'Jp Hr', platforms: {} } });
+  const mt = book.meetings[0];
+  assert.equal(mt.at, 'Jp');
+  assert.equal(mt.ourDep, at('11:31'));
+  assert.equal(book.end.delayMin, 19);
+  assert.deepEqual(book.meetPlaces, ['Vr'], 'Vara ur tidtabellen sparas, Järpås finns i underlaget');
+  // Utan någon känd mötesplats mellan oss och Vara blir det inte Järpås
+  const none = setup(rows, { now: at('11:22'), known: LATE14 });
+  assert.notEqual(none.meetings[0].at, 'Jp');
+});
+
+test('plattformar: samma eller annan plattform enligt järnvägsnätsbeskrivningen', () => {
+  const X = { platforms: { Hrc: '2,3,1|5,4|6|7', Lkp: '1|2', A: '1A,2' } };
+  assert.deepEqual(I.platformInfo(X, 'Hrc', '2', '3'), { same: true, shared: ['3', '1'] });
+  assert.deepEqual(I.platformInfo(X, 'Hrc', '1', '5'), { same: false, shared: ['2', '3'] });
+  assert.deepEqual(I.platformInfo(X, 'Hrc', '6', ''), { same: null, shared: [] }, 'deras spår okänt');
+  assert.deepEqual(I.platformInfo(X, 'Hrc', '9', '3'), { same: null, shared: [] }, 'vårt spår har ingen plattform enligt underlaget');
+  assert.deepEqual(I.platformInfo(X, 'Hrc', '2', '2'), { same: null, shared: ['3', '1'] }, 'samma spår');
+  assert.equal(I.platformInfo(X, 'Lkp', '1', '2').same, false);
+  assert.equal(I.platformInfo(X, 'A', '1a', '2').same, true, 'stor och liten bokstav');
+  assert.equal(I.platformInfo(X, 'Vaa', '1', '2'), null, 'platsen saknas');
+  assert.equal(I.platformInfo(null, 'Hrc', '2', '3'), null);
+});
+
+test('plattformar i Info: samma eller annan plattform i anslutningen, förslaget att ringa och utropet', () => {
+  // Vi kommer till Herrljunga på spår 2 (+6). 3047 spår 3 missas, 3049 spår 5 knappt, 417 spår 3 hinns.
+  const ourRows = train('23349', [['Lkp', null, '11:00'], ['Jp', '11:10', '11:11'], ['Vr', '11:20', '11:21'], ['Vdm', '11:30', '11:31'],
+    ['Hr', '11:40', null, { a: { TrackAtLocation: '2' } }]]);
+  const deps = departures([['3047', '11:45'], ['3049', '11:49', { TrackAtLocation: '5' }], ['417', '11:55']]);
+  const marked = new Set(['ut|Hr|tåg|3047', 'ut|Hr|tåg|3049']);
+  const infra = { lines: [], meet: '', platforms: { Hr: '2,3,1|5,4|6|7' } };
+  const m = setup(LATE().concat(deps), { ourRows, marked, infra });
+  assert.equal(m.end.track, '2');
+  assert.deepEqual(m.connections.map(c => [c.otn, c.track, c.samePlatform]), [['3047', '3', true], ['3049', '5', false], ['417', '3', true]]);
+  const names = new Map([...ROUTE, ['G', 'Göteborg C']]);
+  const opts = { name: s => names.get(s) || s, clock: t => new Date(Math.round(t / 60000) * 60000).toTimeString().slice(0, 5) };
+  assert.deepEqual(m.actions.map(a => I.actionText(a, opts).sub), [
+    'Herrljunga C → Göteborg C 11:45 · vi spår 2, 3047 spår 3 – samma plattform',
+    'Herrljunga C → Göteborg C 11:49 · vi spår 2, 3049 spår 5 – annan plattform; spår 3 och 1 vid vår'
+  ]);
+  assert.match(I.announcement(m, opts).sv, /Tåget mot Göteborg C 11:55 hinner ni, det går från spår 3 på samma plattform\.$/);
+  assert.match(I.announcement(m, opts).en, /departing from track 3 on the same platform\.$/);
+  // Deras spår okänt: vilka spår som ligger vid vår plattform
+  const noTrack = Object.assign({}, m.actions[0], { theirTrack: '' });
+  assert.equal(I.actionText(noTrack, opts).sub, 'Herrljunga C → Göteborg C 11:45 · vi spår 2 – spår 3 och 1 vid samma plattform');
+  // Utan underlaget: frågan som förut, och inget om plattformen i utropet
+  const m0 = setup(LATE().concat(deps), { ourRows, marked });
+  assert.equal(m0.connections[0].samePlatform, undefined);
+  assert.equal(I.actionText(m0.actions[0], opts).sub, 'Herrljunga C → Göteborg C 11:45 · vi spår 2, 3047 spår 3 – samma plattform?');
+  assert.match(I.announcement(m0, opts).sv, /det går från spår 3\.$/);
+});
+

@@ -5,6 +5,8 @@
 #
 # Varje fil skrivs som:  FIL-START|namn|byte|sha256  , rader  FIL|namn|<base64>  och  FIL-SLUT|namn
 # PDF:er skrivs som text (pdftotext -layout), gzip och base64. Excel-filer som de är, gzip och base64.
+# Sist körs tools/infrastruktur.mjs mot filerna: rapporten (jämförelsen med banstandarden, rättade rubriker) och om
+# railtimer-infra.js stämmer med underlagen. Ny version av linjeboken eller bilagorna: byt adresserna nedan.
 set -euo pipefail
 
 FILES=(
@@ -40,3 +42,6 @@ for entry in "${FILES[@]}"; do
   echo "FIL-SLUT|$name"
   echo "- $name: $bytes byte, sha256 \`$sha\`" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 done
+
+echo "== tools/infrastruktur.mjs =="
+node tools/infrastruktur.mjs "$work" --check railtimer-infra.js

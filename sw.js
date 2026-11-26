@@ -16,6 +16,7 @@ const ASSETS = [
   './railtimer-karta.js',
   './railtimer-trv.js',
   './api-koll.html',
+  './railtimer-infra.js',
   './railtimer-info.js',
   './railtimer-vt.js',
   './vasttrafik-koll.html',

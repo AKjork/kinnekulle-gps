@@ -21,6 +21,8 @@ GPS-baserad app för att mäta gång- och uppehållstider för tåg i Sverige. A
 | `railtimer-avbrott.js`, `railtimer-github.js`, `railtimer-karta.js`, `railtimer-analys.js` | Avbrott, uppladdning, kartans linje längs spåret, analysens beräkningar |
 | `railtimer-trv.js` | Trafikverkets API: frågor, rapporterade tider för en körning, jämförelse, kontrollen |
 | `railtimer-info.js` | Infofliken: möten, enkel- eller dubbelspår, prognos och anslutningar under resan |
+| `railtimer-infra.js` | Trafikverkets uppgifter om infrastrukturen: linjebokens spårtyp mellan platserna, mötesplatser och plattformar. Genereras av `tools/infrastruktur.mjs`, ändras inte för hand (sedan 2026-11-26b) |
+| `tools/infrastruktur.mjs`, `tools/infrastruktur-hamta.sh`, `.github/workflows/infrastruktur-prov.yml` | Hämtar linjeboken och järnvägsnätsbeskrivningens bilagor 2 A och 2 B från GitHub Actions (utvecklingsmiljön når inte bransch.trafikverket.se), gör om dem till `railtimer-infra.js` och kontrollerar att filen stämmer (sedan 2026-11-26b) |
 | `railtimer-vt.js` | Västtrafiks API (Planera Resa v4): token, hållplatser vid en station, avgångar och ankomster – bussanslutningar i Info |
 | `vasttrafik-koll.html` | Västtrafik-data: provar Västtrafiks API från telefonen (token, hållplatser, bussar) |
 | `vt-token.json`, `tools/vasttrafik-token.mjs`, `.github/workflows/vasttrafik-token.yml` | Västtrafiks gemensamma token: GitHub Actions hämtar den med hemligheterna `VT_KEY`/`VT_SECRET` och lägger den i `vt-token.json`, som appen läser (sedan 2026-11-25za) |
@@ -1968,3 +1970,60 @@ André 2026-11-26: riktiga appar för iPhone och Android släpps (App Store krä
 - `node --test "tests/*.test.js"` (216).
 - `node tests/run-browser-tests.mjs` (138), nya *app: …*: installera (tipset, guiden, Installera nu, inget i hemskärmsappen), bakåt (menyn, sidorna, Info, resan, Bara info), bakåtknappen på riktigt (`history.back` i iframen, steget tas bort efter Klar), genvägarna och manifestet (ikonerna finns, metataggarna).
 - Bilder: `--shot=installera-tips` och `--shot=installera-guide`.
+
+## Uppdatering (2026-11-26b): enkel- och dubbelspår, mötesplatser och plattformar från Trafikverket
+
+André 2026-11-26: "Hur vet appen om det är enkelspår eller dubbelspår?" Svaret var att appen räknade det ur tidtabellen: tåg som möts mellan stationerna betyder dubbelspår, annars enkelspår. En dubbelspårssträcka där inga tåg råkar mötas räknades som enkelspår, och en sträcka som en gång sparats som dubbelspår ändrades aldrig. "Gärna" till att ta spårtypen från linjeboken. Sedan: "Går det hitta kartor eller motsvarande för stationer (driftplatser) hållplatser så vi kan få info om tex vilka spår som delar plattform?" Appversion `2026-11-26b`. Logiken för ankomst och avgång är oförändrad.
+
+### Underlagen (alla publika hos Trafikverket)
+- **Underlag till linjebok**, TC Göteborg samlad version 2026-11-01 och TC Hallsberg samlad version 2026-09-01. Varje linjedel har en rubrik med spårtypen, till exempel *(Gårdsjö) – (Håkantorp) Enkelspår. System M …*, och platserna i ordning med signatur och km-tal.
+- **Järnvägsnätsbeskrivning 2027, bilaga 2 A** *Möteslängder och plattformar* (2026-11-19, hela landet): 859 platser med möteslängd (där tåg kan mötas) och 1 166 plattformar med spåren de ligger vid, till exempel Herrljunga C *2,3,1*, *5,4*, *6*, *7*.
+- **Järnvägsnätsbeskrivning 2027, bilaga 2 B** *Banstandard* (2026-09-24): spårtypen per bandel (enkelspår, dubbelspår, flerspår) och platsernas signaturer. Används för att kontrollera linjeboken och för att översätta namnen i bilaga 2 A till signaturer.
+- Utvecklingsmiljön når inte bransch.trafikverket.se. **Workflowet Infrastruktur-prov** (`tools/infrastruktur-hamta.sh`) hämtar filerna från GitHub Actions, gör om PDF:erna till text (`pdftotext -layout`) och skriver dem som gzip och base64 i körningens logg (`FIL-START|…`, `FIL|…`, `FIL-SLUT|…`). Sist körs `tools/infrastruktur.mjs --check railtimer-infra.js`. Inget publiceras och inget svarar på frågor.
+  - Läs filerna: `gh run view <id> -R AKjork/kinnekulle-gps --log`, plocka raderna `FIL|namn|…`, base64 och gunzip. Kontrollsumman för originalet står i `FIL-START`.
+  - Ny version av linjeboken eller bilagorna: byt adresserna i `tools/infrastruktur-hamta.sh` (sidorna *Göteborgs linjebok* och *Hallsbergs linjebok* under Underlag till linjebok, och *Järnvägsnätsbeskrivning 2027*), kör workflowet, läs filerna och kör `node tools/infrastruktur.mjs <katalog> --write railtimer-infra.js`. Granska rapporten.
+
+### `tools/infrastruktur.mjs` (inga beroenden)
+- **Linjeboken** (`parseLinjebok`): en linje per beskrivning. En ny beskrivning börjar vid *Lutningsförhållande* på första sidan, eller när sidhuvudets ändar byts (till exempel *Gdö → Håp*; pilen är ett privat tecken, U+F0E0, och *Uv/Uvc* på varannan sida är samma linje). Bara avdelning D läses; i övriga avdelningar står platser i löptext.
+  - En plats är `Namn (Sig)` där signaturen finns i banstandardens platsdata, utom signaler (Infsi, Msi …) och vägskyddssignaler (Vsi).
+  - **Spårtypen** sätts av linjedelens rubrik. En driftplats rubrik (namnet och *System H …* utan spårtyp) gäller till *Driftplatsgräns* eller nästa linjerubrik: där gäller inte termerna enkel- och dubbelspår (linjeboken D3), och sträckan blir `-`. Mellan två platser gäller den spårtyp linjedelarna emellan har: en ger den, flera ger `?`.
+  - Båda riktningarna slås ihop per grannpar: en känd spårtyp gäller, `-` åt ena hållet krockar inte, olika kända ger `?`.
+- **Linjebokens rubriker kan vara fel.** D13 *(Falköpings central) – (Herrljunga central) Enkelspår* och D80 *(Falköpings norra) – Skövde central Enkelspår* har upp- och nedspårssignaler (*Mblsi (F N3, F U3)*), och banstandarden säger dubbelspår (bandel 611 och 512). Rubriker med Enkelspår och sådana signaler jämförs med banstandarden: dubbelspår där ger D, enkelspår där behåller rubriken (signalerna hör till ett spår bredvid), och går det inte att jämföra blir sträckan `?`. Det gällde 11 rubriker: 2 rättade, 3 bekräftade och 6 okända (Falkenberg godsstation–Torebo, Lilla Edet–Alvhem, Alväng–Hovsta åt båda hållen, Skymossen–Stenkumla åt båda hållen).
+- **Kontrollen mot banstandarden**: grannpar där båda platserna hör till samma bandel enligt bilaga 2 A. 152 lika och 0 olika.
+- **Plattformar** som inte är tillgängliga för resande (*ej tillgänglig*, *avstängd* i anmärkningen) tas inte med (10 st, till exempel Perstorp spår 2). *E* är spåret på linjen utan spårnummer och tas inte med. Spår som *151-152* blir 151 och 152.
+- 18 namn i bilaga 2 A saknar signatur i banstandarden (bland andra Boden central och Karlstad C), inget på våra banor.
+
+### `railtimer-infra.js` (genererad, ca 15 kB)
+- `lines`: 37 linjer, till exempel *Gdö E Hova E Tvd E Lyd … E Håp*. Grannpar: 213 enkelspår, 85 dubbelspår, 40 inom driftplats och 16 okända.
+- `meet`: 850 signaturer med möteslängd. `platforms`: 491 platser, till exempel `Hrc: "2,3,1|5,4|6|7"`.
+- Laddas före `railtimer-info.js` i index.html (`window.RailTimerInfra`) och sparas av service workern.
+
+### Beräkningen (`railtimer-info.js`)
+- `trackKind(infra, a, b)`: `E`, `D` (flerspår räknas som dubbelspår) eller null. Platserna behöver inte vara grannar i linjeboken (vår linje har bara platser med tider), men alla delar emellan ska ha samma spårtyp. Per linje gäller de närmaste förekomsterna, och linjer som inte är eniga ger null.
+- **I `compute`** (`input.infra`): linjebokens spårtyp går före det sparade (`knownDouble`) och före tidtabellen. Enkelspår enligt linjeboken tar bort ett sparat dubbelspår. Ett möte mellan stationerna enligt tidtabell på en sådan sträcka räknas inte som möte, och sparas inte som dubbelspår, eftersom det måste vara på en plats emellan som inte finns i vår linje eller fel i uppgifterna. Där linjeboken saknas räknas det som förut.
+  - Mötena har `book` (spårtypen från linjeboken). Modellen har `trackBook: { sections, of }`.
+  - Linjen för 23349 Hallsberg pbg → Herrljunga C (Trafikverkets svar 2026-11-25): inom Hallsbergs driftplats okänt, Östansjö–Gårdsjö dubbelspår, Gårdsjö–Herrljunga C enkelspår.
+- **Mötesplatser** (`infraMeetPlaces`): platser med möteslängd läggs till de kända mötesplatserna (`meetingPlaces`). Ett möte kan alltså flyttas dit även när inga tåg setts mötas där. På Kinnekullebanan och Älvsborgsbanan: Gårdsjö, Hova, Lyrestad, Mariestad, Forshem, Lidköping, Järpås, Håkantorp, Vara, Vedum och Herrljunga C, men inte till exempel Hällekis, Råbäck och Källby. De sparas inte i `railtimer_info_v1.meet`.
+- **Plattformar** (`platformInfo(infra, sig, vårt spår, deras spår)`): `{ same, shared }`. `same` är true när en plattform ligger vid båda spåren, false när båda har plattform men ingen gemensam, annars null. `shared` är övriga spår vid vår plattform. Stor och liten bokstav spelar ingen roll.
+  - Tågens anslutningar får `samePlatform` (true eller false) när vårt spår och deras är kända. Vårt spår i slutstationen är `end.track`, annars vårt tågs spår vid stationen.
+  - **Förslaget att ringa trafikledningen** (`actionText`): *vi spår 2, 3047 spår 3 – samma plattform*, *vi spår 2, 3049 spår 5 – annan plattform; spår 3 och 1 vid vår*, eller med okänt spår för det andra tåget *vi spår 2 – spår 3 och 1 vid samma plattform* (*inget annat spår vid vår plattform*). Utan underlag frågar det som förut: *– samma plattform?*.
+  - **Utropet**: *… det går från spår 3 på samma plattform.* (*on the same platform*).
+
+### I appen
+- Mötesraden i Info: *enkelspår* eller *dubbelspår* när spårtypen kommer från linjeboken, annars *troligen enkelspår* (räknat ur tidtabellen) eller *dubbelspår*.
+- Anslutningsraden: *spår 3, samma plattform* eller *spår 5, annan plattform*.
+- *Så räknas det* (`trackNote`): *Enkel- eller dubbelspår enligt Trafikverkets linjebok*, eller *för N av M sträckor* och regeln för resten, och att mötesplatser och plattformar kommer från järnvägsnätsbeskrivningen.
+- Körningen sparar `book: true` med mötet (`info.meetings`), se `docs/railtimer-data-README.md`.
+
+### Inte provat
+- På telefon. Allt är provat med Trafikverkets riktiga filer och tågets riktiga väg, men inte under en resa.
+- Spåren i Trafikverkets TrainAnnouncement (`TrackAtLocation`) mot plattformarnas spår, till exempel *1a* mot *1*: matchar de inte blir det okänt, aldrig fel.
+- Linjeböckerna för övriga trafikcentraler (Stockholm, Norrköping, Malmö, Gävle, Ånge, Boden) är inte inlagda; där räknas spårtypen ur tidtabellen som förut. Mötesplatserna och plattformarna gäller hela landet.
+
+### Tester
+- `node --test "tests/*.test.js"` (227), nya:
+  - `tests/railtimer-info.test.js`: *linjeboken: spårtyp mellan två platser …*, *linjeboken: enkelspår går före sparat dubbelspår …*, *linjeboken: dubbelspår utan möten i tidtabellen …*, *mötesplatser från järnvägsnätsbeskrivningen …*, *plattformar: …* och *plattformar i Info: …*;
+  - `tests/railtimer-infra.test.js`: underlaget mot 23349:s väg, övriga banor och plattformarna vid våra stationer;
+  - `tests/infrastruktur.test.js`: linjeboken som text (sidhuvud med pil, driftplatsens rubrik, Driftplatsgräns, vägskyddssignaler, ny beskrivning, avdelning E).
+- `node tests/run-browser-tests.mjs` (133): *info: ett sent mötande tåg …* kontrollerar att underlaget är inläst, att mötet är enkelspår enligt linjeboken och *Så räknas det*.
+

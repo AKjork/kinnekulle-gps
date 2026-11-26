@@ -2,8 +2,10 @@
    Bygger på Trafikverkets TrainAnnouncement för vårt tåg och för alla tåg på resten av linjen:
    - möten: motgående tåg som enligt tidtabell är på samma plats som vi samtidigt. På enkelspår kan
      vi inte åka vidare förrän det mötande tåget har kommit in, så är det sent blir vi sena.
-   - enkel- eller dubbelspår räknas ur tidtabellen: två motgående tåg som enligt tidtabell är på samma
-     sträcka samtidigt möts mellan stationerna, och då är sträckan dubbelspår.
+   - enkel- eller dubbelspår enligt Trafikverkets linjebok (input.infra, railtimer-infra.js). Där den inte räcker
+     räknas det ur tidtabellen: två motgående tåg som enligt tidtabell är på samma sträcka samtidigt möts
+     mellan stationerna, och då är sträckan dubbelspår. Mötesplatserna och plattformarna enligt
+     järnvägsnätsbeskrivningen (bilaga 2 A) finns i samma input.infra.
    - prognos per plats längs resan: våra egna tider, uppehåll, annonserad avgångstid, mötena och
      de egna gångtiderna från tidigare körningar (så mycket vi brukar ta igen).
    - anslutningar i slutstationen och tåg som ansluter till oss i startstationen, även Västtrafiks bussar
@@ -76,6 +78,82 @@
       .map(x => x.s);
   }
   const sectionKey = (a, b) => [a, b].sort().join('|');
+
+  /* ── Trafikverkets uppgifter om infrastrukturen (railtimer-infra.js, från tools/infrastruktur.mjs) ──
+     infra: { lines: ["Gdö E Hova E Tvd …"], meet: "A Agb …", platforms: { Hrc: "2,3,1|5,4|6|7" } }
+     lines: linjebokens platser i ordning med spårtypen emellan (E, D, F, - inom driftplats, ? blandat).
+     meet: platser med möteslängd (där tåg kan mötas). platforms: spåren vid varje plattform. */
+  const infraCache = new WeakMap();
+  const normTrack = t => String(t == null ? '' : t).trim().toLowerCase();
+  function infraIndex(infra) {
+    if (!infra || typeof infra !== 'object') return null;
+    let ix = infraCache.get(infra);
+    if (ix) return ix;
+    const lines = [], pos = new Map();
+    for (const s of infra.lines || []) {
+      const t = String(s).split(' ').filter(Boolean);
+      const sigs = [], gaps = [];
+      t.forEach((x, k) => (k % 2 ? gaps : sigs).push(x));
+      const li = lines.length;
+      lines.push({ sigs, gaps });
+      sigs.forEach((sg, p) => { if (!pos.has(sg)) pos.set(sg, []); pos.get(sg).push([li, p]); });
+    }
+    const platforms = new Map();
+    for (const [sig, v] of Object.entries(infra.platforms || {})) {
+      platforms.set(sig, String(v).split('|').map(g => new Set(g.split(',').map(normTrack).filter(Boolean))).filter(g => g.size));
+    }
+    ix = { lines, pos, meet: new Set(String(infra.meet || '').split(' ').filter(Boolean)), platforms };
+    infraCache.set(infra, ix);
+    return ix;
+  }
+  /* Spårtyp mellan två platser enligt linjeboken: 'E' enkelspår, 'D' dubbelspår (även flerspår), null okänt.
+     Platserna behöver inte vara grannar i linjeboken; alla delar emellan ska då ha samma spårtyp. Per linje gäller
+     de närmaste förekomsterna av platserna. Inom en driftplats (-), blandat (?), linjer som inte är eniga och
+     platser som inte finns på samma linje ger null. */
+  function trackKind(infra, a, b) {
+    const ix = infraIndex(infra);
+    if (!ix || !a || !b || a === b) return null;
+    const pa = ix.pos.get(a), pb = ix.pos.get(b);
+    if (!pa || !pb) return null;
+    const kinds = new Set();
+    const lines = new Set(pa.map(x => x[0]).filter(l => pb.some(y => y[0] === l)));
+    for (const l of lines) {
+      let best = null;
+      for (const [la, xa] of pa) for (const [lb, xb] of pb) {
+        if (la === l && lb === l && (best == null || Math.abs(xb - xa) < best[1] - best[0])) best = [Math.min(xa, xb), Math.max(xa, xb)];
+      }
+      const ks = new Set(ix.lines[l].gaps.slice(best[0], best[1]).map(k => (k === 'F' ? 'D' : k)));
+      kinds.add(ks.size === 1 ? Array.from(ks)[0] : '?');
+    }
+    if (kinds.size !== 1) return null;
+    const k = Array.from(kinds)[0];
+    return k === 'E' || k === 'D' ? k : null;
+  }
+  // Platser där tåg kan mötas enligt järnvägsnätsbeskrivningen (möteslängd)
+  function infraMeetPlaces(infra, sigs) {
+    const ix = infraIndex(infra);
+    return ix ? (sigs || []).filter(s => ix.meet.has(s)) : [];
+  }
+  /* Samma plattform? Enligt järnvägsnätsbeskrivningen (bilaga 2 A Plattformar) vid platsen sig.
+     Ger { same: true|false|null, shared: [övriga spår vid vår plattform] }, eller null när platsen saknas.
+     same: true när en plattform ligger vid båda spåren, false när båda spåren har plattform men ingen gemensam,
+     null när det inte går att avgöra (spår som saknas, eller samma spår). */
+  function platformInfo(infra, sig, ourTrack, theirTrack) {
+    const ix = infraIndex(infra);
+    const groups = ix && ix.platforms.get(sig);
+    if (!groups || !groups.length) return null;
+    const o = normTrack(ourTrack), t = normTrack(theirTrack);
+    const ours = o ? groups.filter(g => g.has(o)) : [];
+    let same = null;
+    if (o && t && o !== t) {
+      if (ours.some(g => g.has(t))) same = true;
+      else if (ours.length && groups.some(g => g.has(t))) same = false;
+    }
+    const shared = [];
+    for (const g of ours) for (const x of g) if (x !== o && !shared.includes(x)) shared.push(x);
+    return { same, shared };
+  }
+
   const median = arr => {
     if (!arr.length) return null;
     const s = arr.slice().sort((a, b) => a - b);
@@ -1219,8 +1297,21 @@
     known[0].arr = null;
     known[n - 1].dep = null;
 
-    // Enkel- eller dubbelspår: möten mellan stationerna betyder dubbelspår
+    /* Enkel- eller dubbelspår: Trafikverkets linjebok först (input.infra, railtimer-infra.js). Där den inte räcker:
+       möten mellan stationerna enligt tidtabell betyder dubbelspår, och det sparas till nästa resa (knownDouble).
+       Linjeboken går före det sparade, så en sträcka som sparats som dubbelspår av misstag rättas. */
+    const infra = input.infra || null;
     const double = new Set(input.knownDouble || []);
+    const fromBook = new Map(); // sträcka → 'E' | 'D' enligt linjeboken
+    if (infra) {
+      for (let i = 0; i + 1 < n; i++) {
+        const k = trackKind(infra, line[i].sig, line[i + 1].sig);
+        if (!k) continue;
+        const s = sectionKey(line[i].sig, line[i + 1].sig);
+        fromBook.set(s, k);
+        if (k === 'D') double.add(s); else double.delete(s);
+      }
+    }
     const newDouble = new Set();
     const raw = [];
     for (const tr of trains.values()) {
@@ -1229,7 +1320,10 @@
       if (!c) continue;
       if (c.kind === 'line') {
         const k = sectionKey(line[c.i].sig, line[c.j].sig);
-        if (!double.has(k)) newDouble.add(k);
+        // Enkelspår enligt linjeboken: mötet är på en plats emellan som inte är med i vår linje, eller fel i
+        // uppgifterna – inget möte på sträckan, och inget dubbelspår att spara
+        if (fromBook.get(k) === 'E') continue;
+        if (!double.has(k) && !fromBook.has(k)) newDouble.add(k);
         double.add(k);
       } else if (c.kind === 'station') raw.push({ tr, c });
     }
@@ -1361,7 +1455,7 @@
         key: `${tr.key}|${i}`, trainKey: tr.key,
         i, sig: line[i].sig, otn: tr.otn, ident: tr.ident, product: tr.product, position,
         their, theirDelayMin: roundMin(their.t - their.planned),
-        single, canceled, moved, movedVia,
+        single, book: fromBook.has(sec), canceled, moved, movedVia,
         dependent: single && !canceled && !moved && c.maxIdx > i,
         minIdx: c.minIdx != null ? c.minIdx : 0, prog,
         waitMs: 0, ourDep: null
@@ -1376,10 +1470,14 @@
        kommit dit. Vi räknar med det som ger minst väntan sammanlagt. Har tåget redan åkt mot oss från c
        (rapporterat) blir mötet här. Ett möte flyttas aldrig längre bort än tidtabellens mötesplats, så när
        det mötande tåget är sent väntar vi där som förut – prognosen blir aldrig tidigare av det här. */
-    const places = meetingPlaces(line, trains, double, input.knownMeetPlaces);
+    // Mötesplatser: där tåg enligt tidtabell står samtidigt, sparade sedan förut, och platser med möteslängd enligt
+    // Trafikverkets järnvägsnätsbeskrivning (input.infra)
+    const bookMeet = infraMeetPlaces(infra, line.map(l => l.sig));
+    const places = meetingPlaces(line, trains, double, (input.knownMeetPlaces || []).concat(bookMeet));
     for (const { c } of raw) places.idx.add(c.i);
     const nextPlace = i => { for (let k = i + 1; k < n; k++) if (places.idx.has(k)) return k; return n - 1; };
     const singleBetween = (a, b) => { for (let k = a; k < b; k++) if (double.has(sectionKey(line[k].sig, line[k + 1].sig))) return false; return true; };
+    const bookBetween = (a, b) => { for (let k = a; k < b; k++) if (!fromBook.has(sectionKey(line[k].sig, line[k + 1].sig))) return false; return a < b; };
     function move(m, i, dep, arriveAt) {
       const tr = trainOf.get(m.key);
       if (!tr || m.canceled || !places.idx.has(i) || m.minIdx > i) return null;
@@ -1456,6 +1554,7 @@
         if (m.theirAt) { m.their = m.theirAt; m.theirDelayMin = roundMin(m.their.t - m.their.planned); }
         m.position = positionAt(m.otn, m.at, m.atI);
         m.single = singleBetween(m.atI, nextPlace(m.atI));
+        m.book = bookBetween(m.atI, nextPlace(m.atI));
       }
       delete m.theirAt; delete m.need; delete m.resolved;
     }
@@ -1684,6 +1783,16 @@
       for (const c of st.connections) every.push({ c, sig: st.sig, dir: 'ut' });
       for (const c of st.incoming) every.push({ c, sig: st.sig, dir: 'in' });
     }
+    /* Samma plattform som vi? Enligt järnvägsnätsbeskrivningen (input.infra), när både vårt och tågets spår är kända.
+       c.samePlatform: true eller false; saknas när det inte går att avgöra. Bussar har läge, inte spår. */
+    const ourTrackAt = sig => (sig === endL.sig ? end.track : ourTrack(sig));
+    if (infra) {
+      for (const x of every) {
+        if (x.c.kind === 'buss' || !x.c.track) continue;
+        const p = platformInfo(infra, x.sig, ourTrackAt(x.sig), x.c.track);
+        if (p && p.same != null) x.c.samePlatform = p.same;
+      }
+    }
     const actions = [];
     for (const x of every) {
       if (!(x.c.marked || x.c.own) || (x.c.status !== 'knappt' && x.c.status !== 'missas')) continue;
@@ -1693,7 +1802,8 @@
       if (waitMin < 1 || waitMin > o.holdMaxMin) continue;
       actions.push({
         type: x.dir === 'ut' ? 'hold' : 'wait', sig: x.sig, c: x.c, waitMin,
-        ourTrack: x.sig === endL.sig ? end.track : ourTrack(x.sig), theirTrack: x.c.track || ''
+        ourTrack: ourTrackAt(x.sig), theirTrack: x.c.track || '',
+        platform: x.c.kind === 'buss' ? null : platformInfo(infra, x.sig, ourTrackAt(x.sig), x.c.track)
       });
     }
     actions.sort((a, b) => a.c.adv - b.c.adv);
@@ -1719,7 +1829,9 @@
       midMissed: alert.stops.reduce((k, st) => k + st.connections.filter(c => c.level === 2).length, 0),
       preds: preds.map((p, i) => ({ sig: line[i].sig, arr: p.arr, dep: p.dep, waitMs: p.waitMs })),
       doubleSections: Array.from(newDouble),
-      meetPlaces: places.found.filter(s => !(input.knownMeetPlaces || []).includes(s)),
+      meetPlaces: places.found.filter(s => !(input.knownMeetPlaces || []).includes(s) && !bookMeet.includes(s)),
+      // Hur många av linjens sträckor som har spårtypen från linjeboken
+      trackBook: { sections: fromBook.size, of: n - 1 },
       // late: det mötande tåget är sent (annars väntar vi för att vi själva är sena och mötet flyttats)
       reason: worstMeeting ? { sig: worstMeeting.at, otn: worstMeeting.ident || worstMeeting.otn, waitMin: worstMeeting.waitMin,
         late: worstMeeting.theirDelayMin >= 1, moved: worstMeeting.atI !== worstMeeting.i } : null,
@@ -1751,8 +1863,8 @@
     const what = (c, start) => c.kind === 'buss' ? `${start ? 'B' : 'b'}uss${c.ident ? ' ' + c.ident : 'en'} mot ${dest(c)} ${clock(c.adv)}` : `${start ? 'T' : 't'}åget mot ${dest(c)} ${clock(c.adv)}`;
     const whatEn = c => c.kind === 'buss' ? `${c.ident ? 'bus ' + c.ident : 'the bus'} to ${dest(c)} at ${clock(c.adv)}` : `the train to ${dest(c)} at ${clock(c.adv)}`;
     const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
-    const fromSv = c => c.track ? `, ${c.kind === 'buss' ? 'den går från läge' : 'det går från spår'} ${c.track}` : '';
-    const fromEn = c => c.track ? `, departing from ${c.kind === 'buss' ? 'stop' : 'track'} ${c.track}` : '';
+    const fromSv = c => c.track ? `, ${c.kind === 'buss' ? 'den går från läge' : 'det går från spår'} ${c.track}${c.samePlatform === true ? ' på samma plattform' : ''}` : '';
+    const fromEn = c => c.track ? `, departing from ${c.kind === 'buss' ? 'stop' : 'track'} ${c.track}${c.samePlatform === true ? ' on the same platform' : ''}` : '';
     const meetReason = m.reason && m.reason.waitMin >= 2;
     const msg = !meetReason && m.messages && m.messages[0] ? m.messages[0].header : '';
     const lowerFirst = t => t ? t.charAt(0).toLocaleLowerCase('sv') + t.slice(1) : t;
@@ -1802,10 +1914,22 @@
     const who = c.kind === 'buss' ? `buss ${c.ident}` : String(c.ident || c.otn);
     const title = a.type === 'hold' ? `Ring trafikledningen: kan ${who} vänta ca ${a.waitMin} min?` : `Ring trafikledningen: kan vi vänta på ${who} ca ${a.waitMin} min?`;
     const place = a.type === 'hold' ? `${name(a.sig)} → ${to} ${clock(c.adv)}` : `${name(a.sig)}: från ${from} ${clock(c.adv)}`;
+    /* Plattformen (a.platform, järnvägsnätsbeskrivningen): samma eller annan plattform när båda spåren är kända,
+       och annars vilka spår som ligger vid vår plattform. Okänt: frågan som förut. */
     let plat = '';
     if (c.kind !== 'buss') {
-      if (a.ourTrack && a.theirTrack) { if (a.ourTrack !== a.theirTrack) plat = `vi spår ${a.ourTrack}, ${who} spår ${a.theirTrack} – samma plattform?`; }
-      else plat = 'spår vid samma plattform?';
+      const p = a.platform || null;
+      const list = xs => xs.length > 1 ? `${xs.slice(0, -1).join(', ')} och ${xs[xs.length - 1]}` : xs[0];
+      if (a.ourTrack && a.theirTrack) {
+        if (a.ourTrack !== a.theirTrack) {
+          const both = `vi spår ${a.ourTrack}, ${who} spår ${a.theirTrack}`;
+          if (p && p.same === true) plat = `${both} – samma plattform`;
+          else if (p && p.same === false) plat = `${both} – annan plattform${p.shared.length ? `; spår ${list(p.shared)} vid vår` : ''}`;
+          else plat = `${both} – samma plattform?`;
+        }
+      } else if (a.ourTrack && p) {
+        plat = p.shared.length ? `vi spår ${a.ourTrack} – spår ${list(p.shared)} vid samma plattform` : `vi spår ${a.ourTrack} – inget annat spår vid vår plattform`;
+      } else plat = 'spår vid samma plattform?';
     }
     const what = c.kind === 'buss' ? 'bussen' : 'tåget';
     const mins = `${a.waitMin} minut${a.waitMin === 1 ? '' : 'er'}`;
@@ -1952,6 +2076,7 @@
 
   return {
     DEFAULTS, MIN, ms, localIso, haversine, wgs84, queryPositions, parsePositions, announcement, alerts, newAlerts, actionText, sectionKey, median, ANNOUNCEMENT_FIELDS, SAFE_ANNOUNCEMENT_FIELDS,
+    trackKind, platformInfo, infraMeetPlaces,
     request, queryOurTrain, queryLine, queryOwnTrains, queryNames, queryMessages, resultOf,
     parseAnnouncement, groupTrains, nearestRun, mergeTrains, isOurs, buildLine, crossingOf, latestDelay, theirArrival, theirDeparture,
     progressOf, meetingPlaces, travel, trvLogNew, PROFILE, legKey, trackPoints, runLegs, profileBuilder, remainingFrom, positionEstimate, AXIS, buildAxis, axisLocate, axisMeasured, trvLogTrains, trvLogPositions, trvLogModel, trvLogOut,

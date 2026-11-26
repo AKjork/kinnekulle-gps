@@ -1,6 +1,7 @@
 # Hämtar Trafikverkets publika underlag om infrastrukturen (linjebok, järnvägsnätsbeskrivningens bilagor) och skriver
-# dem i körningens logg, eftersom utvecklingsmiljön inte når bransch.trafikverket.se. Ett utvecklingssteg: inget
-# publiceras och inget svarar på frågor härifrån. Körs när skriptet ändras, eller för hand: Actions → Infrastruktur-prov.
+# dem i körningens logg, eftersom utvecklingsmiljön inte når bransch.trafikverket.se, och kontrollerar att
+# railtimer-infra.js stämmer med dem (tools/infrastruktur.mjs). Ett utvecklingssteg: inget publiceras och inget svarar
+# på frågor härifrån. Körs när skripten eller datafilen ändras, eller för hand: Actions → Infrastruktur-prov.
 name: Infrastruktur-prov
 
 on:
@@ -10,6 +11,8 @@ on:
     paths:
       - '.github/workflows/infrastruktur-prov.yml'
       - 'tools/infrastruktur-hamta.sh'
+      - 'tools/infrastruktur.mjs'
+      - 'railtimer-infra.js'
 
 permissions:
   contents: read

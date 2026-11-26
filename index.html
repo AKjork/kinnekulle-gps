@@ -1090,13 +1090,14 @@
 <script src="railtimer-github.js"></script>
 <script src="railtimer-karta.js"></script>
 <script src="railtimer-trv.js"></script>
+<script src="railtimer-infra.js"></script>
 <script src="railtimer-info.js"></script>
 <script src="railtimer-vt.js"></script>
 <script>
 (function(){
   'use strict';
 
-  const APP_VERSION = '2026-11-26a'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
+  const APP_VERSION = '2026-11-26b'; // samma i version.json (testet i tests/sw.test.js kontrollerar)
   const AV = window.RailTimerAvbrott || null; // avbrott i mätningen (railtimer-avbrott.js)
   const GH = window.RailTimerGitHub || null;  // uppladdning till GitHub (railtimer-github.js)
   const TRV = window.RailTimerTrv || null;    // Trafikverkets rapporterade tider (railtimer-trv.js)
@@ -4117,7 +4118,8 @@
           positions:infoState.positions, coords:lineCoords(), ourPos, axis:infoAxis(),
           buses:infoState.buses, names:lineNames(), connMode:connSettings().mode, connAlerts:connSettings().alerts,
           marked:markedConnections(), own:loadOwnConnections(),
-          posAt: est && est.sig ? { sig:est.sig, t:est.t } : null
+          posAt: est && est.sig ? { sig:est.sig, t:est.t } : null,
+          infra: window.RailTimerInfra || null
         });
       }catch(e){
         console.error('Infofliken: fel i beräkningen', e);
@@ -4148,7 +4150,7 @@
         sig:m.sig, name:sigName(m.sig), train:m.ident||m.otn,
         theirPlanned:new Date(m.their.planned).toISOString(),
         theirDelayMin:m.theirDelayMin, theirSource:m.their.source,
-        waitMin:m.waitMin, single:m.single, canceled:m.canceled, moved:m.moved,
+        waitMin:m.waitMin, single:m.single, ...(m.book ? { book:true } : {}), canceled:m.canceled, moved:m.moved,
         ...(m.at && m.at!==m.sig ? { at:m.at, atName:sigName(m.at) } : {}),
         ...(m.move ? { move:m.move } : {}), ...(m.onLine ? { onLine:true } : {}),
         ...(m.moveVia || (m.moved && m.movedVia) ? { via:m.moveVia || m.movedVia } : {}),
@@ -4325,7 +4327,8 @@
       `${escapeHtml(train)} ${their}${m.canceled?'':' ('+sourceText(m.their.source)+')'}`,
       escapeHtml(moved),
       m.position ? escapeHtml(positionText(m.position, sigName(at))) : '',
-      m.single ? 'enkelspår' : 'dubbelspår',
+      // Spårtypen från linjeboken, annars räknad ur tidtabellen (enkelspår när inga tåg möts mellan stationerna)
+      m.single ? (m.book ? 'enkelspår' : 'troligen enkelspår') : 'dubbelspår',
       m.waitMin>=1 ? `vi avgår ca ${roundClock(m.ourDep)}` : ''
     ].filter(Boolean).join(' · ');
     const status = m.waitMin>=1 ? `<span class="${m.waitMin>=5?'dl-very-late':'dl-late'}">+${m.waitMin} min</span><small>väntan</small>`
@@ -4353,7 +4356,9 @@
   const connInTitle = c => `← från ${escapeHtml(connFrom(c)||'?')}`;
   function connectionSub(c){
     const delay = c.status==='avgått' ? `avgick ${roundClock(c.dep)}` : (c.delayMin>0 ? `${c.delayMin} min sent` : (c.delayMin<0 ? `${-c.delayMin} min tidigt` : 'i tid'));
-    return [escapeHtml(trainText(c)), c.track?`${c.kind==='buss'?'läge':'spår'} ${escapeHtml(c.track)}`:'', delay].filter(Boolean).join(' · ');
+    // Samma eller annan plattform som vi (järnvägsnätsbeskrivningen), när båda spåren är kända
+    const plat = c.samePlatform===true ? ', samma plattform' : (c.samePlatform===false ? ', annan plattform' : '');
+    return [escapeHtml(trainText(c)), c.track?`${c.kind==='buss'?'läge':'spår'} ${escapeHtml(c.track)}${plat}`:'', delay].filter(Boolean).join(' · ');
   }
 
   // En anslutning: ☆ framför, tryck markerar att resenärer ska byta (★)
@@ -4431,6 +4436,14 @@
     return '';
   }
 
+  /* Varifrån enkel- och dubbelspåren kommer (Så räknas det): Trafikverkets linjebok, och tidtabellen där den inte räcker */
+  function trackNote(m){
+    const b=m && m.trackBook;
+    const rest='tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår (troligen)';
+    if(!b || !b.sections) return `Enkel- eller dubbelspår: ${rest}.`;
+    if(b.sections>=b.of) return 'Enkel- eller dubbelspår enligt Trafikverkets linjebok.';
+    return `Enkel- eller dubbelspår enligt Trafikverkets linjebok för ${b.sections} av ${b.of} sträckor. Övriga: ${rest}.`;
+  }
   function infoPaneHtml(m){
     const st = text => `<div class="info-state">${text}</div>`;
     if(!INFO) return st('Infon kunde inte laddas.');
@@ -4543,7 +4556,7 @@
       (mode!=='tag' ? `Bussarna kommer från Västtrafik (hållplatser inom ${VT ? VT.DEFAULTS.stopRadiusM : 350} m från stationen), tågen från Trafikverket. ` : '');
     // Felet syns alltid. Förklaringen av reglerna är ihopfälld: den behövs sällan under resan.
     if(infoState.error) html+=`<p class="info-hint err">Senaste hämtningen gick inte (${escapeHtml(infoState.error)}).</p>`;
-    html+=`<details class="info-foot"${infoFootOpen?' open':''}><summary>Så räknas det</summary>${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. Tåg som enligt tidtabell möts mellan stationerna betyder dubbelspår, annars räknas sträckan som enkelspår. Är vi sena räknar appen med att tågklareraren flyttar mötet närmare oss när det ger minst väntan sammanlagt (troligen), till en plats där tåg enligt tidtabell kan mötas. Är det mötande tåget sent räknas med mötet enligt tidtabell.${infoAxis() ? ' Mötande tågs position jämförs med mötesplatserna längs banan, efter tidigare GPS-spår: är tåget ute på enkelspåret mot oss väntar vi på mötesplatsen före, och har det passerat oss är mötet klart. Där banan inte är uppmätt räknas fågelvägen, och positionen används bara som undre gräns.' : ''}</details>`;
+    html+=`<details class="info-foot"${infoFootOpen?' open':''}><summary>Så räknas det</summary>${transferNote}${notShown ? `${notShown} trafikhändelse${notShown>1?'r':''} på platser längs linjen visas inte: planerade arbeten (tidtabellen räknar med dem) eller en annan bana. ` : ''}Prognosen bygger på ${basis}. ${trackNote(m)} Är vi sena räknar appen med att tågklareraren flyttar mötet närmare oss när det ger minst väntan sammanlagt (troligen), till en plats där tåg kan mötas: med möteslängd enligt Trafikverket, eller där tåg enligt tidtabell står samtidigt. Samma eller annan plattform vid ett byte är enligt Trafikverkets järnvägsnätsbeskrivning. Är det mötande tåget sent räknas med mötet enligt tidtabell.${infoAxis() ? ' Mötande tågs position jämförs med mötesplatserna längs banan, efter tidigare GPS-spår: är tåget ute på enkelspåret mot oss väntar vi på mötesplatsen före, och har det passerat oss är mötet klart. Där banan inte är uppmätt räknas fågelvägen, och positionen används bara som undre gräns.' : ''}</details>`;
     return html;
   }
 
